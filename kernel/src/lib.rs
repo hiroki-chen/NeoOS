@@ -1,4 +1,6 @@
 #![no_std]
+#![no_main]
+#![feature(abi_efiapi)]
 #![feature(exclusive_range_pattern)]
 #![feature(lang_items)]
 

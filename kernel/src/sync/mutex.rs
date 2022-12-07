@@ -5,7 +5,9 @@ use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::arch::cpu::cpu_id;
 use crate::arch::interrupt;
+
 use atomic_enum::atomic_enum;
 use log::error;
 
@@ -76,7 +78,7 @@ impl MutexSupport for SpinNoInterrupt {
     }
 
     fn lock_epilogue(&self) {
-      // Notify.
+        // Notify.
     }
 }
 
@@ -175,9 +177,9 @@ impl<T: ?Sized, S: MutexSupport> Mutex<T, S> {
                     self, cpu_id, thread_id);
                 }
 
+                let cpu_id = cpu_id();
                 unsafe {
-                    // TODO: Get CPU.
-                    self.user.get().write((0, 0));
+                    self.user.get().write((cpu_id, 0));
                 }
             }
         }

@@ -9,4 +9,7 @@ atomic_enum = "0.2.0"
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 log = "0.4"
 raw-cpuid = "10.6.0"
+uefi = "0.18.0"
+uefi-services = { version = "0.15.0", features = ["logger"], default-features = false }
 x86_64 = "0.14.10"
+x86 = "0.52.0"

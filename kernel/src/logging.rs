@@ -1,12 +1,76 @@
 use core::fmt;
 
-use crate::sync::mutex::SpinLock as Mutex;
+use crate::{
+    error::{Errno, KResult},
+    sync::mutex::SpinLockNoInterrupt as Mutex,
+};
 use lazy_static::lazy_static;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
 lazy_static! {
   // Lock the logger instance.
   static ref LOG_LOCK: Mutex<()> = Mutex::new(());
+}
+
+/// An instance that logs the information into console created by the kernel.
+/// This logger cannot be directly manipulated. The kernel must use macros provided
+/// by the `log` crate.
+struct EnvLogger;
+
+/// Tells how `log` should print the information through `Logger.`
+impl Log for EnvLogger {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        true
+    }
+
+    fn flush(&self) {
+        // print(format_args!("\n"));
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            color_print(
+                format_args!(
+                    "[{:^6}][{} #{}] {}\n",
+                    record.level(),
+                    crate::arch::cpu::cpu_name(64),
+                    crate::arch::cpu::cpu_id(),
+                    record.args()
+                ),
+                record.level(),
+            );
+        }
+    }
+}
+
+/// Initialize the envrionment logger.
+pub fn init_env_logger() -> KResult<()> {
+    // Single instance!
+    static ENV_LOGGER: EnvLogger = EnvLogger;
+
+    // Register this logger into `log`.
+    if log::set_logger(&ENV_LOGGER).is_err() {
+        return Err(Errno::EBUSY);
+    }
+
+    let log_level = match option_env!("OS_LOG_LEVEL") {
+        Some(str) => str,
+        None => "",
+    }
+    .to_lowercase();
+
+    let max_level = match log_level.as_str() {
+        "error" => LevelFilter::Error,
+        "warn" => LevelFilter::Warn,
+        "info" => LevelFilter::Info,
+        "debug" => LevelFilter::Debug,
+        "trace" => LevelFilter::Trace,
+        _ => LevelFilter::Off,
+    };
+
+    log::set_max_level(max_level);
+
+    Ok(())
 }
 
 /// From std::println!
@@ -46,7 +110,6 @@ pub(crate) fn color_print(content: fmt::Arguments, log_level: Level) {
 
     // TODO: lock and print.
     let _ = LOG_LOCK.lock();
-    
 }
 
 fn log_level_to_color_code(level: Level) -> u8 {
