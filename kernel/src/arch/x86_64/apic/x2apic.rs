@@ -26,7 +26,7 @@ impl LocalApic for X2Apic {
     }
 
     fn lapic_id(&self) -> u32 {
-        unsafe { rdmsr(IA32_X2APIC_APICID) as u32 } 
+        unsafe { rdmsr(IA32_X2APIC_APICID) as u32 }
     }
 
     fn lapic_version(&self) -> u32 {

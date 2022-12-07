@@ -14,7 +14,7 @@ pub struct IOApic {
 
 impl IOApic {
     /// Construct a new `IOApic` instance given its base address.
-    /// 
+    ///
     /// The caller must ensure that `base_addr` is always valid.
     pub unsafe fn new(base_addr: u32) -> Self {
         Self {
