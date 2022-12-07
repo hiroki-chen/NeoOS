@@ -1,0 +1,7 @@
+/target
+Cargo.lock
+build
+test
+log
+backup
+data
