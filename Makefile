@@ -17,8 +17,8 @@
 
 WORK_DIR 		?= ./test
 BOOT_DIR 		:= $(WORK_DIR)/esp/efi/boot
-EFI_TARGET	?= target/x86_64-unknown-uefi/debug/NeoOSImage.efi
-EFI 		 		?= $(BOOT_DIR)/bootx64.efi
+EFI_TARGET		?= target/x86_64-unknown-uefi/debug/NeoOSImage.efi
+EFI 		 	?= $(BOOT_DIR)/bootx64.efi
 
 all: efi
 
@@ -32,10 +32,10 @@ run: $(EFI)
 	@cd $(WORK_DIR) && cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_VARS.fd .
 	@cd $(WORK_DIR) && \
 	sudo qemu-system-x86_64 -enable-kvm \
-    -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
-    -drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
-    -drive format=raw,file=fat:rw:esp \
-  	-nographic 
+		-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
+		-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
+		-drive format=raw,file=fat:rw:esp \
+		-nographic 
 
 clean:
 	@cargo clean
