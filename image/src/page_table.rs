@@ -6,11 +6,11 @@
 use log::info;
 use uefi::{
     prelude::BootServices,
-    table::boot::{AllocateType, MemoryType},
+    table::boot::{AllocateType, MemoryDescriptor, MemoryType},
 };
 use x86_64::{
     registers::{
-        control::{Cr0, Cr0Flags, Cr3},
+        control::{Cr0, Cr0Flags, Cr3, Cr3Flags},
         model_specific::{Efer, EferFlags},
     },
     structures::paging::{
@@ -25,142 +25,173 @@ use crate::utils::Kernel;
 
 pub const PAGE_MASK: u64 = 0xFFFFFFFFFFFFF000;
 
-/// Manages the physical page allocation for pre-kernel phase.
-pub struct PreKernelAllocator<'a> {
-    bs: &'a BootServices,
+/// Provides access to the page tables of the bootloader and kernel address space.
+/// We create a unified page table for both the bootloader and the kernel.
+pub struct PageTables {
+    /// Provides access to the page tables of the bootloader address space.
+    pub bootloader: OffsetPageTable<'static>,
+    /// Provides access to the page tables of the kernel address space (not active).
+    pub kernel: OffsetPageTable<'static>,
+    /// The physical frame where the level 4 page table of the kernel address space is stored.
+    ///
+    /// Must be the page table that the `kernel` field of this struct refers to.
+    ///
+    /// This frame is loaded into the `CR3` register on the final context switch to the kernel.  
+    pub kernel_level_4_frame: PhysFrame,
 }
 
-unsafe impl<'a> FrameAllocator<Size4KiB> for PreKernelAllocator<'a> {
+/// A physical frame allocator based on a BIOS or UEFI provided memory map.
+pub struct OsFrameAllocator<'a, M>
+where
+    M: ExactSizeIterator<Item = &'a MemoryDescriptor> + Clone,
+{
+    original: M,
+    memory_map: M,
+    current_descriptor: Option<&'a MemoryDescriptor>,
+    next_frame: PhysFrame,
+}
+
+impl<'a, M> OsFrameAllocator<'a, M>
+where
+    M: ExactSizeIterator<Item = &'a MemoryDescriptor> + Clone,
+{
+    /// Creates a new frame allocator based on the given legacy memory regions.
+    ///
+    /// Skips the frame at physical address zero to avoid potential problems. For example
+    /// identity-mapping the frame at address zero is not valid in Rust, because Rust's `core`
+    /// library assumes that references can never point to virtual address `0`.  
+    pub fn new(memory_map: M) -> Self {
+        // skip frame 0 because the rust core library does not see 0 as a valid address
+        let start_frame = PhysFrame::containing_address(PhysAddr::new(0x1000));
+        Self::new_starting_at(start_frame, memory_map)
+    }
+
+    /// Construct the allocator at the given frame.
+    pub fn new_starting_at(frame: PhysFrame, memory_map: M) -> Self {
+        Self {
+            original: memory_map.clone(),
+            memory_map,
+            current_descriptor: None,
+            next_frame: frame,
+        }
+    }
+
+    fn allocate(&mut self, d: &'a MemoryDescriptor) -> Option<PhysFrame<Size4KiB>> {
+        let start_addr = PhysAddr::new(d.phys_start);
+        let start_frame = PhysFrame::containing_address(start_addr);
+        let end_addr = start_addr + d.page_count * 0x1000;
+        let end_frame = PhysFrame::containing_address(end_addr - 1u64);
+
+        // increase self.next_frame to start_frame if smaller
+        if self.next_frame < start_frame {
+            self.next_frame = start_frame;
+        }
+
+        if self.next_frame < end_frame {
+            let ret = self.next_frame;
+            self.next_frame += 1;
+            Some(ret)
+        } else {
+            None
+        }
+    }
+}
+
+unsafe impl<'a, M> FrameAllocator<Size4KiB> for OsFrameAllocator<'a, M>
+where
+    M: ExactSizeIterator<Item = &'a MemoryDescriptor> + Clone,
+{
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        let addr = self
-            .bs
-            .allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, 1)
-            .expect("failed to allocate frame");
-        let frame = PhysFrame::containing_address(PhysAddr::new(addr));
-        Some(frame)
-    }
-}
-
-impl<'a> PreKernelAllocator<'a> {
-    /// Returns a new UEFIFrameAllocator.
-    pub fn new(bs: &'a BootServices) -> Self {
-        Self { bs }
-    }
-
-    /// Allocates virtual memory for each segment, at the address specified by the p_vaddr member
-    /// in the program header. The size of the segment in memory is specified by the `p_memsize`.
-    fn map_elf_segment(
-        &mut self,
-        page_table: &mut impl Mapper<Size4KiB>,
-        program_segment: &ProgramHeader,
-        elf_entry: PhysAddr,
-    ) {
-        // Skip non-loadable
-        if program_segment.get_type().unwrap() == program::Type::Load {
-            info!("Mapping segment for {:?}", program_segment);
-
-            let seg_flags = program_segment.flags();
-            let mem_size = program_segment.mem_size();
-            let file_size = program_segment.file_size();
-            // Not 4KiB aligned. So we need a conversion.
-            let offset = program_segment.offset() & PAGE_MASK;
-            let virt_addr = VirtAddr::new(program_segment.virtual_addr());
-            // We need to offset the physical memory by adding the elf base.
-            let phys_addr = elf_entry + offset;
-            // Copy the segment data from the file offset specified by the p_offset member to the
-            // virtual memory address specified by the p_vaddr member. The size of the segment in
-            // the file is contained in the p_filesz member. This can be zero.
-            // 1. Locate the starting points of virtual & physical addresses.
-            let page_start = Page::<Size4KiB>::containing_address(virt_addr);
-            let frame_start = PhysFrame::<Size4KiB>::containing_address(phys_addr);
-            // The size this segment needs.
-            let frame_end = PhysFrame::<Size4KiB>::containing_address(phys_addr + file_size - 1u64);
-            // 2. Allocate.
-            for frame in PhysFrame::range_inclusive(frame_start, frame_end) {
-                info!("start: {:?}, end: {:?}", frame_start, frame_end);
-
-                let offset = frame - frame_start;
-                let page = page_start + offset;
-                let mut page_table_flags = PageTableFlags::PRESENT;
-                if !seg_flags.is_execute() {
-                    page_table_flags |= PageTableFlags::NO_EXECUTE
-                };
-                if seg_flags.is_write() {
-                    page_table_flags |= PageTableFlags::WRITABLE
-                };
-
-                unsafe {
-                    page_table
-                        .map_to(page, frame, page_table_flags, self)
-                        .expect("Page mapping failed")
-                        .flush();
+        // If the current memory is usable.
+        if let Some(d) = self.current_descriptor {
+            match self.allocate(d) {
+                Some(frame) => return Some(frame),
+                None => {
+                    // Invalidate.
+                    self.current_descriptor = None;
                 }
             }
-
-            // If the p_filesz and p_memsz members differ, this indicates that the segment is padded with zeros.
-            // All bytes in memory between the ending offset of the file size, and the segment's virtual memory
-            // size are to be cleared with zeros.
-        }
-    }
-
-    /// Maps the kernel into the virtual address.
-    /// This is equivalent to loading the ELF binary.
-    pub fn map_kernel(&mut self, kernel: &Kernel) {
-        info!("Kernel entry loaded at {:#p}", kernel.elf.input);
-        // Get the top-level page table.
-        let mut page_table = get();
-        let elf_entry = PhysAddr::new(kernel.elf.input.as_ptr() as u64);
-        // Check the alignment. Must be 4KiB aligned.
-        if !elf_entry.is_aligned(0x1000u64) {
-            panic!("The ELF file is not 4KiB aligned!");
         }
 
-        // Read the ELF executable's program headers.
-        // These specify where in the file the program segments are located,
-        // and where they need to be loaded into memory.
-        for segment in kernel.elf.program_iter() {
-            // In case the segment is corrupted, we abort loading.
-            if let Err(e) = program::sanity_check(segment, &kernel.elf) {
-                panic!("Sanity check failed. Error: {}", e);
+        // Not found. Search next.
+        while let Some(d) = self.memory_map.next() {
+            // OK.
+            if d.ty == MemoryType::CONVENTIONAL {
+                if let Some(f) = self.allocate(d) {
+                    self.current_descriptor = Some(d);
+                    return Some(f);
+                }
             }
-
-            self.map_elf_segment(&mut page_table, &segment, elf_entry);
         }
+
+        None
     }
 }
 
 /// Gets the starting address of the top-level page table from the cr3 register.
-pub fn get() -> OffsetPageTable<'static> {
-    info!("Getting the top-level page table...");
+pub fn locate_page_table<'a>() -> &'a PageTable {
     // Get the start address of the top-level page table.
-    let page_table_addr = Cr3::read().0.start_address().as_u64();
+    let frame = Cr3::read().0;
     // Convert this into an OffsetPageTable (the virtual memory will be added with an offset).
     // UEFI identity-maps all memory, so the offset between physical and virtual addresses is 0
-    unsafe {
-        let page_table = unsafe {&mut *(page_table_addr as *mut PageTable) };
-        OffsetPageTable::new(page_table, VirtAddr::new(0))
-    }
+    let ptr: *const PageTable = (VirtAddr::new(0) + frame.start_address().as_u64()).as_ptr();
+    unsafe { &*ptr }
 }
 
 /// Creates the page tables for the kernel.
-pub fn create_page_tables(
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
-) -> (OffsetPageTable, PhysFrame) {
-    let offset = VirtAddr::new(0);
-    // create a new page table hierarchy for the kernel.
-    // get an unused frame for new level 4 page table.
-    let frame: PhysFrame = frame_allocator.allocate_frame().expect("no unused frames");
-    info!("New page table at: {frame:#?}");
-    // get the corresponding virtual address
-    let addr = offset + frame.start_address().as_u64();
-    // initialize a new page table
-    let ptr: *mut PageTable = addr.as_u64() as *mut PageTable;
-    unsafe { ptr.write(PageTable::new()) };
-    let level_4_table = unsafe { &mut *ptr };
-    (
-        unsafe { OffsetPageTable::new(level_4_table, offset) },
-        frame,
-    )
+pub fn create_page_tables(frame_allocator: &mut impl FrameAllocator<Size4KiB>) -> PageTables {
+    // UEFI identity-maps all memory, so the offset between physical and virtual addresses is 0
+    let phys_offset = VirtAddr::new(0);
+
+    // copy the currently active level 4 page table, because it might be read-only
+    info!("Switching to new level 4 table");
+    let bootloader_page_table = {
+        let old_table = locate_page_table();
+        let new_frame = frame_allocator
+            .allocate_frame()
+            .expect("Failed to allocate frame for new level 4 table");
+        let new_table: &mut PageTable = {
+            let ptr: *mut PageTable =
+                (phys_offset + new_frame.start_address().as_u64()).as_mut_ptr();
+            // create a new, empty page table
+            unsafe {
+                ptr.write(PageTable::new());
+                &mut *ptr
+            }
+        };
+
+        // copy the first entry (we don't need to access more than 512 GiB; also, some UEFI
+        // implementations seem to create an level 4 table entry 0 in all slots)
+        new_table[0] = old_table[0].clone();
+        // the first level 4 table entry is now identical, so we can just load the new one
+        unsafe {
+            Cr3::write(new_frame, Cr3Flags::empty());
+            OffsetPageTable::new(&mut *new_table, phys_offset)
+        }
+    };
+
+    // create a new page table hierarchy for the kernel
+    let (kernel_page_table, kernel_level_4_frame) = {
+        // get an unused frame for new level 4 page table
+        let frame: PhysFrame = frame_allocator.allocate_frame().expect("no unused frames");
+        log::info!("New page table at: {:#?}", &frame);
+        // get the corresponding virtual address
+        let addr = phys_offset + frame.start_address().as_u64();
+        // initialize a new page table
+        let ptr = addr.as_mut_ptr();
+        unsafe { *ptr = PageTable::new() };
+        let level_4_table = unsafe { &mut *ptr };
+        (
+            unsafe { OffsetPageTable::new(level_4_table, phys_offset) },
+            frame,
+        )
+    };
+
+    PageTables {
+        bootloader: bootloader_page_table,
+        kernel: kernel_page_table,
+        kernel_level_4_frame,
+    }
 }
 
 /// Turns off the permission check because we are root.

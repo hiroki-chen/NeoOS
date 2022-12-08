@@ -3,11 +3,14 @@
 #![no_main]
 #![feature(abi_efiapi)]
 
+mod header;
 mod page_table;
 mod utils;
 
 extern crate alloc;
 
+use core::arch::asm;
+use header::Header;
 use log::info;
 use uefi::{
     prelude::*,
@@ -17,7 +20,6 @@ use uefi::{
     },
 };
 use uefi_services;
-use x86_64::structures::paging::FrameAllocator;
 
 const BOOT_CONFIG_PATH: &'static str = "\\efi\\boot\\boot.cfg";
 // 1KB
@@ -75,13 +77,6 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         unsafe { core::slice::from_raw_parts_mut(ptr, max_mmap_size) }
     };
 
-    let mut page_allocator = page_table::PreKernelAllocator::new(bs);
-    page_table::disable_protection();
-    // Map the kernel and its memory spaces including the stack.
-    info!("Mapping the kernel ELF...");
-    page_allocator.map_kernel(&kernel);
-    page_table::enable_protection();
-
     // Boot services are available only while the firmware owns the platform.
     // As we have obtained all the need information, they are no longer valid.
     // So we need to free them.
@@ -89,7 +84,21 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     let (system_table, memory_map) = st
         .exit_boot_services(handle, mmap_storage)
         .expect("Failed to exit boot services");
-    info!("ok!!!");
+    
+    // Construct mapping.
+    let mut allocator = page_table::OsFrameAllocator::new(memory_map);
+    let pt = page_table::create_page_tables(&mut allocator);
 
+    // panic!("a"); for debugging because logger is no longer valid.
     Status::SUCCESS
+}
+
+/// Performs a long jump into the entry of the kernel so that bootloader no long works.
+unsafe fn long_jump(entry: u64, header: *const Header, stack_top: u64) -> ! {
+    // The boot header is passed by the address in the rdi register.
+    asm!("mov rsp, {}", "call {}", in(reg) stack_top, in(reg) entry, in("rdi") header);
+    // After the kernel finishes, do CPU idle.
+    loop {
+        asm!("nop");
+    }
 }

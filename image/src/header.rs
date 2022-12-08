@@ -1,4 +1,4 @@
-use crate::memmap::MemoryMap;
+// use crate::memmap::MemoryMap;
 
 /// original address of boot-sector
 pub const BOOTSEG: u16 = 0x07C0;
@@ -30,8 +30,8 @@ pub struct Header {
     pub virt_mem_start: u64,
     /// The address of the System Management BIOS.
     pub smbios_addr: u64,
-    /// The memory mapping information after boolloader starts the kernel.
-    pub memory_map: MemoryMap,
+    // The memory mapping information after boolloader starts the kernel.
+    // pub memory_map: MemoryMap,
 }
 
 impl Header {

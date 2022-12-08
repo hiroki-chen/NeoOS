@@ -24,7 +24,7 @@ all: efi
 
 efi:
 	@mkdir -p $(BOOT_DIR)
-	@cd image && cargo build -Z build-std=core,alloc --target x86_64-unknown-uefi
+	@cd image && cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem --target x86_64-unknown-uefi
 	@cp $(EFI_TARGET)  $(EFI)
 
 run: $(EFI)
