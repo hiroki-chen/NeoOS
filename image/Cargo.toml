@@ -9,3 +9,5 @@ edition = "2021"
 log = "*"
 uefi = { version = "0.18.0" }
 uefi-services = { version = "0.15.0", features = ["logger"] }
+xmas-elf = "0.9.0"
+x86_64 = "0.14.10"

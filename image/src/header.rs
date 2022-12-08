@@ -24,7 +24,7 @@ pub struct Header {
     pub cmdline: &'static str,
     /// The graphic mode. Must be false because we do not support it but we may add it in the future(?)
     pub graph_mode: bool,
-    /// The address of the Root System Description Pointer used in the ACPI programming interface. 
+    /// The address of the Root System Description Pointer used in the ACPI programming interface.
     pub acpi2_rsdp_addr: u64,
     /// The physical address to the start of virtual address.
     pub virt_mem_start: u64,

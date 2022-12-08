@@ -3,86 +3,37 @@
 #![no_main]
 #![feature(abi_efiapi)]
 
+mod page_table;
+mod utils;
+
 extern crate alloc;
 
 use log::info;
 use uefi::{
     prelude::*,
-    proto::media::{
-        file::{File, FileAttribute, FileInfo, FileMode, FileType},
-        fs::SimpleFileSystem,
-    },
     table::{
-        boot::{AllocateType, MemoryType},
+        boot::{MemoryDescriptor, MemoryType},
         cfg::{ACPI2_GUID, SMBIOS_GUID},
     },
-    CStr16,
 };
 use uefi_services;
+use x86_64::structures::paging::FrameAllocator;
 
 const BOOT_CONFIG_PATH: &'static str = "\\efi\\boot\\boot.cfg";
 // 1KB
 const DEFAULT_FILE_BUF_SIZE: usize = 0x400;
 
-/// Opens a file on the disk.
-/// At this timepoint, the filesystem is not created, so we need to create a temporary one.
-fn read_file(bs: &BootServices, path: &str) -> &'static mut [u8] {
-    // Create a temporary filesystem.
-    let handle = bs.get_handle_for_protocol::<SimpleFileSystem>().unwrap();
-    let mut file_system = bs
-        .open_protocol_exclusive::<SimpleFileSystem>(handle)
-        .unwrap();
-
-    let mut root = file_system.open_volume().unwrap();
-    let mut buf = [0u16; 0x40];
-    let filename = CStr16::from_str_with_buf(path, &mut buf).unwrap();
-    let handle = root
-        .open(filename, FileMode::Read, FileAttribute::empty())
-        .expect("Failed to open file");
-
-    let mut file = match handle.into_type().unwrap() {
-        FileType::Regular(f) => f,
-        _ => panic!("This file does not exist!"),
-    };
-
-    info!("File {} successfullly opened!", path);
-
-    let mut file_info = [0u8; DEFAULT_FILE_BUF_SIZE];
-    let info: &mut FileInfo = file.get_info(&mut file_info).unwrap();
-    let size = usize::try_from(info.file_size()).unwrap();
-    info!("File size is {}", size);
-
-    // Allocate ramdisk pages in the memory.
-    let file_mem_ptr = bs
-        .allocate_pages(
-            AllocateType::AnyPages,
-            MemoryType::LOADER_DATA,
-            ((size - 1) / 0x1000) + 1,
-        )
-        .expect("Cannot allocate memory in the ramdisk!") as *mut u8;
-
-    // Read from memory.
-    let mem_file = unsafe {
-        core::ptr::write_bytes(file_mem_ptr, 0, size);
-        core::slice::from_raw_parts_mut(file_mem_ptr, size)
-    };
-    let file_len = file
-        .read(mem_file)
-        .expect("Cannot read file into the memory!");
-
-    &mut mem_file[..file_len]
-}
-
 #[entry]
-fn _main(_handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
+fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut st).expect("Failed to launch the system table!");
 
     info!("Initializing the image");
     // Load boot configurations.
     let bs = st.boot_services();
-    let file_content = read_file(bs, BOOT_CONFIG_PATH);
-    // let toml_value = file_content.parse::<toml::Value>().unwrap();
-    // info!("Boot config: {:?}", toml_value);
+    let mut file = utils::open_file(bs, BOOT_CONFIG_PATH);
+    let file_content = utils::read_buf(bs, &mut file);
+    let config = utils::BootLoaderConfig::parse(file_content);
+    info!("Boot config: {:?}", config);
 
     let boot_services = st.boot_services();
     let config_table = st.config_table();
@@ -103,9 +54,42 @@ fn _main(_handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         "Probed acpi: {:?}; smbios: {:?}.",
         acpi_address, smbios_address
     );
+    info!("UEFI bootloader successfullly started. ");
 
-    // For debug.
-    bs.stall(10_000_000);
+    // Load the kernel from the disk.
+    let kernel = utils::Kernel::new(bs, &config);
+
+    // In the context of UEFI (Unified Extensible Firmware Interface),
+    // the memory_map_size parameter specifies the size of the memory
+    // map that is provided by the UEFI firmware. The memory map is a
+    // table that contains information about the memory regions that
+    // are available to the operating system, such as the size and type
+    // of each region. This information is important for the operating
+    // system to properly allocate and manage memory resources.
+    let mmap_storage = {
+        let max_mmap_size =
+            bs.memory_map_size().map_size + 8 * core::mem::size_of::<MemoryDescriptor>();
+        let ptr = bs
+            .allocate_pool(MemoryType::LOADER_DATA, max_mmap_size)
+            .unwrap();
+        unsafe { core::slice::from_raw_parts_mut(ptr, max_mmap_size) }
+    };
+
+    let mut page_allocator = page_table::PreKernelAllocator::new(bs);
+    page_table::disable_protection();
+    // Map the kernel and its memory spaces including the stack.
+    info!("Mapping the kernel ELF...");
+    page_allocator.map_kernel(&kernel);
+    page_table::enable_protection();
+
+    // Boot services are available only while the firmware owns the platform.
+    // As we have obtained all the need information, they are no longer valid.
+    // So we need to free them.
+    info!("Invalidate boot services");
+    let (system_table, memory_map) = st
+        .exit_boot_services(handle, mmap_storage)
+        .expect("Failed to exit boot services");
+    info!("ok!!!");
 
     Status::SUCCESS
 }
