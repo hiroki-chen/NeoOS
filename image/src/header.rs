@@ -16,10 +16,6 @@ pub const KERN_VERSION: u8 = 0x01;
 pub struct Header {
     /// The version of the boot protocol.
     pub version: u8,
-    /// The base address of the ramdisk. I.e., initrd load address (set by boot loader)
-    pub ramdisk_image: u64,
-    /// The size of the ramdisk. I.e., initrd size (set by boot loader)
-    pub ramdisk_size: u64,
     /// The boot flags.
     pub cmdline: &'static str,
     /// The graphic mode. Must be false because we do not support it but we may add it in the future(?)
@@ -27,7 +23,7 @@ pub struct Header {
     /// The address of the Root System Description Pointer used in the ACPI programming interface.
     pub acpi2_rsdp_addr: u64,
     /// The physical address to the start of virtual address.
-    pub virt_mem_start: u64,
+    pub mem_start: u64,
     /// The address of the System Management BIOS.
     pub smbios_addr: u64,
     // The memory mapping information after boolloader starts the kernel.

@@ -11,7 +11,10 @@ use uefi::{
     table::boot::{AllocateType, MemoryType},
     CStr16,
 };
-use xmas_elf::ElfFile;
+use xmas_elf::{
+    header::{Type, Type_},
+    ElfFile,
+};
 
 use crate::DEFAULT_FILE_BUF_SIZE;
 
@@ -48,10 +51,10 @@ pub struct Kernel<'a> {
     pub elf: ElfFile<'a>,
     /// The configuration parsed from `efi/boot/boot.cfg`.
     pub config: &'a BootLoaderConfig<'a>,
-    /// The starting address of the initramfs.
-    pub initramfs: *const u8,
-    /// The size of the initramfs.
-    pub initramfs_size: u64,
+    /// The starting address of the start address.
+    pub start_address: *const u8,
+    /// The size of the kernel.
+    pub size: u64,
 }
 
 impl<'a> Kernel<'a> {
@@ -62,17 +65,16 @@ impl<'a> Kernel<'a> {
         let kernel_content = read_buf(bs, &mut kernel);
         let kernel_elf = ElfFile::new(kernel_content).expect("Not a valid ELF file.");
 
-        let (initramfs, initramfs_size) = if config.initramfs == 0 {
-            (0, 0)
-        } else {
-            (config.initramfs, config.initramfs_size)
-        };
+        if kernel_elf.header.pt2.type_().as_type() != Type::Executable {
+            panic!("We only support executable!");
+        }
+        info!("Kernel type: {:?}", kernel_elf.header.pt2.type_().as_type());
 
         Self {
             elf: kernel_elf,
             config,
-            initramfs: initramfs as *const u8,
-            initramfs_size,
+            start_address: kernel_content.as_ptr() as *const u8,
+            size: kernel_content.len() as u64,
         }
     }
 }
@@ -174,7 +176,7 @@ pub fn read_buf(bs: &BootServices, file: &mut RegularFile) -> &'static mut [u8] 
         .allocate_pages(
             AllocateType::AnyPages,
             MemoryType::LOADER_DATA,
-            ((size - 1) / 0x1000) + 1,
+            ((size - 1) / crate::PAGE_SIZE as usize) + 1,
         )
         .expect("Cannot allocate memory in the ramdisk!") as *mut u8;
 
@@ -188,4 +190,12 @@ pub fn read_buf(bs: &BootServices, file: &mut RegularFile) -> &'static mut [u8] 
         .expect("Cannot read file into the memory!");
 
     &mut mem_file[..file_len]
+}
+
+/// Pause the CPU.
+#[inline(always)]
+pub fn cpu_halt() {
+    unsafe {
+        core::arch::asm!("hlt");
+    }
 }

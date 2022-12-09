@@ -20,6 +20,8 @@ use uefi::{
     },
 };
 use uefi_services;
+// Export.
+pub use page_table::PAGE_SIZE;
 
 const BOOT_CONFIG_PATH: &'static str = "\\efi\\boot\\boot.cfg";
 // 1KB
@@ -60,7 +62,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
 
     // Load the kernel from the disk.
     let kernel = utils::Kernel::new(bs, &config);
-
+    info!("Entry: 0x{:x}", kernel.elf.header.pt2.entry_point());
     // In the context of UEFI (Unified Extensible Firmware Interface),
     // the memory_map_size parameter specifies the size of the memory
     // map that is provided by the UEFI firmware. The memory map is a
@@ -84,21 +86,37 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     let (system_table, memory_map) = st
         .exit_boot_services(handle, mmap_storage)
         .expect("Failed to exit boot services");
-    
+
     // Construct mapping.
     let mut allocator = page_table::OsFrameAllocator::new(memory_map);
-    let pt = page_table::create_page_tables(&mut allocator);
+    let mut pt = page_table::create_page_tables(&mut allocator);
 
-    // panic!("a"); for debugging because logger is no longer valid.
-    Status::SUCCESS
-}
+    // Prepare the memory spaces.
+    let kernel_entry = kernel.elf.header.pt2.entry_point();
+    page_table::enable_nxe_efer();
+    page_table::enable_write_protect();
+    page_table::map_kernel(&kernel, &mut allocator, &mut pt);
+    page_table::map_stack(&kernel, &mut allocator, &mut pt);
+    page_table::map_context_switch(&kernel, &mut allocator, &mut pt);
+    page_table::map_physical(&kernel, &mut allocator, &mut pt);
 
-/// Performs a long jump into the entry of the kernel so that bootloader no long works.
-unsafe fn long_jump(entry: u64, header: *const Header, stack_top: u64) -> ! {
-    // The boot header is passed by the address in the rdi register.
-    asm!("mov rsp, {}", "call {}", in(reg) stack_top, in(reg) entry, in("rdi") header);
-    // After the kernel finishes, do CPU idle.
-    loop {
-        asm!("nop");
+    // Jump to the kernel.
+    let stack_top = config.kernel_stack_address + config.kernel_stack_size * PAGE_SIZE;
+    let header = Header {
+        version: 1u8,
+        cmdline: config.cmdline,
+        graph_mode: false,
+        acpi2_rsdp_addr: acpi_address as u64,
+        smbios_addr: smbios_address as u64,
+        mem_start: config.physical_mem,
+    };
+
+    unsafe {
+        page_table::context_switch(
+            &pt,
+            kernel.elf.header.pt2.entry_point(),
+            &header as *const Header,
+            stack_top,
+        )
     }
 }

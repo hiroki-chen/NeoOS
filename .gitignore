@@ -5,3 +5,4 @@ test
 log
 backup
 data
+.gdb_history

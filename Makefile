@@ -35,7 +35,7 @@ run: $(EFI)
 		-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
 		-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
 		-drive format=raw,file=fat:rw:esp \
-		-nographic 
+		-nographic -s -S
 
 clean:
 	@cargo clean

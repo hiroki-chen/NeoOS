@@ -3,27 +3,36 @@
 //!
 //! You may also need to check the IA32 developer manual to now how X86_64 CPUs manage their page tables.
 
+use core::arch::asm;
 use log::info;
-use uefi::{
-    prelude::BootServices,
-    table::boot::{AllocateType, MemoryDescriptor, MemoryType},
-};
+use uefi::table::boot::{MemoryDescriptor, MemoryType};
 use x86_64::{
     registers::{
         control::{Cr0, Cr0Flags, Cr3, Cr3Flags},
         model_specific::{Efer, EferFlags},
     },
     structures::paging::{
-        FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame,
-        Size4KiB,
+        FrameAllocator, Mapper, OffsetPageTable, Page, PageSize, PageTable, PageTableFlags,
+        PhysFrame, Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
 use xmas_elf::program::{self, ProgramHeader};
 
-use crate::utils::Kernel;
+use crate::{header::Header, utils::Kernel};
 
 pub const PAGE_MASK: u64 = 0xFFFFFFFFFFFFF000;
+pub const PAGE_SIZE: u64 = 0x1000;
+
+pub trait MaxPhysicalAddress<S>
+where
+    S: PageSize,
+{
+    /// Returns the largest detected physical memory address.
+    ///
+    /// Useful for creating a mapping for all physical memory.
+    fn max_phys_addr(&self) -> u64;
+}
 
 /// Provides access to the page tables of the bootloader and kernel address space.
 /// We create a unified page table for both the bootloader and the kernel.
@@ -41,19 +50,19 @@ pub struct PageTables {
 }
 
 /// A physical frame allocator based on a BIOS or UEFI provided memory map.
-pub struct OsFrameAllocator<'a, M>
+pub struct OsFrameAllocator<M>
 where
-    M: ExactSizeIterator<Item = &'a MemoryDescriptor> + Clone,
+    M: ExactSizeIterator<Item = &'static MemoryDescriptor> + Clone,
 {
     original: M,
     memory_map: M,
-    current_descriptor: Option<&'a MemoryDescriptor>,
+    current_descriptor: Option<&'static MemoryDescriptor>,
     next_frame: PhysFrame,
 }
 
-impl<'a, M> OsFrameAllocator<'a, M>
+impl<M> OsFrameAllocator<M>
 where
-    M: ExactSizeIterator<Item = &'a MemoryDescriptor> + Clone,
+    M: ExactSizeIterator<Item = &'static MemoryDescriptor> + Clone,
 {
     /// Creates a new frame allocator based on the given legacy memory regions.
     ///
@@ -62,7 +71,7 @@ where
     /// library assumes that references can never point to virtual address `0`.  
     pub fn new(memory_map: M) -> Self {
         // skip frame 0 because the rust core library does not see 0 as a valid address
-        let start_frame = PhysFrame::containing_address(PhysAddr::new(0x1000));
+        let start_frame = PhysFrame::containing_address(PhysAddr::new(PAGE_SIZE));
         Self::new_starting_at(start_frame, memory_map)
     }
 
@@ -76,10 +85,10 @@ where
         }
     }
 
-    fn allocate(&mut self, d: &'a MemoryDescriptor) -> Option<PhysFrame<Size4KiB>> {
+    fn allocate(&mut self, d: &MemoryDescriptor) -> Option<PhysFrame<Size4KiB>> {
         let start_addr = PhysAddr::new(d.phys_start);
         let start_frame = PhysFrame::containing_address(start_addr);
-        let end_addr = start_addr + d.page_count * 0x1000;
+        let end_addr = start_addr + d.page_count * PAGE_SIZE;
         let end_frame = PhysFrame::containing_address(end_addr - 1u64);
 
         // increase self.next_frame to start_frame if smaller
@@ -97,9 +106,25 @@ where
     }
 }
 
-unsafe impl<'a, M> FrameAllocator<Size4KiB> for OsFrameAllocator<'a, M>
+impl<M, S> MaxPhysicalAddress<S> for OsFrameAllocator<M>
 where
-    M: ExactSizeIterator<Item = &'a MemoryDescriptor> + Clone,
+    M: ExactSizeIterator<Item = &'static MemoryDescriptor> + Clone,
+    S: PageSize,
+{
+    fn max_phys_addr(&self) -> u64 {
+        self.memory_map
+            .clone()
+            .into_iter()
+            .map(|d| d.phys_start + d.page_count * S::SIZE)
+            .max()
+            .unwrap()
+            .max(0x100_000_000)
+    }
+}
+
+unsafe impl<M> FrameAllocator<Size4KiB> for OsFrameAllocator<M>
+where
+    M: ExactSizeIterator<Item = &'static MemoryDescriptor> + Clone,
 {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
         // If the current memory is usable.
@@ -116,7 +141,7 @@ where
         // Not found. Search next.
         while let Some(d) = self.memory_map.next() {
             // OK.
-            if d.ty == MemoryType::CONVENTIONAL {
+            if d.ty == MemoryType::CONVENTIONAL || d.ty == MemoryType::PERSISTENT_MEMORY {
                 if let Some(f) = self.allocate(d) {
                     self.current_descriptor = Some(d);
                     return Some(f);
@@ -128,8 +153,20 @@ where
     }
 }
 
+pub fn enable_nxe_efer() {
+    unsafe {
+        Efer::update(|efer| efer.insert(EferFlags::NO_EXECUTE_ENABLE));
+    }
+}
+
+pub fn enable_write_protect() {
+    unsafe {
+        Cr0::update(|f| f.insert(Cr0Flags::WRITE_PROTECT));
+    }
+}
+
 /// Gets the starting address of the top-level page table from the cr3 register.
-pub fn locate_page_table<'a>() -> &'a PageTable {
+pub fn locate_page_table() -> &'static PageTable {
     // Get the start address of the top-level page table.
     let frame = Cr3::read().0;
     // Convert this into an OffsetPageTable (the virtual memory will be added with an offset).
@@ -206,5 +243,243 @@ pub fn disable_protection() {
 pub fn enable_protection() {
     unsafe {
         Cr0::update(|flag| flag.insert(Cr0Flags::WRITE_PROTECT));
+    }
+}
+
+/// Map the rest free physical addresses.
+pub fn map_physical(
+    kernel: &Kernel,
+    frame_allocator: &mut (impl FrameAllocator<Size4KiB> + MaxPhysicalAddress<Size4KiB>),
+    page_tables: &mut PageTables,
+) {
+    let phys_start = kernel.config.physical_mem;
+    let max_addr = frame_allocator.max_phys_addr();
+    let start_frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(0));
+    let end_frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(max_addr));
+
+    for frame in PhysFrame::range_inclusive(start_frame, end_frame) {
+        let virt_addr = VirtAddr::new(frame.start_address().as_u64() + phys_start);
+        let page = Page::<Size4KiB>::containing_address(virt_addr);
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+        unsafe {
+            page_tables
+                .kernel
+                .map_to(page, frame, flags, frame_allocator)
+                .unwrap()
+                .flush();
+        }
+    }
+}
+
+/// Construct the stack mapping.
+pub fn map_stack(
+    kernel: &Kernel,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_tables: &mut PageTables,
+) {
+    // This is done by locating the top of the physical address and allocating
+    // this page for us.
+    let stack_addr = VirtAddr::new(kernel.config.kernel_stack_address);
+    let stack_size = kernel.config.kernel_stack_size;
+    let stack_end = stack_addr + stack_size * PAGE_SIZE;
+    let page_start = Page::<Size4KiB>::containing_address(stack_addr);
+    let page_end = Page::<Size4KiB>::containing_address(stack_end);
+
+    // Stack must be non-executable!
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+    for page in Page::range_inclusive(page_start, page_end) {
+        let frame = frame_allocator.allocate_frame().unwrap();
+        unsafe {
+            page_tables
+                .kernel
+                .map_to(page, frame, flags, frame_allocator)
+                .unwrap()
+                .flush();
+        }
+    }
+}
+
+/// Loads the kernel ELF executable into memory and switches to it.
+/// Returns the entry point of the kernel in virtual address.
+pub fn map_kernel(
+    kernel: &Kernel,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_tables: &mut PageTables,
+) {
+    let kernel_start = PhysAddr::new(kernel.start_address as u64);
+
+    for segment in kernel.elf.program_iter() {
+        if let Err(e) = program::sanity_check(segment, &kernel.elf) {
+            // TODO: Meaningful error information.
+            panic!();
+        }
+
+        map_segment(&segment, frame_allocator, page_tables, kernel_start);
+    }
+}
+
+/// Identity-maps context switch function, so that we don't get an immediate page fault.
+pub fn map_context_switch(
+    kernel: &Kernel,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_tables: &mut PageTables,
+) {
+    let context_switch_function = PhysAddr::new(context_switch as *const () as u64);
+    let context_switch_function_start_frame: PhysFrame =
+        PhysFrame::containing_address(context_switch_function);
+    for frame in PhysFrame::range_inclusive(
+        context_switch_function_start_frame,
+        context_switch_function_start_frame + 1,
+    ) {
+        unsafe {
+            page_tables
+                .kernel
+                .identity_map(frame, PageTableFlags::PRESENT, frame_allocator)
+                .unwrap()
+                .flush();
+        }
+    }
+}
+
+/// Maps each program header into the memory and sets up the page table mapping.
+fn map_segment(
+    segment: &ProgramHeader,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_tables: &mut PageTables,
+    kernel_start: PhysAddr,
+) {
+    if segment.get_type().unwrap() == program::Type::Load {
+        let mem_size = segment.mem_size();
+        let file_size = segment.file_size();
+        let file_offset = segment.offset() & PAGE_MASK;
+        let phys_start_addr = kernel_start + file_offset;
+        let virt_start_addr = VirtAddr::new(segment.virtual_addr());
+
+        let start_page = Page::<Size4KiB>::containing_address(virt_start_addr);
+        let start_frame = PhysFrame::<Size4KiB>::containing_address(phys_start_addr);
+        let end_frame =
+            PhysFrame::<Size4KiB>::containing_address(phys_start_addr + file_size - 1u64);
+
+        let flags = segment.flags();
+        let mut page_table_flags = PageTableFlags::PRESENT;
+        if !flags.is_execute() {
+            page_table_flags |= PageTableFlags::NO_EXECUTE
+        };
+        if flags.is_write() {
+            page_table_flags |= PageTableFlags::WRITABLE
+        };
+
+        for frame in PhysFrame::range_inclusive(start_frame, end_frame) {
+            let offset = frame - start_frame;
+            let page = start_page + offset;
+            unsafe {
+                page_tables
+                    .kernel
+                    .map_to(page, frame, page_table_flags, frame_allocator)
+                    .unwrap()
+                    .flush();
+            }
+        }
+
+        // Handle mem_size > file_size: zero padded.
+        // This section is .bss section.
+        if mem_size > file_size {
+            handle_bss_section(
+                frame_allocator,
+                page_tables,
+                end_frame,
+                mem_size,
+                file_size,
+                virt_start_addr,
+                page_table_flags,
+            );
+        }
+    }
+}
+
+/// Pad zeros to the memory region if the file size is not sufficient enough to fill the memory.
+fn handle_bss_section(
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_tables: &mut PageTables,
+    end_frame: PhysFrame,
+    mem_size: u64,
+    file_size: u64,
+    virt_start_addr: VirtAddr,
+    flags: PageTableFlags,
+) {
+    // A type alias that helps in efficiently clearing a page
+    type PageArray = [u64; Size4KiB::SIZE as usize / 8];
+    const ZERO_ARRAY: PageArray = [0; Size4KiB::SIZE as usize / 8];
+
+    let zero_start = virt_start_addr + file_size;
+    let zero_end = virt_start_addr + mem_size;
+
+    // In some cases, `zero_start` might not be page-aligned. This requires some
+    // special treatment because we can't safely zero a frame of the original file.
+    if zero_start.as_u64() & PAGE_MASK != 0 {
+        // A part of the last mapped frame needs to be zeroed.
+        let new_frame = frame_allocator.allocate_frame().unwrap();
+        let last_page = Page::<Size4KiB>::containing_address(virt_start_addr + file_size - 1u64);
+        let last_page_ptr = end_frame.start_address().as_u64() as *mut PageArray;
+        let temp_page_ptr = new_frame.start_address().as_u64() as *mut PageArray;
+
+        unsafe {
+            temp_page_ptr.write(last_page_ptr.read());
+        }
+
+        // remap last page.
+        unsafe {
+            let _ = page_tables.kernel.unmap(last_page.clone());
+            page_tables
+                .kernel
+                .map_to(last_page, new_frame, flags, frame_allocator)
+                .unwrap()
+                .flush();
+        }
+
+        // Map additional frames.
+        let start_page: Page = Page::containing_address(VirtAddr::new(x86_64::align_up(
+            zero_start.as_u64(),
+            Size4KiB::SIZE,
+        )));
+        let end_page = Page::containing_address(zero_end);
+        for page in Page::range_inclusive(start_page, end_page) {
+            let frame = frame_allocator.allocate_frame().unwrap();
+            unsafe {
+                page_tables
+                    .kernel
+                    .map_to(page, frame, flags, frame_allocator)
+                    .unwrap()
+                    .flush();
+            }
+        }
+
+        unsafe {
+            core::ptr::write_bytes(
+                zero_start.as_mut_ptr() as *mut u8,
+                0u8,
+                (mem_size - file_size) as usize,
+            );
+        }
+    }
+}
+
+/// Performs a jump into the entry of the kernel so that bootloader no long works.
+pub unsafe fn context_switch(
+    page_tables: &PageTables,
+    entry: u64,
+    header: *const Header,
+    stack_top: u64,
+) -> ! {
+    // FIXME: Fix this jump! The stack seems corrupted...
+    // The stack has bug.
+
+    asm!("mov cr3, {}; jmp {}",
+        in (reg) page_tables.kernel_level_4_frame.start_address().as_u64(),
+        in(reg) entry);
+    loop {
+        asm!("nop");
     }
 }
