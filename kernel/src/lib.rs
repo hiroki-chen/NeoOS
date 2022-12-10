@@ -3,10 +3,13 @@
 #![feature(abi_efiapi)]
 #![feature(exclusive_range_pattern)]
 #![feature(lang_items)]
+#![feature(allocator_api)]
+#![feature(alloc_error_handler)]
 
 extern crate alloc;
 
 use core::panic::PanicInfo;
+use mem::buddy_allocator::BuddyAllocator;
 
 use log::error;
 
@@ -18,6 +21,10 @@ pub mod sync;
 #[cfg(target_arch = "x86_64")]
 #[path = "arch/x86_64/mod.rs"]
 pub mod arch;
+
+/// The global allocator for the heap memory.
+#[global_allocator]
+static ALLOCATOR: BuddyAllocator = BuddyAllocator {};
 
 /// `#![no_std]` is a crate level attribute that indicates that the crate will link to the core crate instead of the std crate,
 /// but what does this mean for applications?
@@ -36,6 +43,18 @@ extern "C" fn eh_personality() {}
 pub fn panic_unwrap(info: &PanicInfo<'_>) -> ! {
     error!("{}", info);
     loop {
-        // prevent execution.
+        unsafe {
+            core::arch::asm!("cli; hlt");
+        }
+    }
+}
+
+#[alloc_error_handler]
+pub fn alloc_error(layout: alloc::alloc::Layout) -> ! {
+    error!("buddy_allocator: allocation failed in {:?}", layout);
+    loop {
+        unsafe {
+            core::arch::asm!("cli; hlt");
+        }
     }
 }

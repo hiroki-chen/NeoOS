@@ -62,7 +62,8 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
 
     // Load the kernel from the disk.
     let kernel = utils::Kernel::new(bs, &config);
-    info!("Entry: 0x{:x}", kernel.elf.header.pt2.entry_point());
+    info!("Entry: {:#x}", kernel.elf.header.pt2.entry_point());
+    info!("Kernel loaded at {:#x}", kernel.start_address as u64);
     // In the context of UEFI (Unified Extensible Firmware Interface),
     // the memory_map_size parameter specifies the size of the memory
     // map that is provided by the UEFI firmware. The memory map is a
@@ -121,5 +122,12 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     let stack_top = config.kernel_stack_address + config.kernel_stack_size * PAGE_SIZE;
 
     // The previous memory address is no longer available.
-    unsafe { page_table::context_switch(&pt, kernel_entry, config.boot_header_address, stack_top) }
+    unsafe {
+        page_table::context_switch(
+            &pt,
+            kernel_entry,
+            &mut header as *mut Header as u64,
+            stack_top,
+        )
+    }
 }

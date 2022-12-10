@@ -312,7 +312,7 @@ pub fn map_header(
     assert!((header_len as u64) < PAGE_SIZE);
 
     // Map the boot header.
-    let boot_header_address = VirtAddr::new(kernel.config.boot_header_address);
+    let boot_header_address = VirtAddr::new(header as *const _ as u64);
     let boot_header_page = Page::<Size4KiB>::containing_address(boot_header_address);
     let boot_header_frame =
         PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(header as *const _ as u64));
@@ -333,11 +333,11 @@ pub fn map_kernel(
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
     page_tables: &mut PageTables,
 ) {
+    // Physical address where kernel is loaded.
     let kernel_start = PhysAddr::new(kernel.start_address as u64);
 
     for segment in kernel.elf.program_iter() {
         if let Err(e) = program::sanity_check(segment, &kernel.elf) {
-            // TODO: Meaningful error information.
             panic!();
         }
 

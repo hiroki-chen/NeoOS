@@ -62,8 +62,9 @@ impl<'a> Kernel<'a> {
         let kernel_content = read_buf(bs, &mut kernel);
         let kernel_elf = ElfFile::new(kernel_content).expect("Not a valid ELF file.");
 
-        if kernel_elf.header.pt2.type_().as_type() != Type::Executable {
-            panic!("We only support executable!");
+        let ty = kernel_elf.header.pt2.type_().as_type();
+        if ty != Type::Executable && ty != Type::SharedObject {
+            panic!("We only support executable or shared object! Got {:?}.", ty);
         }
         info!("Kernel type: {:?}", kernel_elf.header.pt2.type_().as_type());
 
@@ -98,6 +99,7 @@ pub struct BootLoaderConfig<'a> {
     /// The size of the initramfs.
     pub initramfs_size: u64,
     /// The starting virtual address of the boot header.
+    #[deprecated]
     pub boot_header_address: u64,
 }
 

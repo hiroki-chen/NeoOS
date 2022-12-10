@@ -2,5 +2,5 @@
 members = [
   "kernel",
   "mem",
-  "image",
+  "boot",
 ]
