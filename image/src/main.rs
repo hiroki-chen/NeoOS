@@ -9,7 +9,7 @@ mod utils;
 
 extern crate alloc;
 
-use core::arch::asm;
+use alloc::boxed::Box;
 use header::Header;
 use log::info;
 use uefi::{
@@ -37,7 +37,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     let mut file = utils::open_file(bs, BOOT_CONFIG_PATH);
     let file_content = utils::read_buf(bs, &mut file);
     let config = utils::BootLoaderConfig::parse(file_content);
-    info!("Boot config: {:?}", config);
+    info!("{:#?}", config);
 
     let boot_services = st.boot_services();
     let config_table = st.config_table();
@@ -55,8 +55,8 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         .address;
 
     info!(
-        "Probed acpi: {:?}; smbios: {:?}.",
-        acpi_address, smbios_address
+        "Probed acpi: {:#x}; smbios: {:#x}.",
+        acpi_address as u64, smbios_address as u64
     );
     info!("UEFI bootloader successfullly started. ");
 
@@ -83,6 +83,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     // As we have obtained all the need information, they are no longer valid.
     // So we need to free them.
     info!("Invalidate boot services");
+    info!("cmdline addr: {:#x}", config.cmdline.as_ptr() as u64);
     let (system_table, memory_map) = st
         .exit_boot_services(handle, mmap_storage)
         .expect("Failed to exit boot services");
@@ -92,7 +93,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     let mut pt = page_table::create_page_tables(&mut allocator);
 
     // Prepare the memory spaces.
-    let kernel_entry = kernel.elf.header.pt2.entry_point();
+    // Enable protections.
     page_table::enable_nxe_efer();
     page_table::enable_write_protect();
     page_table::map_kernel(&kernel, &mut allocator, &mut pt);
@@ -100,9 +101,14 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     page_table::map_context_switch(&kernel, &mut allocator, &mut pt);
     page_table::map_physical(&kernel, &mut allocator, &mut pt);
 
-    // Jump to the kernel.
-    let stack_top = config.kernel_stack_address + config.kernel_stack_size * PAGE_SIZE;
-    let header = Header {
+    // Before kernel is the boot header.
+    let kernel_entry = kernel.elf.header.pt2.entry_point();
+
+    // Remember to map the header that loads the needed boot information.
+    // This is because after we performed a context switch into the kernel,
+    // previous pages are no longer accessible. You can check this fact by
+    // gdb command `x [addr]`.
+    let mut header = Header {
         version: 1u8,
         cmdline: config.cmdline,
         graph_mode: false,
@@ -110,13 +116,10 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         smbios_addr: smbios_address as u64,
         mem_start: config.physical_mem,
     };
+    page_table::map_header(&kernel, &mut allocator, &mut pt, &header);
+    // Jump to the kernel.
+    let stack_top = config.kernel_stack_address + config.kernel_stack_size * PAGE_SIZE;
 
-    unsafe {
-        page_table::context_switch(
-            &pt,
-            kernel.elf.header.pt2.entry_point(),
-            &header as *const Header,
-            stack_top,
-        )
-    }
+    // The previous memory address is no longer available.
+    unsafe { page_table::context_switch(&pt, kernel_entry, config.boot_header_address, stack_top) }
 }

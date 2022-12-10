@@ -29,7 +29,3 @@ pub struct Header {
     // The memory mapping information after boolloader starts the kernel.
     // pub memory_map: MemoryMap,
 }
-
-impl Header {
-    // TODO.
-}

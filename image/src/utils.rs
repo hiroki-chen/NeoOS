@@ -11,10 +11,7 @@ use uefi::{
     table::boot::{AllocateType, MemoryType},
     CStr16,
 };
-use xmas_elf::{
-    header::{Type, Type_},
-    ElfFile,
-};
+use xmas_elf::{header::Type, ElfFile};
 
 use crate::DEFAULT_FILE_BUF_SIZE;
 
@@ -100,6 +97,8 @@ pub struct BootLoaderConfig<'a> {
     pub initramfs: u64,
     /// The size of the initramfs.
     pub initramfs_size: u64,
+    /// The starting virtual address of the boot header.
+    pub boot_header_address: u64,
 }
 
 impl<'a> BootLoaderConfig<'a> {
@@ -113,6 +112,7 @@ impl<'a> BootLoaderConfig<'a> {
         let physical_mem = parse_u64(&config_str, "physical_mem");
         let initramfs = parse_u64(&config_str, "initramfs");
         let initramfs_size = parse_u64(&config_str, "initramfs_size");
+        let boot_header_address = parse_u64(&config_str, "boot_header_address");
 
         Self {
             kernel_stack_size,
@@ -122,6 +122,7 @@ impl<'a> BootLoaderConfig<'a> {
             physical_mem,
             initramfs,
             initramfs_size,
+            boot_header_address,
         }
     }
 }
@@ -136,6 +137,7 @@ impl<'a> Default for BootLoaderConfig<'a> {
             physical_mem: 0xFFFF800000000000,
             initramfs: 0,
             initramfs_size: 0,
+            boot_header_address: 0xFFFFFF0000000000,
         }
     }
 }

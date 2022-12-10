@@ -282,9 +282,8 @@ pub fn map_stack(
     // this page for us.
     let stack_addr = VirtAddr::new(kernel.config.kernel_stack_address);
     let stack_size = kernel.config.kernel_stack_size;
-    let stack_end = stack_addr + stack_size * PAGE_SIZE;
     let page_start = Page::<Size4KiB>::containing_address(stack_addr);
-    let page_end = Page::<Size4KiB>::containing_address(stack_end);
+    let page_end = page_start + stack_size;
 
     // Stack must be non-executable!
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
@@ -298,6 +297,32 @@ pub fn map_stack(
                 .unwrap()
                 .flush();
         }
+    }
+}
+
+// TODO: Map the command line and other fields.
+pub fn map_header(
+    kernel: &Kernel,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_tables: &mut PageTables,
+    header: &Header,
+) {
+    let header_len = core::mem::size_of::<Header>();
+    // For simplicity, we assume the size of the header is smaller than a page.
+    assert!((header_len as u64) < PAGE_SIZE);
+
+    // Map the boot header.
+    let boot_header_address = VirtAddr::new(kernel.config.boot_header_address);
+    let boot_header_page = Page::<Size4KiB>::containing_address(boot_header_address);
+    let boot_header_frame =
+        PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(header as *const _ as u64));
+    unsafe {
+        let flags = PageTableFlags::PRESENT;
+        page_tables
+            .kernel
+            .map_to(boot_header_page, boot_header_frame, flags, frame_allocator)
+            .unwrap()
+            .flush();
     }
 }
 
@@ -470,15 +495,14 @@ fn handle_bss_section(
 pub unsafe fn context_switch(
     page_tables: &PageTables,
     entry: u64,
-    header: *const Header,
+    header_address: u64,
     stack_top: u64,
 ) -> ! {
-    // FIXME: Fix this jump! The stack seems corrupted...
-    // The stack has bug.
-
-    asm!("mov cr3, {}; jmp {}",
-        in (reg) page_tables.kernel_level_4_frame.start_address().as_u64(),
-        in(reg) entry);
+    asm!("mov cr3, {}; mov rsp, {}; push 0; jmp {}",
+        in(reg) page_tables.kernel_level_4_frame.start_address().as_u64(),
+        in(reg) stack_top,
+        in(reg) entry,
+        in("rdi") header_address);
     loop {
         asm!("nop");
     }
