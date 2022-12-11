@@ -13,12 +13,14 @@ SECTIONS {
 
   .text ALIGN(4K):
   {
-    stext = .;
+    /* Prevent invalid addresses. */
+    __guard_bottom = .;
     _copy_user_start = .;
     *(.text.copy_user)
     _copy_user_end = .;
     *(.text .text.*)
-    etext = .;
+    /* Prevent invalid addresses. */
+    __guard_top = .;
   }
 
   .data ALIGN(4K):

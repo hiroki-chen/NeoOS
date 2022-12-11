@@ -15,6 +15,8 @@
 
 .phony: all clean test efi debug
 
+BACKTRACE			?= 5
+OS_LOG_LEVEL	?= info
 TEST_KERNEL		?= ./test_jump.S
 WORK_DIR 			?= ./test
 BOOT_DIR 			:= $(WORK_DIR)/esp/efi/boot
@@ -27,7 +29,7 @@ QEMU_COMMAND	?= qemu-system-x86_64 -enable-kvm \
 									-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
 									-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
 									-drive format=raw,file=fat:rw:esp \
-									-nographic
+									-nographic -smp 2
 
 ifeq ($(DEBUG), 1)
 	QEMU_COMMAND += -s -S
@@ -41,7 +43,9 @@ debug: kernel
 	@sudo gdb $(KERNEL_TARGET)
 
 kernel: efi
-	@cd kernel && RUSTFLAGS=-g cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem --target ./x86_64.json
+	@cd kernel && RUSTFLAGS=-g RUST_BACKTRACE=$(BACKTRACE) OS_LOG_LEVEL=$(OS_LOG_LEVEL) \
+								cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
+								--target ./x86_64.json
 	@cp $(KERNEL_TARGET) $(KERNEL_IMAGE)
 
 efi:

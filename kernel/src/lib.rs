@@ -8,16 +8,19 @@
 
 extern crate alloc;
 
+pub mod debug;
+pub mod drivers;
 pub mod error;
 pub mod logging;
 pub mod memory;
 pub mod sync;
-pub mod drivers;
 
 use core::panic::PanicInfo;
 use log::error;
 // We do not want OOM to cause kernel crash.
 use buddy_system_allocator::LockedHeapWithRescue;
+
+use crate::debug::{Frame, UNWIND_DEPTH};
 
 pub const LOG_LEVEL: &'static str = "info";
 
@@ -26,8 +29,17 @@ pub const LOG_LEVEL: &'static str = "info";
 #[path = "arch/x86_64/mod.rs"]
 pub mod arch;
 
+extern "C" {
+    /// A guard symbol for locating the top of the code segment.
+    pub fn __guard_top();
+    /// A guard symbol for locating the bottom of the code segment.
+    pub fn __guard_bottom();
+}
+
 /// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
 pub fn kmain() -> ! {
+    panic!("Test panic!");
+
     loop {
         // TODO.
     }
@@ -36,7 +48,7 @@ pub fn kmain() -> ! {
 /// The global allocator for the heap memory.
 /// Note that we use the on-the-shelf implementation for the heap allocator with kernel-level.
 /// spin lock `SpinLockNoInterrupt` and a heap grow utility function to rescue us from OOM.
-/// Before oom, the allocator will try to call rescue function and try for one more time. 
+/// Before oom, the allocator will try to call rescue function and try for one more time.
 #[global_allocator]
 static ALLOCATOR: LockedHeapWithRescue<32> = LockedHeapWithRescue::new(memory::grow_heap_on_oom);
 
@@ -54,8 +66,10 @@ extern "C" fn eh_personality() {}
 /// If we disable standard library, we must implement it manually to properly make
 /// `eh_personality` work.
 #[panic_handler]
-pub fn panic_unwrap(info: &PanicInfo<'_>) -> ! {
+pub fn panic_unwind(info: &PanicInfo<'_>) -> ! {
     error!("{}", info);
+    let frame = Frame::new();
+    frame.unwind(*UNWIND_DEPTH);
     loop {
         unsafe {
             core::arch::asm!("cli; hlt");
@@ -65,7 +79,7 @@ pub fn panic_unwrap(info: &PanicInfo<'_>) -> ! {
 
 #[alloc_error_handler]
 pub fn alloc_error(layout: alloc::alloc::Layout) -> ! {
-    error!("buddy_allocator: allocation failed in {:?}", layout);
+    error!("allocator: allocation failed in {:?}", layout);
     loop {
         unsafe {
             core::arch::asm!("cli; hlt");

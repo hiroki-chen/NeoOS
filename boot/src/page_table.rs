@@ -499,7 +499,7 @@ pub unsafe fn context_switch(
     header_address: u64,
     stack_top: u64,
 ) -> ! {
-    asm!("mov cr3, {}; mov rsp, {}; push 0; jmp {}",
+    asm!("mov cr3, {}; mov rsp, {}; push 0x10000; jmp {}",
         in(reg) page_tables.kernel_level_4_frame.start_address().as_u64(),
         in(reg) stack_top,
         in(reg) entry,

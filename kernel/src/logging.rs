@@ -35,9 +35,8 @@ impl Log for EnvLogger {
         if self.enabled(record.metadata()) {
             color_print(
                 format_args!(
-                    "[{:^5}][{} #{} says] {}\n",
+                    "[{:>5}][#{}] {}\n",
                     record.level(),
-                    crate::arch::cpu::cpu_name(64),
                     crate::arch::cpu::cpu_id(),
                     record.args()
                 ),

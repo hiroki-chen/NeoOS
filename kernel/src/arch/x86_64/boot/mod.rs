@@ -31,7 +31,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     // Initialize the heap.
     init_heap();
     // Initialize logging on the fly.
-    // This operations is safe as long as the macro is not called.
+    // This operation is safe as long as the macro is not called.
     init_env_logger().unwrap();
     // Initialize the serial port for logging.
     init_all_serial_ports();
