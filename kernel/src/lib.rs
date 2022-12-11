@@ -8,23 +8,37 @@
 
 extern crate alloc;
 
-use core::panic::PanicInfo;
-use mem::buddy_allocator::BuddyAllocator;
-
-use log::error;
-
 pub mod error;
 pub mod logging;
+pub mod memory;
 pub mod sync;
+pub mod drivers;
+
+use core::panic::PanicInfo;
+use log::error;
+// We do not want OOM to cause kernel crash.
+use buddy_system_allocator::LockedHeapWithRescue;
+
+pub const LOG_LEVEL: &'static str = "info";
 
 // We currently only support x86_64
 #[cfg(target_arch = "x86_64")]
 #[path = "arch/x86_64/mod.rs"]
 pub mod arch;
 
+/// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
+pub fn kmain() -> ! {
+    loop {
+        // TODO.
+    }
+}
+
 /// The global allocator for the heap memory.
+/// Note that we use the on-the-shelf implementation for the heap allocator with kernel-level.
+/// spin lock `SpinLockNoInterrupt` and a heap grow utility function to rescue us from OOM.
+/// Before oom, the allocator will try to call rescue function and try for one more time. 
 #[global_allocator]
-static ALLOCATOR: BuddyAllocator = BuddyAllocator {};
+static ALLOCATOR: LockedHeapWithRescue<32> = LockedHeapWithRescue::new(memory::grow_heap_on_oom);
 
 /// `#![no_std]` is a crate level attribute that indicates that the crate will link to the core crate instead of the std crate,
 /// but what does this mean for applications?

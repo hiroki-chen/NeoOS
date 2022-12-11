@@ -1,4 +1,7 @@
-// use crate::memmap::MemoryMap;
+#![allow(non_snake_case)]
+#![no_std]
+
+use uefi::proto::console::gop::ModeInfo;
 
 /// original address of boot-sector
 pub const BOOTSEG: u16 = 0x07C0;
@@ -19,13 +22,25 @@ pub struct Header {
     /// The boot flags.
     pub cmdline: &'static str,
     /// The graphic mode. Must be false because we do not support it but we may add it in the future(?)
-    pub graph_mode: bool,
+    pub enable_graph: bool,
     /// The address of the Root System Description Pointer used in the ACPI programming interface.
     pub acpi2_rsdp_addr: u64,
     /// The physical address to the start of virtual address.
     pub mem_start: u64,
     /// The address of the System Management BIOS.
     pub smbios_addr: u64,
-    // The memory mapping information after boolloader starts the kernel.
-    // pub memory_map: MemoryMap,
+    /// The graphic information.
+    pub graph_info: GraphInfo,
+}
+
+/// Graphic informations for printing to the console.
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GraphInfo {
+    /// Framebuffer base physical address
+    pub framebuffer: u64,
+    /// Framebuffer size
+    pub framebuffer_size: u64,
+    /// The graph mode.
+    pub mode: ModeInfo,
 }

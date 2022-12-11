@@ -6,7 +6,9 @@ edition = "2021"
 
 [dependencies]
 backtrace = { version = "0.3.66", default-features = false }
+boot_header = { path = "../boot_header" }
 log = "*"
+uart_16550 = "0.2.18"
 uefi = { version = "0.18.0" }
 uefi-services = { version = "0.15.0", features = ["logger"] }
 x86_64 = "0.14.10"

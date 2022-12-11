@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-.phony: all clean test efi
+.phony: all clean test efi debug
 
 TEST_KERNEL		?= ./test_jump.S
 WORK_DIR 			?= ./test
@@ -35,8 +35,13 @@ endif
 
 all: kernel
 
+debug: kernel
+	@$(QEMU_COMMAND) -s S &
+	@sleep 1
+	@sudo gdb $(KERNEL_TARGET)
+
 kernel: efi
-	@cd kernel && cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem --target ./x86_64.json
+	@cd kernel && RUSTFLAGS=-g cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem --target ./x86_64.json
 	@cp $(KERNEL_TARGET) $(KERNEL_IMAGE)
 
 efi:
@@ -48,7 +53,7 @@ run: kernel
 	@cp boot.cfg $(BOOT_DIR)
 	@cd $(WORK_DIR) && cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_VARS.fd .
 	@cd $(WORK_DIR) && \
-	sudo $(QEMU_COMMAND)
+			$(QEMU_COMMAND)
 
 clean:
 	@cargo clean

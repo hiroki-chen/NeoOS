@@ -1,6 +1,6 @@
 //! Rust port of linux/arch/x86/cpu.c
 //!
-use crate::error::Errno;
+use crate::{error::Errno, kmain};
 
 use alloc::{format, string::String};
 use log::error;
@@ -51,4 +51,8 @@ pub fn cpu_halt() {
 
 pub fn check_cpu(cpu_level: &mut i64, req_level: &mut i64, err_flags: &mut u32) {
     todo!()
+}
+
+pub fn start_core() -> ! {
+    kmain();
 }

@@ -3,17 +3,18 @@
 #![no_main]
 #![feature(abi_efiapi)]
 
-mod header;
 mod page_table;
 mod utils;
 
 extern crate alloc;
 
-use alloc::boxed::Box;
-use header::Header;
+use boot_header::KERN_VERSION;
+use boot_header::{GraphInfo, Header};
 use log::info;
+use uart_16550::SerialPort;
 use uefi::{
     prelude::*,
+    proto::console::gop::GraphicsOutput,
     table::{
         boot::{MemoryDescriptor, MemoryType},
         cfg::{ACPI2_GUID, SMBIOS_GUID},
@@ -26,6 +27,7 @@ pub use page_table::PAGE_SIZE;
 const BOOT_CONFIG_PATH: &'static str = "\\efi\\boot\\boot.cfg";
 // 1KB
 const DEFAULT_FILE_BUF_SIZE: usize = 0x400;
+const SERIAL_IO_PORT: u16 = 0x3F8;
 
 #[entry]
 fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
@@ -59,6 +61,19 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         acpi_address as u64, smbios_address as u64
     );
     info!("UEFI bootloader successfullly started. ");
+
+    // Init framebuffer, although not used.
+    let graph_info = get_graph_info(bs);
+    info!(
+        "Probed framebuffer: {:#x} with size {:#x}",
+        graph_info.framebuffer, graph_info.framebuffer_size
+    );
+
+    // Init the serial port.
+    let mut sp = unsafe { SerialPort::new(SERIAL_IO_PORT) };
+    sp.init();
+    let sp_address = unsafe { &mut sp as *mut _ as u64 };
+    info!("Serial port initialized at {:#x}", sp_address);
 
     // Load the kernel from the disk.
     let kernel = utils::Kernel::new(bs, &config);
@@ -110,9 +125,10 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     // previous pages are no longer accessible. You can check this fact by
     // gdb command `x [addr]`.
     let mut header = Header {
-        version: 1u8,
+        version: KERN_VERSION,
         cmdline: config.cmdline,
-        graph_mode: false,
+        enable_graph: true,
+        graph_info,
         acpi2_rsdp_addr: acpi_address as u64,
         smbios_addr: smbios_address as u64,
         mem_start: config.physical_mem,
@@ -129,5 +145,22 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
             &mut header as *mut Header as u64,
             stack_top,
         )
+    }
+}
+
+/// Probe the framebuffer and enable it.
+pub fn get_graph_info(bs: &BootServices) -> GraphInfo {
+    let gop_handle = bs
+        .get_handle_for_protocol::<GraphicsOutput>()
+        .expect("No such service!");
+    let mut gop = bs
+        .open_protocol_exclusive::<GraphicsOutput>(gop_handle)
+        .expect("Cannot open GraphicsOutput!");
+
+    // TODO: We currently ignore resolutions. Can be added via `boot.cfg`.
+    GraphInfo {
+        mode: gop.current_mode_info(),
+        framebuffer: gop.frame_buffer().as_mut_ptr() as u64,
+        framebuffer_size: gop.frame_buffer().size() as u64,
     }
 }

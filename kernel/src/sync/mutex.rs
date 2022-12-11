@@ -3,6 +3,7 @@
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
+use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::arch::cpu::cpu_id;
@@ -191,7 +192,9 @@ impl<T: ?Sized, S: MutexSupport> Mutex<T, S> {
     /// and the lock will be dropped when the guard falls out of scope.
     ///
     /// ```
-    /// let lock = spin::Mutex::new(0);
+    /// use kernel::sync::SpinLock as Mutex;
+    ///
+    /// let lock = Mutex::new(0);
     /// {
     ///     let mut data = lock.lock();
     ///     // The lock is now locked and the data can be accessed
@@ -205,5 +208,30 @@ impl<T: ?Sized, S: MutexSupport> Mutex<T, S> {
         self.get_lock();
 
         MutexGuard { mutex: self, guard }
+    }
+}
+
+/// Allows direct operation on `MutexGuard`.
+impl<'a, T: ?Sized, S: MutexSupport> Deref for MutexGuard<'a, T, S> {
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.mutex.data.get() }
+    }
+
+    type Target = T;
+}
+
+impl<'a, T: ?Sized, S: MutexSupport> DerefMut for MutexGuard<'a, T, S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.mutex.data.get() }
+    }
+}
+
+impl<'a, T: ?Sized, S: MutexSupport> Drop for MutexGuard<'a, T, S> {
+    fn drop(&mut self) {
+        // Release the lock and die.
+        self.mutex.lock.store(false, Ordering::Release);
+        unsafe {
+            (&*self.mutex.support.as_ptr()).lock_epilogue();
+        }
     }
 }

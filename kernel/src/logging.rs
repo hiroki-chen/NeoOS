@@ -1,15 +1,19 @@
-use core::fmt;
+//! Implement logger instance. This currently only sends output to the serial port!
+//! Framebuffer-based logging is to be implemented.
 
 use crate::{
+    arch::io::writefmt,
     error::{Errno, KResult},
     sync::mutex::SpinLockNoInterrupt as Mutex,
+    LOG_LEVEL,
 };
+use core::fmt;
 use lazy_static::lazy_static;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
 lazy_static! {
-  // Lock the logger instance.
-  static ref LOG_LOCK: Mutex<()> = Mutex::new(());
+    // Lock the logger instance.
+    static ref LOG_LOCK: Mutex<()> = Mutex::new(());
 }
 
 /// An instance that logs the information into console created by the kernel.
@@ -17,7 +21,7 @@ lazy_static! {
 /// by the `log` crate.
 struct EnvLogger;
 
-/// Tells how `log` should print the information through `Logger.`
+/// Tells how `log` should print the information througÏh `Logger.`
 impl Log for EnvLogger {
     fn enabled(&self, _metadata: &Metadata) -> bool {
         true
@@ -31,7 +35,7 @@ impl Log for EnvLogger {
         if self.enabled(record.metadata()) {
             color_print(
                 format_args!(
-                    "[{:^6}][{} #{}] {}\n",
+                    "[{:^5}][{} #{} says] {}\n",
                     record.level(),
                     crate::arch::cpu::cpu_name(64),
                     crate::arch::cpu::cpu_id(),
@@ -45,9 +49,7 @@ impl Log for EnvLogger {
 
 /// Initialize the envrionment logger.
 pub fn init_env_logger() -> KResult<()> {
-    // Single instance!
     static ENV_LOGGER: EnvLogger = EnvLogger;
-
     // Register this logger into `log`.
     if log::set_logger(&ENV_LOGGER).is_err() {
         return Err(Errno::EBUSY);
@@ -55,7 +57,7 @@ pub fn init_env_logger() -> KResult<()> {
 
     let log_level = match option_env!("OS_LOG_LEVEL") {
         Some(str) => str,
-        None => "",
+        None => LOG_LEVEL,
     }
     .to_lowercase();
 
@@ -103,13 +105,22 @@ macro_rules! print {
     }};
 }
 
-pub(crate) fn print(content: fmt::Arguments) {}
+macro_rules! add_color {
+    ($args: ident, $color: ident) => {{
+        format_args!("\u{1B}[{}m{}\u{1B}[0m", $color, $args)
+    }};
+}
 
-pub(crate) fn color_print(content: fmt::Arguments, log_level: Level) {
+pub(crate) fn print(args: fmt::Arguments) {
+    // Lock and print.
+    let _ = LOG_LOCK.lock();
+    writefmt(args);
+}
+
+pub(crate) fn color_print(args: fmt::Arguments, log_level: Level) {
     let color = log_level_to_color_code(log_level);
 
-    // TODO: lock and print.
-    let _ = LOG_LOCK.lock();
+    print(add_color!(args, color));
 }
 
 fn log_level_to_color_code(level: Level) -> u8 {

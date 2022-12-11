@@ -19,7 +19,8 @@ use x86_64::{
 };
 use xmas_elf::program::{self, ProgramHeader};
 
-use crate::{header::Header, utils::Kernel};
+use crate::utils::Kernel;
+use boot_header::Header;
 
 pub const PAGE_MASK: u64 = 0xFFFFFFFFFFFFF000;
 pub const PAGE_SIZE: u64 = 0x1000;

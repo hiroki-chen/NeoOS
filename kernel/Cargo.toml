@@ -6,10 +6,12 @@ edition = "2021"
 
 [dependencies]
 atomic_enum = "0.2.0"
-boot = { path = "../boot" }
-mem = { path = "../mem" }
+buddy_system_allocator = { version = "0.8.0", features = ["const_fn"] }
+boot_header = { path = "../boot_header" }
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 log = "0.4"
 raw-cpuid = "10.6.0"
+spin = "0.9.4"
+uart_16550 = "0.2.18"
 x86_64 = "0.14.10"
 x86 = "0.52.0"

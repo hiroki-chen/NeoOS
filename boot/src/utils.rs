@@ -195,11 +195,3 @@ pub fn read_buf(bs: &BootServices, file: &mut RegularFile) -> &'static mut [u8] 
 
     &mut mem_file[..file_len]
 }
-
-/// Pause the CPU.
-#[inline(always)]
-pub fn cpu_halt() {
-    unsafe {
-        core::arch::asm!("hlt");
-    }
-}

@@ -3,4 +3,5 @@ members = [
   "kernel",
   "mem",
   "boot",
+  "boot_header",
 ]

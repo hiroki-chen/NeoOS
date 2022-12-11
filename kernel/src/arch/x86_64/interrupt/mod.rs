@@ -12,5 +12,5 @@ pub unsafe fn disable_and_store() -> usize {
 
 #[inline(always)]
 pub unsafe fn restore(flags: usize) {
-    asm!("push {flags}; popf; sti", flags = in(reg) flags)
+    asm!("push {flags}; popf", flags = in(reg) flags)
 }
