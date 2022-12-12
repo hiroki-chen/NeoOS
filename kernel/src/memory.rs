@@ -50,7 +50,7 @@ pub static LOCKED_FRAME_ALLOCATOR: Mutex<Chunk256MiB> = Mutex::new(Chunk256MiB::
 #[inline(never)]
 #[link_section = ".text.copy_user"]
 unsafe extern "C" fn __copy_from_user<T>(dst: *mut T, src: *const T) -> usize {
-    dst.copy_from_nonoverlapping(src, core::mem::size_of::<T>());
+    dst.copy_from_nonoverlapping(src, 1);
     0
 }
 
@@ -58,7 +58,7 @@ unsafe extern "C" fn __copy_from_user<T>(dst: *mut T, src: *const T) -> usize {
 #[inline(never)]
 #[link_section = ".text.copy_user"]
 unsafe extern "C" fn __copy_to_user<T>(dst: *mut T, src: *const T) -> usize {
-    dst.copy_from_nonoverlapping(src, core::mem::size_of::<T>());
+    dst.copy_from_nonoverlapping(src, 1);
     0
 }
 
@@ -467,7 +467,7 @@ pub fn check_within_user(addr: u64, size: usize) -> bool {
 }
 
 /// Copies a buffer from the user space into kernel space. This is useful for kernel modules / drivers.
-pub fn copy_from_user<T>(src: *const T) -> KResult<T> {
+pub unsafe fn copy_from_user<T>(src: *const T) -> KResult<T> {
     // Check the memory address first.
     let addr = src as u64;
     if !check_within_user(addr, core::mem::size_of::<T>()) {
@@ -476,15 +476,15 @@ pub fn copy_from_user<T>(src: *const T) -> KResult<T> {
 
     // Copy from user.
     let mut kern_repr = core::mem::MaybeUninit::<T>::zeroed();
-    let ret = unsafe { __copy_from_user::<T>(kern_repr.as_mut_ptr(), src) };
+    let ret = __copy_from_user::<T>(kern_repr.as_mut_ptr(), src);
     match ret {
-        0 => unsafe { Ok(kern_repr.assume_init()) },
+        0 => Ok(kern_repr.assume_init()),
         _ => Err(Errno::EFAULT),
     }
 }
 
 /// Copies a buffer from the user space into kernel space. This is useful for kernel modules / drivers.
-pub fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {
+pub unsafe fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {
     // Check the memory address first.
     let kern_addr = src as u64;
     let user_addr = dst as u64;
@@ -494,7 +494,7 @@ pub fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {
     }
 
     // Copy into user.
-    let ret = unsafe { __copy_to_user::<T>(dst, src) };
+    let ret = __copy_to_user::<T>(dst, src);
     match ret {
         0 => Ok(()),
         _ => Err(Errno::EFAULT),

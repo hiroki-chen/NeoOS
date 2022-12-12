@@ -37,7 +37,7 @@ pub fn init_mem(header: &'static Header) -> KResult<()> {
         )
     };
 
-    for descriptor in mmap.into_iter() {
+    for descriptor in mmap.iter() {
         if descriptor.ty == MemoryType::CONVENTIONAL {
             let start_frame = descriptor.phys_start as usize / 0x1000;
             let end_frame = start_frame + descriptor.page_count as usize;

@@ -22,7 +22,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     let cpu_id = cpu::cpu_id();
     // Prevent multiple cores.
     if cpu_id != 0 {
-        while OK_THIS_CORE.load(Ordering::Relaxed) != true {
+        while !OK_THIS_CORE.load(Ordering::Relaxed) {
             spin_loop();
         }
         // Start other cores.

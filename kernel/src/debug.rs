@@ -20,7 +20,7 @@ lazy_static! {
 }
 
 /// Records backtrace-revelant register values.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Frame {
     pub rip: u64,
     pub rsp: u64,
