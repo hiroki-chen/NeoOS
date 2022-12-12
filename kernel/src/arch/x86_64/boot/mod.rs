@@ -5,10 +5,13 @@ use core::{
     hint::spin_loop,
     sync::atomic::{AtomicBool, Ordering},
 };
-use log::{info, warn};
+use log::{error, info, warn};
 
 use crate::{
-    arch::mm::init_mem, drivers::serial::init_all_serial_ports, kmain, logging::init_env_logger,
+    arch::{interrupt::init_interrupt_all, mm::init_mm},
+    drivers::serial::init_all_serial_ports,
+    kmain,
+    logging::init_env_logger,
     memory::init_heap,
 };
 
@@ -42,7 +45,23 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     // Print boot header.
     info!("_start(): boot header:\n{:#x?}", header);
     // Initialize the memory management (paging).
-    init_mem(header).expect("init_mem(): failed to initialize the memory management module!");
+    if let Err(errno) = init_mm(header) {
+        error!(
+            "init_mem(): failed to initialize the memory management module! Errno: {:?}",
+            errno
+        );
+    }
+    info!("_start(): initialized memory management.");
+
+    // Initialize the interrupt-related data structures and handlers.
+    if let Err(errno) = init_interrupt_all() {
+        error!(
+            "init_interrupt_all(): failed to initialize the interrupt! Errno: {:?}",
+            errno
+        );
+    }
+    info!("_start(): initialized traps, syscalls and interrupts.");
+
     // Step into the kernel main function.
     OK_THIS_CORE.store(true, Ordering::Relaxed);
     kmain();

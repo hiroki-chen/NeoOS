@@ -39,8 +39,12 @@ where
 /// We create a unified page table for both the bootloader and the kernel.
 pub struct PageTables {
     /// Provides access to the page tables of the bootloader address space.
+    #[allow(unused)]
     pub bootloader: OffsetPageTable<'static>,
     /// Provides access to the page tables of the kernel address space (not active).
+    /// 
+    /// This page table is just a bootstrap tool that enables the kernel to access
+    /// some addresses *before* it is able to setup its own page tables.
     pub kernel: OffsetPageTable<'static>,
     /// The physical frame where the level 4 page table of the kernel address space is stored.
     ///
@@ -376,6 +380,37 @@ pub fn map_kernel(
         }
 
         map_segment(&segment, frame_allocator, page_tables, kernel_start);
+    }
+}
+
+/// Identity maps the gdt physical address into virtual address. Otherwise,
+/// the kernel cannot access it.
+pub fn map_gdt(
+    kernel: &Kernel,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_tables: &mut PageTables,
+) {
+    let gdt = x86_64::instructions::tables::sgdt();
+    let addr = gdt.base;
+    let size = (gdt.limit + 1) as usize / core::mem::size_of::<u64>();
+    let page_num = (size - 1) / 0x1000 + 1;
+    let page_start = Page::<Size4KiB>::containing_address(addr);
+    let page_end = page_start + page_num as u64;
+
+    let mut cur = 064;
+    for page in Page::range_inclusive(page_start, page_end) {
+        let frame =
+            PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(addr.as_u64() + cur * 0x1000));
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        unsafe {
+            page_tables
+                .kernel
+                .map_to(page, frame, flags, frame_allocator)
+                .unwrap()
+                .flush();
+        }
+
+        cur += 1;
     }
 }
 

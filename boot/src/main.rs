@@ -145,6 +145,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     };
     page_table::map_header(&kernel, &mut allocator, &mut pt, &header);
     page_table::map_mmap(&kernel, &mut allocator, &mut pt, mmap_ptr as u64, mmap_len);
+    page_table::map_gdt(&kernel, &mut allocator, &mut pt);
     // Jump to the kernel.
     let stack_top = config.kernel_stack_address + config.kernel_stack_size * PAGE_SIZE;
 

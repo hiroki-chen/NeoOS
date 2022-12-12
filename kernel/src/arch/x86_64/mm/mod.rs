@@ -15,8 +15,8 @@
 use boot_header::{Header, MemoryDescriptor, MemoryType};
 use x86_64::{
     registers::control::{Cr2, Cr3, Cr3Flags},
-    structures::paging::PhysFrame,
-    PhysAddr,
+    structures::paging::{Page, PageTable, PhysFrame, Size4KiB},
+    PhysAddr, VirtAddr,
 };
 
 use crate::{
@@ -24,9 +24,16 @@ use crate::{
     memory::{BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
 };
 
+/// Gets the kernel page table in raw format.
+pub fn kerel_page_table() -> &'static PageTable {
+    let frame = Cr3::read().0;
+    let ptr = frame.start_address().as_u64() as *mut PageTable;
+    unsafe { &*ptr }
+}
+
 /// Inserts all UEFI mapped memory regions into the bitmap-based frame allocator.
 /// It is important for the use of the memory management.
-pub fn init_mem(header: &'static Header) -> KResult<()> {
+pub fn init_mm(header: &'static Header) -> KResult<()> {
     // Initialize the kernel frame allocator for the user space.
     let mut allocator = LOCKED_FRAME_ALLOCATOR.lock();
     // Reinterpret the memory region.
