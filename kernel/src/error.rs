@@ -1,6 +1,6 @@
 use core::result::Result;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub enum Errno {
     EPERM = 1,
     ENOENT,

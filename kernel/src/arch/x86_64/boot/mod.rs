@@ -5,10 +5,11 @@ use core::{
     hint::spin_loop,
     sync::atomic::{AtomicBool, Ordering},
 };
-use log::warn;
+use log::{info, warn};
 
 use crate::{
-    drivers::serial::init_all_serial_ports, kmain, logging::init_env_logger, memory::init_heap,
+    arch::mm::init_mem, drivers::serial::init_all_serial_ports, kmain, logging::init_env_logger,
+    memory::init_heap,
 };
 
 use super::cpu::{self, start_core};
@@ -36,7 +37,12 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     // Initialize the serial port for logging.
     init_all_serial_ports();
 
-    warn!("Env logger started!");
+    warn!("_start(): logger started!");
+
+    // Print boot header.
+    info!("_start(): boot header:\n{:#x?}", header);
+    // Initialize the memory management (paging).
+    init_mem(header).expect("init_mem(): failed to initialize the memory management module!");
     // Step into the kernel main function.
     OK_THIS_CORE.store(true, Ordering::Relaxed);
     kmain();

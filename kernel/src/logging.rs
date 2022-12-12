@@ -89,18 +89,17 @@ pub fn init_env_logger() -> KResult<()> {
 #[macro_export]
 macro_rules! println {
     () => {
-        $crate::print!("\n")
+        $crate::logging::print!("\n")
     };
     ($($arg:tt)*) => {{
-        $crate::io::_print($crate::format_args_nl!($($arg)*));
+        $crate::logging::print!(format_args_nl!($($arg)*));
     }};
 }
 
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {{
-        // todo: implement io.
-        // $crate::io::_print($crate::format_args!($($arg)*));
+        $crate::logging::print(format_args!($($arg)*));
     }};
 }
 

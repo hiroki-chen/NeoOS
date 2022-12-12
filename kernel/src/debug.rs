@@ -10,12 +10,7 @@
 use core::arch::asm;
 use lazy_static::lazy_static;
 
-use crate::{__guard_bottom, __guard_top};
-
-#[inline(always)]
-fn check_within_stack(bp: u64) -> bool {
-    bp >= 0xF_FFF_FF0_100_000_000 && bp <= 0xF_FFF_FF0_100_000_000 + 512 * 0x1000
-}
+use crate::{__guard_bottom, __guard_top, memory::check_within_stack};
 
 lazy_static! {
     pub static ref UNWIND_DEPTH: usize = option_env!("RUST_BACKTRACE")
@@ -95,6 +90,7 @@ impl Frame {
     /// to get this function work. Otherwise, the compiler will eliminate all RBPs if it thinks
     /// it is unnecessary to do so.
     pub fn unwind(&self, depth: usize) {
+        let mut prev_ip = 0x0u64;
         let mut bp = self.rbp;
         // If bp is no longer in the stack address, we stop because it may want to acces bootloader
         // allocated memory region which is no longer valid.
@@ -113,13 +109,18 @@ impl Frame {
 
         // Should prevent accesses to invalid addresses.
         while cur_depth != depth && ip <= __guard_top as u64 && ip >= __guard_bottom as u64 {
-            // Print current situations.
-            log::error!(
-                "\tStack #{:02x} - RIP: {:#018x} RBP: {:#018x}",
-                cur_depth,
-                ip - core::mem::size_of::<u64>() as u64,
-                bp,
-            );
+            if prev_ip != ip {
+                // Print current situations.
+                log::error!(
+                    "\tStack #{:02x} - RIP: {:#018x} RBP: {:#018x}",
+                    cur_depth,
+                    ip - core::mem::size_of::<u64>() as u64,
+                    bp,
+                );
+
+                prev_ip = ip;
+                cur_depth += 1;
+            }
 
             if !check_within_stack(bp) {
                 break;
@@ -128,8 +129,6 @@ impl Frame {
             // Unwind the last function.
             ip = unsafe { *(bp as *const u64).add(1) };
             bp = unsafe { *(bp as *const u64) };
-
-            cur_depth += 1;
         }
 
         log::error!("=========== STACK BACKTRACE ===========");

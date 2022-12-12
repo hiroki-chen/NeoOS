@@ -8,6 +8,7 @@ mod utils;
 
 extern crate alloc;
 
+use alloc::vec::Vec;
 use boot_header::KERN_VERSION;
 use boot_header::{GraphInfo, Header};
 use log::info;
@@ -72,7 +73,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     // Init the serial port.
     let mut sp = unsafe { SerialPort::new(SERIAL_IO_PORT) };
     sp.init();
-    let sp_address = unsafe { &mut sp as *mut _ as u64 };
+    let sp_address = &mut sp as *mut _ as u64;
     info!("Serial port initialized at {:#x}", sp_address);
 
     // Load the kernel from the disk.
@@ -94,17 +95,24 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
             .unwrap();
         unsafe { core::slice::from_raw_parts_mut(ptr, max_mmap_size) }
     };
+    let mmap_ptr = mmap_storage.as_ptr();
 
     // Boot services are available only while the firmware owns the platform.
     // As we have obtained all the need information, they are no longer valid.
     // So we need to free them.
     info!("Invalidate boot services");
-    info!("cmdline addr: {:#x}", config.cmdline.as_ptr() as u64);
-    let (system_table, memory_map) = st
+    info!(
+        "cmdline addr: {:#x}, mmap_storage: {:#x}",
+        config.cmdline.as_ptr() as u64,
+        mmap_ptr as u64
+    );
+
+    let (_system_table, memory_map) = st
         .exit_boot_services(handle, mmap_storage)
         .expect("Failed to exit boot services");
 
     // Construct mapping.
+    let mmap_len = memory_map.len();
     let mut allocator = page_table::OsFrameAllocator::new(memory_map);
     let mut pt = page_table::create_page_tables(&mut allocator);
 
@@ -132,8 +140,11 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         acpi2_rsdp_addr: acpi_address as u64,
         smbios_addr: smbios_address as u64,
         mem_start: config.physical_mem,
+        mmap: mmap_ptr as u64,
+        mmap_len: mmap_len as u64,
     };
     page_table::map_header(&kernel, &mut allocator, &mut pt, &header);
+    page_table::map_mmap(&kernel, &mut allocator, &mut pt, mmap_ptr as u64, mmap_len);
     // Jump to the kernel.
     let stack_top = config.kernel_stack_address + config.kernel_stack_size * PAGE_SIZE;
 

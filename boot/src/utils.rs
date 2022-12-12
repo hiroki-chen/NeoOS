@@ -1,6 +1,6 @@
 //! Contains a set of utility functions here.
 
-use alloc::format;
+use alloc::{format, vec::Vec};
 use log::info;
 use uefi::{
     prelude::BootServices,
@@ -8,7 +8,7 @@ use uefi::{
         file::{File, FileAttribute, FileInfo, FileMode, FileType, RegularFile},
         fs::SimpleFileSystem,
     },
-    table::boot::{AllocateType, MemoryType},
+    table::boot::{AllocateType, MemoryDescriptor, MemoryType},
     CStr16,
 };
 use xmas_elf::{header::Type, ElfFile};

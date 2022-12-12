@@ -13,6 +13,7 @@ pub mod drivers;
 pub mod error;
 pub mod logging;
 pub mod memory;
+pub mod mm;
 pub mod sync;
 
 use core::panic::PanicInfo;
@@ -38,10 +39,8 @@ extern "C" {
 
 /// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
 pub fn kmain() -> ! {
-    panic!("Test panic!");
-
     loop {
-        // TODO.
+        // todo
     }
 }
 

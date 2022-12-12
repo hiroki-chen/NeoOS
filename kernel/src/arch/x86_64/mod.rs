@@ -3,6 +3,7 @@ pub mod boot;
 pub mod cpu;
 pub mod interrupt;
 pub mod io;
+pub mod mm;
 
 // Some constants.
 pub const KERNEL_BASE: u64 = 0x1_000_000;

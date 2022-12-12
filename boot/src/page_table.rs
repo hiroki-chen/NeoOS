@@ -327,6 +327,39 @@ pub fn map_header(
     }
 }
 
+/// Maps the memory descriptor array into the kernel page table.
+pub fn map_mmap(
+    kernel: &Kernel,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_tables: &mut PageTables,
+    mmap_ptr: u64,
+    mmap_len: usize,
+) {
+    let mmap_phys = PhysAddr::new(mmap_ptr);
+    let page_len =
+        ((mmap_len * core::mem::size_of::<MemoryDescriptor>() - 1) / PAGE_SIZE as usize) as u64 + 1;
+
+    let mmap_start = VirtAddr::new(mmap_ptr);
+    let mmap_page_start = Page::<Size4KiB>::containing_address(mmap_start);
+    let mmap_page_end = mmap_page_start + page_len;
+
+    let mut cur = 0u64;
+    for page in Page::range_inclusive(mmap_page_start, mmap_page_end) {
+        let frame = PhysFrame::<Size4KiB>::containing_address(mmap_phys + cur * PAGE_SIZE);
+        let flags = PageTableFlags::PRESENT;
+
+        unsafe {
+            page_tables
+                .kernel
+                .map_to(page, frame, flags, frame_allocator)
+                .unwrap()
+                .flush();
+        }
+
+        cur += 1;
+    }
+}
+
 /// Loads the kernel ELF executable into memory and switches to it.
 /// Returns the entry point of the kernel in virtual address.
 pub fn map_kernel(
@@ -437,7 +470,6 @@ fn handle_bss_section(
 ) {
     // A type alias that helps in efficiently clearing a page
     type PageArray = [u64; Size4KiB::SIZE as usize / 8];
-    const ZERO_ARRAY: PageArray = [0; Size4KiB::SIZE as usize / 8];
 
     let zero_start = virt_start_addr + file_size;
     let zero_end = virt_start_addr + mem_size;

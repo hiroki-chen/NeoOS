@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 use uart_16550::SerialPort;
 
-use crate::{sync::mutex::SpinLockNoInterrupt as Mutex, arch::cpu::cpu_halt};
+use crate::{arch::cpu::cpu_halt, sync::mutex::SpinLockNoInterrupt as Mutex};
 
 use super::{Driver, DRIVERS, SERIAL_DRIVERS};
 

@@ -1,7 +1,11 @@
 #![allow(non_snake_case)]
 #![no_std]
 
+extern crate alloc;
+
 use uefi::proto::console::gop::ModeInfo;
+// Export.
+pub use uefi::table::boot::{MemoryDescriptor, MemoryType};
 
 /// original address of boot-sector
 pub const BOOTSEG: u16 = 0x07C0;
@@ -31,6 +35,10 @@ pub struct Header {
     pub smbios_addr: u64,
     /// The graphic information.
     pub graph_info: GraphInfo,
+    /// The address to the memory mapping provided by the UEFI.
+    pub mmap: u64,
+    /// The length of the mmap descriptors.
+    pub mmap_len: u64,
 }
 
 /// Graphic informations for printing to the console.
