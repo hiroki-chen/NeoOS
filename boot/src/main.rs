@@ -8,7 +8,6 @@ mod utils;
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use boot_header::KERN_VERSION;
 use boot_header::{GraphInfo, Header};
 use log::info;

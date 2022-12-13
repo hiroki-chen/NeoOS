@@ -57,11 +57,11 @@ const GDT_ENTRIES: &'static [u64; 5] = &[
 /// * Set up the TSS entries.
 /// * Load the GDT into the processor.
 /// * Load the task register (`ltr`).
-pub unsafe fn init_interrupt_all() -> KResult<()> {
+pub unsafe fn init_gdt() -> KResult<()> {
     let gdt_ptr = sgdt();
     // Align to 8 bytes.
     let gdt_len = (gdt_ptr.limit + 1) as usize / core::mem::size_of::<u64>();
-    log::info!("init_interrupt_all(): gdt_ptr: {:?}, len: {}", gdt_ptr, gdt_len);
+    log::info!("init_gdt(): gdt_ptr: {:?}, len: {}", gdt_ptr, gdt_len);
 
     let gdt = core::slice::from_raw_parts(gdt_ptr.base.as_ptr() as *const u64, gdt_len);
     // Step 1: Memory allocation. The GDT is typically stored in a fixed location in memory.
