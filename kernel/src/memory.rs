@@ -399,7 +399,7 @@ pub fn grow_heap_on_oom(mem: &mut Heap<32>, layout: &core::alloc::Layout) {
         addr_len += 1;
     }
 
-    for (addr, len) in addrs[..addr_len].into_iter() {
+    for (addr, len) in addrs[..addr_len].iter() {
         info!(
             "grow_heap_on_oom(): created {:#x} with length {:#x}",
             addr, len
@@ -451,7 +451,7 @@ impl Drop for KernelStack {
 /// Checks whether the given address is within the kernel stack.
 #[inline(always)]
 pub fn check_within_stack(bp: u64) -> bool {
-    bp >= 0xF_FFF_FF0_100_000_000 && bp <= 0xF_FFF_FF0_100_000_000 + 512 * 0x1000
+    (0xFFFF_FF01_0000_0000..=0xFFFF_FF01_0000_0000 + 512 * 0x1000).contains(&bp)
 }
 
 /// Checks whether the given memory region is within the kernel memory space.

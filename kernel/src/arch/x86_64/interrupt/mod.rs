@@ -24,13 +24,18 @@
 //! different purposes and are not interchangeable.
 
 pub mod gdt;
+pub mod idt;
+pub mod syscall;
 
 use core::arch::asm;
 
 use gdt::init_gdt;
 use log::info;
 
-use crate::error::KResult;
+use crate::{
+    arch::interrupt::{idt::init_idt, syscall::init_syscalls},
+    error::KResult,
+};
 
 pub const SYSCALL_REGS: usize = 0x6;
 
@@ -122,8 +127,12 @@ pub unsafe fn init_interrupt_all() -> KResult<()> {
     // Step 2: Set up the global descriptor table.
     init_gdt()?;
     info!("init_interrupt_all(): initialized gdt.");
-    // Step 3: Set up the local descriptor table.
-    // Step 4: Set up the interrupt descriptor table.
+    // Step 3: Set up the interrupt descriptor table.
+    init_idt()?;
+    info!("init_interrupt_all(): initialized idt.");
+    // Step 4: Set up the syscall handlers.
+    init_syscalls()?;
+    info!("init_interrupt_all(): initialized syscall handlers.");
 
     Ok(())
 }

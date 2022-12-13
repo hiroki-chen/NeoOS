@@ -1,8 +1,11 @@
 use alloc::alloc::{GlobalAlloc, Layout};
 
-/// Safe and simple drop-in allocator for Rust running on embedded or bare metal systems (no_std)
+/// Safe and simple drop-in allocator for Rust running on embedded or bare metal systems (`no_std`)
 /// The buddy memory allocation technique is a memory allocation algorithm that divides memory into
 /// partitions to try to satisfy a memory request as suitably as possible.
+///
+/// # Safety
+/// This allocator will use a `RwLock` and `Mutex` to protect the memory region.
 pub struct BuddyAllocator {}
 
 unsafe impl GlobalAlloc for BuddyAllocator {

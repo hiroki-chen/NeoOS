@@ -35,12 +35,12 @@ use crate::error::{Errno, KResult};
 // entire linear address space regardless of what they are set to.
 
 // Constants for cs and ds.
-const KERN_CODE_64B: u64 = 0x00209800_00000000; // EXECUTABLE | USER_SEGMENT | PRESENT | LONG_MODE
-const KERN_DATA_64B: u64 = 0x00009200_00000000; // DATA_WRITABLE | USER_SEGMENT | PRESENT
-const USER_CODE_64B: u64 = 0x0020F800_00000000; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT | LONG_MODE
-const USER_CODE_32B: u64 = 0x00cffa00_0000ffff; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT
-const USER_DATA_32B: u64 = 0x00cff200_0000ffff; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT
-const GDT_ENTRIES: &'static [u64; 5] = &[
+const KERN_CODE_64B: u64 = 0x0020_9800_0000_0000; // EXECUTABLE | USER_SEGMENT | PRESENT | LONG_MODE
+const KERN_DATA_64B: u64 = 0x0000_9200_0000_0000; // DATA_WRITABLE | USER_SEGMENT | PRESENT
+const USER_CODE_64B: u64 = 0x0020_F800_0000_0000; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT | LONG_MODE
+const USER_CODE_32B: u64 = 0x00cf_fa00_0000_ffff; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT
+const USER_DATA_32B: u64 = 0x00cf_f200_0000_ffff; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT
+const GDT_ENTRIES: &[u64; 5] = &[
     KERN_CODE_64B,
     KERN_DATA_64B,
     USER_CODE_32B,
@@ -57,11 +57,11 @@ const GDT_ENTRIES: &'static [u64; 5] = &[
 /// * Set up the TSS entries.
 /// * Load the GDT into the processor.
 /// * Load the task register (`ltr`).
-pub unsafe fn init_interrupt_all() -> KResult<()> {
+pub unsafe fn init_gdt() -> KResult<()> {
     let gdt_ptr = sgdt();
     // Align to 8 bytes.
     let gdt_len = (gdt_ptr.limit + 1) as usize / core::mem::size_of::<u64>();
-    log::info!("init_interrupt_all(): gdt_ptr: {:?}, len: {}", gdt_ptr, gdt_len);
+    log::info!("init_gdt(): gdt_ptr: {:?}, len: {}", gdt_ptr, gdt_len);
 
     let gdt = core::slice::from_raw_parts(gdt_ptr.base.as_ptr() as *const u64, gdt_len);
     // Step 1: Memory allocation. The GDT is typically stored in a fixed location in memory.

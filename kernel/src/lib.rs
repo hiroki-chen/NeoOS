@@ -1,5 +1,8 @@
 #![no_std]
 #![no_main]
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::new_without_default)]
+#![allow(clippy::fn_to_numeric_cast)]
 #![feature(abi_efiapi)]
 #![feature(exclusive_range_pattern)]
 #![feature(lang_items)]
@@ -16,14 +19,18 @@ pub mod memory;
 pub mod mm;
 pub mod sync;
 
+use alloc::string::String;
 use core::panic::PanicInfo;
+use lazy_static::lazy_static;
 use log::error;
 // We do not want OOM to cause kernel crash.
 use buddy_system_allocator::LockedHeapWithRescue;
 
 use crate::debug::{Frame, UNWIND_DEPTH};
 
-pub const LOG_LEVEL: &'static str = "info";
+lazy_static! {
+    pub static ref LOG_LEVEL: String = option_env!("OS_LOG_LEVEL").unwrap_or("info").to_lowercase();
+}
 
 // We currently only support x86_64
 #[cfg(target_arch = "x86_64")]

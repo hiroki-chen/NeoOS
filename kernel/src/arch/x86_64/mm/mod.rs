@@ -15,8 +15,8 @@
 use boot_header::{Header, MemoryDescriptor, MemoryType};
 use x86_64::{
     registers::control::{Cr2, Cr3, Cr3Flags},
-    structures::paging::{Page, PageTable, PhysFrame, Size4KiB},
-    PhysAddr, VirtAddr,
+    structures::paging::{PageTable, PhysFrame},
+    PhysAddr,
 };
 
 use crate::{
@@ -45,6 +45,8 @@ pub fn init_mm(header: &'static Header) -> KResult<()> {
     };
 
     for descriptor in mmap.iter() {
+        log::debug!("init_mm(): {:?}", descriptor);
+
         if descriptor.ty == MemoryType::CONVENTIONAL {
             let start_frame = descriptor.phys_start as usize / 0x1000;
             let end_frame = start_frame + descriptor.page_count as usize;

@@ -85,6 +85,8 @@ impl MutexSupport for SpinNoInterrupt {
 
 pub struct MutexGuard<'a, T: ?Sized + 'a, S: MutexSupport + 'a> {
     pub(super) mutex: &'a Mutex<T, S>,
+    
+    #[allow(unused)]
     guard: S::GuardData,
 }
 
@@ -231,7 +233,7 @@ impl<'a, T: ?Sized, S: MutexSupport> Drop for MutexGuard<'a, T, S> {
         // Release the lock and die.
         self.mutex.lock.store(false, Ordering::Release);
         unsafe {
-            (&*self.mutex.support.as_ptr()).lock_epilogue();
+            (*self.mutex.support.as_ptr()).lock_epilogue();
         }
     }
 }

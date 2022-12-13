@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-.phony: all clean test efi debug
+.phony: all clean test efi debug clippy
 
 BACKTRACE			?= 5
 OS_LOG_LEVEL	?= info
@@ -29,7 +29,7 @@ QEMU_COMMAND	?= qemu-system-x86_64 -enable-kvm \
 									-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
 									-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
 									-drive format=raw,file=fat:rw:esp \
-									-nographic -smp 2
+									-nographic -smp 2 -no-reboot -m 4G
 
 ifeq ($(DEBUG), 1)
 	QEMU_COMMAND += -s -S
@@ -66,3 +66,6 @@ clean:
 test: $(TEST_KERNEL)
 	@gcc $^ -o test.img -no-pie -nostartfiles
 	@mv test.img $(BOOT_DIR)
+
+clippy:
+	@cargo clippy

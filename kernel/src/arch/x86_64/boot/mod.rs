@@ -8,11 +8,12 @@ use core::{
 use log::{error, info, warn};
 
 use crate::{
-    arch::{interrupt::init_interrupt_all, mm::init_mm},
+    arch::{acpi::init_acpi, interrupt::init_interrupt_all, mm::init_mm},
     drivers::serial::init_all_serial_ports,
     kmain,
     logging::init_env_logger,
     memory::init_heap,
+    LOG_LEVEL,
 };
 
 use super::cpu::{self, start_core};
@@ -41,6 +42,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     init_all_serial_ports();
 
     warn!("_start(): logger started!");
+    info!("_Start(): logging level is {}", *LOG_LEVEL);
 
     // Print boot header.
     info!("_start(): boot header:\n{:#x?}", header);
@@ -62,7 +64,16 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     }
     info!("_start(): initialized traps, syscalls and interrupts.");
 
+    if let Err(errno) = init_acpi(header) {
+        error!(
+            "init_acpi(): failed to initialize the ACPI table! Errno: {:?}",
+            errno
+        );
+    }
+    info!("init_acpi(): initialized ACPI.");
+    
     // Step into the kernel main function.
     OK_THIS_CORE.store(true, Ordering::Relaxed);
+
     kmain();
 }

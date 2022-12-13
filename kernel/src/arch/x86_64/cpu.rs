@@ -13,7 +13,7 @@ pub fn cpu_name(level: i64) -> String {
     match level {
         64 => String::from(CpuId::new().get_vendor_info().unwrap().as_str()),
         0..14 => format!("i{}86", level),
-        _ => format!("i686"),
+        _ => String::from("i686"),
     }
 }
 

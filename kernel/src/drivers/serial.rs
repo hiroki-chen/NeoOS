@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 use uart_16550::SerialPort;
 
-use crate::{arch::cpu::cpu_halt, sync::mutex::SpinLockNoInterrupt as Mutex};
+use crate::sync::mutex::SpinLockNoInterrupt as Mutex;
 
 use super::{Driver, DRIVERS, SERIAL_DRIVERS};
 
@@ -17,8 +17,8 @@ pub fn init_all_serial_ports() {
     DRIVERS.write().push(com0.clone());
     DRIVERS.write().push(com1.clone());
     // Push to the serial driver.
-    SERIAL_DRIVERS.write().push(com0.clone());
-    SERIAL_DRIVERS.write().push(com1.clone());
+    SERIAL_DRIVERS.write().push(com0);
+    SERIAL_DRIVERS.write().push(com1);
     // TODO: IRQ manager.
 }
 

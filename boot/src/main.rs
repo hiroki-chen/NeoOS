@@ -8,11 +8,9 @@ mod utils;
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use boot_header::KERN_VERSION;
 use boot_header::{GraphInfo, Header};
 use log::info;
-use uart_16550::SerialPort;
 use uefi::{
     prelude::*,
     proto::console::gop::GraphicsOutput,
@@ -21,14 +19,13 @@ use uefi::{
         cfg::{ACPI2_GUID, SMBIOS_GUID},
     },
 };
-use uefi_services;
+
 // Export.
 pub use page_table::PAGE_SIZE;
 
-const BOOT_CONFIG_PATH: &'static str = "\\efi\\boot\\boot.cfg";
+const BOOT_CONFIG_PATH: &str = "\\efi\\boot\\boot.cfg";
 // 1KB
 const DEFAULT_FILE_BUF_SIZE: usize = 0x400;
-const SERIAL_IO_PORT: u16 = 0x3F8;
 
 #[entry]
 fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
@@ -42,7 +39,6 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     let config = utils::BootLoaderConfig::parse(file_content);
     info!("{:#?}", config);
 
-    let boot_services = st.boot_services();
     let config_table = st.config_table();
 
     // Get the base address of the ACPI2 data structure.
@@ -70,12 +66,6 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         graph_info.framebuffer, graph_info.framebuffer_size
     );
 
-    // Init the serial port.
-    let mut sp = unsafe { SerialPort::new(SERIAL_IO_PORT) };
-    sp.init();
-    let sp_address = &mut sp as *mut _ as u64;
-    info!("Serial port initialized at {:#x}", sp_address);
-
     // Load the kernel from the disk.
     let kernel = utils::Kernel::new(bs, &config);
     info!("Entry: {:#x}", kernel.elf.header.pt2.entry_point());
@@ -95,24 +85,29 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
             .unwrap();
         unsafe { core::slice::from_raw_parts_mut(ptr, max_mmap_size) }
     };
-    let mmap_ptr = mmap_storage.as_ptr();
+    mmap_storage.fill(0);
+    let mmap_ptr = mmap_storage.as_mut_ptr();
 
     // Boot services are available only while the firmware owns the platform.
     // As we have obtained all the need information, they are no longer valid.
     // So we need to free them.
+    let entry_size = core::mem::size_of::<MemoryDescriptor>();
+    let mmap_size = bs.memory_map_size().map_size;
     info!("Invalidate boot services");
     info!(
-        "cmdline addr: {:#x}, mmap_storage: {:#x}",
+        "cmdline addr: {:#x}, mmap_storage: {:#x}, mm_size: {:#x}, entry_size: {:#x}",
         config.cmdline.as_ptr() as u64,
-        mmap_ptr as u64
+        mmap_ptr as u64,
+        mmap_size,
+        entry_size,
     );
 
     let (_system_table, memory_map) = st
         .exit_boot_services(handle, mmap_storage)
         .expect("Failed to exit boot services");
+    let mmap_len = memory_map.len();
 
     // Construct mapping.
-    let mmap_len = memory_map.len();
     let mut allocator = page_table::OsFrameAllocator::new(memory_map);
     let mut pt = page_table::create_page_tables(&mut allocator);
 
@@ -144,8 +139,10 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         mmap_len: mmap_len as u64,
     };
     page_table::map_header(&kernel, &mut allocator, &mut pt, &header);
-    page_table::map_mmap(&kernel, &mut allocator, &mut pt, mmap_ptr as u64, mmap_len);
     page_table::map_gdt(&kernel, &mut allocator, &mut pt);
+
+    allocator.refactor_mmap_storage(mmap_ptr, entry_size);
+    page_table::map_mmap(&kernel, &mut allocator, &mut pt, mmap_ptr as u64, mmap_size);
     // Jump to the kernel.
     let stack_top = config.kernel_stack_address + config.kernel_stack_size * PAGE_SIZE;
 

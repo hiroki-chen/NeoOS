@@ -42,7 +42,7 @@ pub struct PageTables {
     #[allow(unused)]
     pub bootloader: OffsetPageTable<'static>,
     /// Provides access to the page tables of the kernel address space (not active).
-    /// 
+    ///
     /// This page table is just a bootstrap tool that enables the kernel to access
     /// some addresses *before* it is able to setup its own page tables.
     pub kernel: OffsetPageTable<'static>,
@@ -59,6 +59,7 @@ pub struct OsFrameAllocator<M>
 where
     M: ExactSizeIterator<Item = &'static MemoryDescriptor> + Clone,
 {
+    #[allow(unused)]
     original: M,
     memory_map: M,
     current_descriptor: Option<&'static MemoryDescriptor>,
@@ -107,6 +108,22 @@ where
             Some(ret)
         } else {
             None
+        }
+    }
+
+    pub fn refactor_mmap_storage(&self, mmap_ptr: *mut u8, entry_size: usize) {
+        // Refactor mmap.
+        let mut index = 0usize;
+        for descriptor in self.memory_map.clone().into_iter() {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    descriptor as *const MemoryDescriptor as *const u8,
+                    mmap_ptr.add(index * entry_size),
+                    entry_size,
+                );
+            }
+
+            index += 1;
         }
     }
 }
@@ -237,6 +254,7 @@ pub fn create_page_tables(frame_allocator: &mut impl FrameAllocator<Size4KiB>) -
 }
 
 /// Turns off the permission check because we are root.
+#[allow(unused)]
 pub fn disable_protection() {
     unsafe {
         Cr0::update(|flag| flag.remove(Cr0Flags::WRITE_PROTECT));
@@ -245,9 +263,48 @@ pub fn disable_protection() {
 }
 
 /// Restore the persission check.
+#[allow(unused)]
 pub fn enable_protection() {
     unsafe {
         Cr0::update(|flag| flag.insert(Cr0Flags::WRITE_PROTECT));
+    }
+}
+
+/// The real implementation of the mapping function.
+///
+/// This function maps `size` memory bytes started at `virt_addr` into `phys_addr`, if it is not
+/// `None`, i.e., the memory is allocated; otherwise, it explicitly allocates a physical frame on
+/// the fly.
+pub fn map_addr(
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    page_table: &mut OffsetPageTable<'static>,
+    virt_addr: u64,
+    phys_addr: Option<u64>,
+    size: usize,
+    flags: PageTableFlags,
+) {
+    let page_num = (size - 1) as u64 / PAGE_SIZE + 1;
+    let page_start = Page::<Size4KiB>::containing_address(VirtAddr::new(virt_addr));
+    let page_end = page_start + page_num;
+
+    // Calculates the current memory index.
+    let mut cur = 0u64;
+    for page in Page::range_inclusive(page_start, page_end) {
+        let frame = match phys_addr {
+            Some(addr) => {
+                PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(addr + cur * PAGE_SIZE))
+            }
+            None => frame_allocator.allocate_frame().unwrap(),
+        };
+
+        unsafe {
+            page_table
+                .map_to(page, frame, flags, frame_allocator)
+                .unwrap()
+                .flush();
+        }
+
+        cur += 1;
     }
 }
 
@@ -285,24 +342,18 @@ pub fn map_stack(
 ) {
     // This is done by locating the top of the physical address and allocating
     // this page for us.
-    let stack_addr = VirtAddr::new(kernel.config.kernel_stack_address);
+    let stack_addr = kernel.config.kernel_stack_address;
     let stack_size = kernel.config.kernel_stack_size;
-    let page_start = Page::<Size4KiB>::containing_address(stack_addr);
-    let page_end = page_start + stack_size;
-
-    // Stack must be non-executable!
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
-    for page in Page::range_inclusive(page_start, page_end) {
-        let frame = frame_allocator.allocate_frame().unwrap();
-        unsafe {
-            page_tables
-                .kernel
-                .map_to(page, frame, flags, frame_allocator)
-                .unwrap()
-                .flush();
-        }
-    }
+    map_addr(
+        frame_allocator,
+        &mut page_tables.kernel,
+        stack_addr,
+        None,
+        (stack_size * PAGE_SIZE) as usize,
+        flags,
+    );
 }
 
 // TODO: Map the command line and other fields.
@@ -317,51 +368,36 @@ pub fn map_header(
     assert!((header_len as u64) < PAGE_SIZE);
 
     // Map the boot header.
-    let boot_header_address = VirtAddr::new(header as *const _ as u64);
-    let boot_header_page = Page::<Size4KiB>::containing_address(boot_header_address);
-    let boot_header_frame =
-        PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(header as *const _ as u64));
-    unsafe {
-        let flags = PageTableFlags::PRESENT;
-        page_tables
-            .kernel
-            .map_to(boot_header_page, boot_header_frame, flags, frame_allocator)
-            .unwrap()
-            .flush();
-    }
+    let boot_header_address = header as *const _ as u64;
+    let flags = PageTableFlags::PRESENT;
+    map_addr(
+        frame_allocator,
+        &mut page_tables.kernel,
+        boot_header_address,
+        Some(boot_header_address),
+        header_len,
+        flags,
+    );
 }
 
 /// Maps the memory descriptor array into the kernel page table.
 pub fn map_mmap(
-    kernel: &Kernel,
+    _kernel: &Kernel,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
     page_tables: &mut PageTables,
     mmap_ptr: u64,
-    mmap_len: usize,
+    mmap_size: usize,
 ) {
-    let mmap_phys = PhysAddr::new(mmap_ptr);
-    let page_len =
-        ((mmap_len * core::mem::size_of::<MemoryDescriptor>() - 1) / PAGE_SIZE as usize) as u64 + 1;
+    let flags = PageTableFlags::PRESENT;
 
-    let mmap_start = VirtAddr::new(mmap_ptr);
-    let mmap_page_start = Page::<Size4KiB>::containing_address(mmap_start);
-    let mmap_page_end = mmap_page_start + page_len;
-
-    let mut cur = 0u64;
-    for page in Page::range_inclusive(mmap_page_start, mmap_page_end) {
-        let frame = PhysFrame::<Size4KiB>::containing_address(mmap_phys + cur * PAGE_SIZE);
-        let flags = PageTableFlags::PRESENT;
-
-        unsafe {
-            page_tables
-                .kernel
-                .map_to(page, frame, flags, frame_allocator)
-                .unwrap()
-                .flush();
-        }
-
-        cur += 1;
-    }
+    map_addr(
+        frame_allocator,
+        &mut page_tables.kernel,
+        mmap_ptr,
+        Some(mmap_ptr),
+        mmap_size,
+        flags,
+    );
 }
 
 /// Loads the kernel ELF executable into memory and switches to it.
@@ -375,7 +411,7 @@ pub fn map_kernel(
     let kernel_start = PhysAddr::new(kernel.start_address as u64);
 
     for segment in kernel.elf.program_iter() {
-        if let Err(e) = program::sanity_check(segment, &kernel.elf) {
+        if let Err(_) = program::sanity_check(segment, &kernel.elf) {
             panic!();
         }
 
@@ -386,37 +422,27 @@ pub fn map_kernel(
 /// Identity maps the gdt physical address into virtual address. Otherwise,
 /// the kernel cannot access it.
 pub fn map_gdt(
-    kernel: &Kernel,
+    _kernel: &Kernel,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
     page_tables: &mut PageTables,
 ) {
     let gdt = x86_64::instructions::tables::sgdt();
     let addr = gdt.base;
     let size = (gdt.limit + 1) as usize / core::mem::size_of::<u64>();
-    let page_num = (size - 1) / 0x1000 + 1;
-    let page_start = Page::<Size4KiB>::containing_address(addr);
-    let page_end = page_start + page_num as u64;
-
-    let mut cur = 064;
-    for page in Page::range_inclusive(page_start, page_end) {
-        let frame =
-            PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(addr.as_u64() + cur * 0x1000));
-        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
-        unsafe {
-            page_tables
-                .kernel
-                .map_to(page, frame, flags, frame_allocator)
-                .unwrap()
-                .flush();
-        }
-
-        cur += 1;
-    }
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+    map_addr(
+        frame_allocator,
+        &mut page_tables.kernel,
+        addr.as_u64(),
+        Some(addr.as_u64()),
+        size,
+        flags,
+    )
 }
 
 /// Identity-maps context switch function, so that we don't get an immediate page fault.
 pub fn map_context_switch(
-    kernel: &Kernel,
+    _kernel: &Kernel,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
     page_tables: &mut PageTables,
 ) {

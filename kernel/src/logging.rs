@@ -54,13 +54,7 @@ pub fn init_env_logger() -> KResult<()> {
         return Err(Errno::EBUSY);
     }
 
-    let log_level = match option_env!("OS_LOG_LEVEL") {
-        Some(str) => str,
-        None => LOG_LEVEL,
-    }
-    .to_lowercase();
-
-    let max_level = match log_level.as_str() {
+    let max_level = match LOG_LEVEL.as_str() {
         "error" => LevelFilter::Error,
         "warn" => LevelFilter::Warn,
         "info" => LevelFilter::Info,
