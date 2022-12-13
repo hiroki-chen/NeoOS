@@ -4,7 +4,7 @@ use crate::{error::Errno, kmain};
 
 use alloc::{format, string::String};
 use log::error;
-use raw_cpuid::CpuId;
+use raw_cpuid::{CpuId, FeatureInfo};
 use x86_64::instructions;
 
 use crate::error::KResult;
@@ -22,6 +22,13 @@ pub fn cpu_id() -> usize {
         .get_feature_info()
         .unwrap()
         .initial_local_apic_id() as usize
+}
+
+pub fn cpu_feature_info() -> KResult<FeatureInfo> {
+    match CpuId::new().get_feature_info() {
+        Some(fi) => Ok(fi),
+        None => Err(Errno::EEXIST),
+    }
 }
 
 pub fn validate_cpu() -> KResult<()> {

@@ -33,7 +33,7 @@ use gdt::init_gdt;
 use log::info;
 
 use crate::{
-    arch::interrupt::{idt::init_idt, syscall::init_syscalls},
+    arch::interrupt::{idt::init_idt, syscall::init_syscall},
     error::KResult,
 };
 
@@ -47,8 +47,8 @@ pub struct GeneralRegisters {
     pub rbx: u64,
     pub rcx: u64,
     pub rdx: u64,
-    pub rdi: u64,
     pub rsi: u64,
+    pub rdi: u64,
     pub rsp: u64,
     pub rbp: u64,
     pub r8: u64,
@@ -68,13 +68,13 @@ pub struct GeneralRegisters {
 /// The context for the user processes. It is then stored into TSS.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
-pub struct UserContext {
+pub struct Context {
     pub regs: GeneralRegisters,
     pub trapno: u64,
     pub errno: u64,
 }
 
-impl UserContext {
+impl Context {
     /// Returns the type of the system call. This value is stored in RAX.
     pub fn get_syscall_number(&self) -> u64 {
         self.regs.rax
@@ -131,7 +131,7 @@ pub unsafe fn init_interrupt_all() -> KResult<()> {
     init_idt()?;
     info!("init_interrupt_all(): initialized idt.");
     // Step 4: Set up the syscall handlers.
-    init_syscalls()?;
+    init_syscall()?;
     info!("init_interrupt_all(): initialized syscall handlers.");
 
     Ok(())
