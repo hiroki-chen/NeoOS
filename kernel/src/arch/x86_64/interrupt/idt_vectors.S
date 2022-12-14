@@ -53,6 +53,7 @@ gate13:
 	push 13
 	jmp __handle_trap
 gate14:
+  # Page fault: CPU will generate errno for us.
 	push 14
 	jmp __handle_trap
 gate15:

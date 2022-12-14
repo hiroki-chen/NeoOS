@@ -1,19 +1,33 @@
 //! Rust port of linux/arch/x86/cpu.c
-//!
-use crate::{error::Errno, kmain};
 
 use alloc::{format, string::String};
-use log::error;
-use raw_cpuid::{CpuId, FeatureInfo};
-use x86_64::instructions;
 
-use crate::error::KResult;
+use raw_cpuid::{CpuId, FeatureInfo};
+use x86::apic::{x2apic::X2APIC, ApicControl};
+use x86_64::{
+    instructions,
+    registers::control::{Cr0, Cr0Flags, Cr4, Cr4Flags},
+};
+
+use crate::{
+    arch::apic::AcpiSupport,
+    error::{Errno, KResult},
+};
 
 pub fn cpu_name(level: i64) -> String {
     match level {
         64 => String::from(CpuId::new().get_vendor_info().unwrap().as_str()),
         0..14 => format!("i{}86", level),
         _ => String::from("i686"),
+    }
+}
+
+/// Put CPU into non-responsive state.
+pub fn die() -> ! {
+    loop {
+        unsafe {
+            core::arch::asm!("nop");
+        }
     }
 }
 
@@ -31,24 +45,26 @@ pub fn cpu_feature_info() -> KResult<FeatureInfo> {
     }
 }
 
-pub fn validate_cpu() -> KResult<()> {
-    let mut err_flags = 0u32;
-    let mut cpu_level = 0i64;
-    let mut req_level = 0i64;
-
-    check_cpu(&mut cpu_level, &mut req_level, &mut err_flags);
-
-    if cpu_level < req_level {
-        error!(
-            "validate_cpu(): This kernel requires an {} CPU. ",
-            cpu_name(req_level)
-        );
-        error!("\t\tWe only detected an {} CPU.", cpu_name(cpu_level));
+/// Initialize the Advanced Programmable Interrupt Controller.
+pub fn init_cpu() -> KResult<()> {
+    if !X2APIC::does_cpu_support() {
+        log::error!("init_cpu(): CPU does not support x2APIC");
         return Err(Errno::EINVAL);
     }
+    
+    let mut lapic = X2APIC::new();
+    lapic.attach();
 
-    // Register APICs
-    todo!()
+    log::info!(
+        "init_cpu(): x2APIC version is {:#x}, id is {:#x}",
+        lapic.version(),
+        lapic.id()
+    );
+    unsafe {
+        enable_float_processing_unit();
+    }
+
+    Ok(())
 }
 
 /// Halts the CPU until the next interrupt arrives.
@@ -56,10 +72,16 @@ pub fn cpu_halt() {
     instructions::hlt()
 }
 
-pub fn check_cpu(cpu_level: &mut i64, req_level: &mut i64, err_flags: &mut u32) {
-    todo!()
-}
-
-pub fn start_core() -> ! {
-    kmain();
+unsafe fn enable_float_processing_unit() {
+    Cr4::update(|cr4| {
+        // enable fxsave/fxrstor
+        cr4.insert(Cr4Flags::OSFXSR);
+        // sse
+        cr4.insert(Cr4Flags::OSXMMEXCPT_ENABLE);
+    });
+    Cr0::update(|cr0| {
+        // enable fpu
+        cr0.remove(Cr0Flags::EMULATE_COPROCESSOR);
+        cr0.insert(Cr0Flags::MONITOR_COPROCESSOR);
+    });
 }

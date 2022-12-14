@@ -13,6 +13,7 @@
 //! we do not use 5-level page table.
 
 use boot_header::{Header, MemoryDescriptor, MemoryType};
+use log::debug;
 use x86_64::{
     registers::control::{Cr2, Cr3, Cr3Flags},
     structures::paging::{PageTable, PhysFrame},
@@ -76,4 +77,25 @@ pub fn set_page_table(page_table_addr: u64) {
             Cr3Flags::empty(),
         );
     }
+}
+
+/// Pretty-prints the current page error information.
+pub fn pretty_interpret(pf_errno: usize) {
+    let present = pf_errno & 1;
+    let write = (pf_errno & (1 << 1)) >> 1;
+    let user = (pf_errno & (1 << 2)) >> 2;
+    let reserved_write = (pf_errno & (1 << 3)) >> 3;
+    let instruction_fetch = (pf_errno & (1 << 4)) >> 4;
+    let protection_key = (pf_errno & (1 << 5)) >> 5;
+    let shadow_stack = (pf_errno & (1 << 6)) >> 6;
+    let sgx = (pf_errno & (1 << 7)) >> 7;
+
+    debug!("+-------+------+------+------+------+-----+-----+-----+");
+    debug!("|  SGX  |  SS  |  PK  |  IF  |  RW  |  U  |  W  |  P  |");
+    debug!("+-------+------+------+------+------+-----+-----+-----+");
+    debug!(
+        "|   {}   |  {}   |  {}   |  {}   |  {}   |  {}  |  {}  |  {}  |",
+        sgx, shadow_stack, protection_key, instruction_fetch, reserved_write, user, write, present
+    );
+    debug!("+-------+------+------+------+------+-----+-----+-----+");
 }

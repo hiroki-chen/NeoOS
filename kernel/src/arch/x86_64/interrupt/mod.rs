@@ -79,20 +79,33 @@
 //!   mov rsp, gs:4
 //! ```
 
-pub mod gdt;
 pub mod dispatcher;
 pub mod idt;
 pub mod syscall;
 
 use core::arch::{asm, global_asm};
 
-use gdt::init_gdt;
 use log::info;
 
 use crate::{
-    arch::interrupt::{idt::init_idt, syscall::init_syscall},
+    arch::{
+        gdt::init_gdt,
+        interrupt::{idt::init_idt, syscall::init_syscall},
+    },
     error::KResult,
 };
+
+// Defines a enumeration over CPU auto-generated interrupts.
+pub const DIVIDE_BY_ZERO_INTERRUPT: usize = 0x00;
+pub const DEBUG_INTERRUPT: usize = 0x01;
+pub const NON_MASKABLE_INTERRUPT: usize = 0x02;
+pub const BREAKPOINT_INTERRUPT: usize = 0x03;
+pub const OVERFLOW_INTERRUPT: usize = 0x04;
+pub const BOUND_RANGE_EXCEEDED_INTERRUPT: usize = 0x05;
+pub const INVALID_OPCODE_INTERRUPT: usize = 0x06;
+pub const DEVICE_NOT_AVAILABLE_INTERRUPT: usize = 0x07;
+pub const DOUBLE_FAULT_INTERRUPT: usize = 0x08;
+pub const PAGE_FAULT_INTERRUPT: usize = 0x0e;
 
 pub const SYSCALL_REGS: usize = 0x6;
 

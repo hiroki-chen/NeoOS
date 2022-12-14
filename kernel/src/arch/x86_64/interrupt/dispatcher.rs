@@ -1,6 +1,12 @@
 //! This module implementes the interrupt handlers.
 
-use log::{debug, info};
+use log::{debug, error, info};
+
+use crate::arch::{
+    self,
+    interrupt::{BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT, PAGE_FAULT_INTERRUPT},
+    mm::pretty_interpret,
+};
 
 use super::TrapFrame;
 
@@ -11,7 +17,12 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
 
     // Dispatch based on tf.trap_num.
     match tf.trap_num {
-        0x3 => dump_all(tf),
+        BREAKPOINT_INTERRUPT => dump_all(tf),
+        PAGE_FAULT_INTERRUPT => page_fault(tf),
+        DOUBLE_FAULT_INTERRUPT => {
+            error!("__trap_dispatcher(): interrupt canno be handled! CPU is dead.");
+            arch::cpu::die()
+        }
 
         _ => panic!("__trap_dispatcher(): unrecognized type!"),
     }
@@ -21,6 +32,18 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
 #[inline(always)]
 fn dump_all(tf: &mut TrapFrame) {
     info!("dump_all(): dumped tf (Not TensorFlow :)) as\n{:#x?}", tf);
+}
 
-    tf.rip += 1;
+/// Handles page fault.
+fn page_fault(tf: &mut TrapFrame) {
+    let pf_addr = arch::mm::get_pf_addr();
+    debug!(
+        "page_fault(): detected page fault interrupt @ {:#x}. Layout:",
+        pf_addr
+    );
+
+    pretty_interpret(tf.error_code);
+
+    // If the page fault cannot be handled correctly, the CPU dies.
+    // arch::cpu::die();
 }

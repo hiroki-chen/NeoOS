@@ -1,7 +1,8 @@
-pub mod acpi;
 pub mod apic;
+pub mod acpi;
 pub mod boot;
 pub mod cpu;
+pub mod gdt;
 pub mod interrupt;
 pub mod io;
 pub mod mm;

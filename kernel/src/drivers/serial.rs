@@ -3,7 +3,7 @@ use uart_16550::SerialPort;
 
 use crate::sync::mutex::SpinLockNoInterrupt as Mutex;
 
-use super::{Driver, DRIVERS, SERIAL_DRIVERS};
+use super::{Driver, DRIVERS, SERIAL_DRIVERS, IRQ_MANGER};
 
 pub const COM0_ADDR: u16 = 0x3f8;
 pub const COM1_ADDR: u16 = 0x2f8;
@@ -17,9 +17,11 @@ pub fn init_all_serial_ports() {
     DRIVERS.write().push(com0.clone());
     DRIVERS.write().push(com1.clone());
     // Push to the serial driver.
-    SERIAL_DRIVERS.write().push(com0);
-    SERIAL_DRIVERS.write().push(com1);
-    // TODO: IRQ manager.
+    SERIAL_DRIVERS.write().push(com0.clone());
+    SERIAL_DRIVERS.write().push(com1.clone());
+    // Push to the IRQ.
+    IRQ_MANGER.write().register_irq(0x4, com0, false);
+    IRQ_MANGER.write().register_irq(0x3, com1, false);
 }
 
 /// Driver for the serial ports. We use it to mainly print logs.
