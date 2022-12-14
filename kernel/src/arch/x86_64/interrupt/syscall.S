@@ -2,7 +2,7 @@
 
 .global __syscall
 .global __sysreturn
-.global __trap
+.global __syscall_trap
 
 # Registers on __syscall:
 #  * rax  system call number
@@ -51,8 +51,8 @@ syscall_normal:
   push r11                # rflags
   push rcx                # rip
 
-__trap:
-  # Construct struct `pt_regs`(Context) on stack.
+__syscall_trap:
+  # Construct struct `pt_regs` (GPRs) on the stack.
   push r15
   push r14
   push r13

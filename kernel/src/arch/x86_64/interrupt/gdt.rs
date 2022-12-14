@@ -33,6 +33,10 @@ use crate::error::{Errno, KResult};
 //
 // Note: in 64-bit mode, the Base and Limit values are ignored, each descriptor covers the
 // entire linear address space regardless of what they are set to.
+//
+// This is because we do *not* desire to use gegmentation to separate memory into protected
+// areas. As well, this model is strictly enforced in Long Mode, as the base and limit values
+// are simply *ignored*.
 
 // Constants for cs and ds.
 const KERN_CODE_64B: u64 = 0x0020_9800_0000_0000; // EXECUTABLE | USER_SEGMENT | PRESENT | LONG_MODE
@@ -77,7 +81,13 @@ pub unsafe fn init_gdt() -> KResult<()> {
     let tss: &'static _ = Box::leak(tss);
     let (tss0, tss1) = match Descriptor::tss_segment(tss) {
         Descriptor::SystemSegment(tss0, tss1) => (tss0, tss1),
-        Descriptor::UserSegment(_) => return Err(Errno::EPERM),
+        Descriptor::UserSegment(tss) => {
+            log::error!(
+                "init_gdt(): expect tss at kernel level, found at user segment: {:#x}",
+                tss
+            );
+            return Err(Errno::EPERM);
+        }
     };
 
     gdt.extend_from_slice(&[tss0, tss1]);

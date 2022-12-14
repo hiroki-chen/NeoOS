@@ -1,5 +1,5 @@
 # Defines the interrupt routines by IDT entries.
-
+# Errno: 0, trap_num = gate_num.
 .section .text
 gate0:
 	push 0

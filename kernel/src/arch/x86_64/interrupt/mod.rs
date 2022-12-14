@@ -22,12 +22,69 @@
 //!
 //! While system calls, traps, and interrupts both involve the operating system, they serve
 //! different purposes and are not interchangeable.
+//!
+//! # How we deal with them
+//! We handle interrupt by IDT vectors defined in `arch/x86_64/interrupt/idt_vectors.S`.
+//! After CPU pushes `RFLAGS, CS, RIP`, each entry only does one thing:
+//!   * Push errno = 0
+//!   * Push trap_num = gate_num
+//!   * Jump to __handle_trap.
+//! E.g.:
+//! ```asm
+//! gate_233:
+//!   push 0
+//!   push 233
+//!   jmp __handle_trap
+//! ```
+//!
+//! Then, `__handle_trap` checks the privilege level when the interrupt occurs.
+//!   * If interrupt occurs at kernel level (i.e., DPL = 0), we directly construct `TrapFrame`
+//!     on the stack by pushing the remaining GPRs; finally, we move `RSP` into `RDI` as the
+//!     function argument for `__trap_handler` (see the prototype below).
+//!     ```asm
+//!     check:
+//!       push rax                      ; Backup.
+//!       mov  ax, [rsp + 4 * 8]        ; load CS (current layout: 233, 0, rip, cs, rflags).
+//!       and ax, 0x3                   ; Check DPL.
+//!       jz __kernel
+//!     __kernel:
+//!       pop rax                       ; Restore  
+//!       push 0                        ; Pad.
+//!       push r15
+//!       ...
+//!       push rax
+//!     
+//!       mov rdi, rsp
+//!       call __trap_handler ; Into Rust.
+//!     ```
+//!   * If interrupt occurs as user level (i.e., DPL = 3), we need to switch into kernel first.
+//!     Because this it shares common behavior with syscall (user -> kernel), we first switch
+//!     (by `swapgs`) the code, data base, and stack frame. Note we need to reset RSP to the
+//!     kernel stack of that thread.
+//!
+//!     Then we handle it by `__syscall_trap` defined in `syscall.S` since syscalls are
+//!     required to push registers.
+//!
+//! For syscalls, we need to first switch the code, data, and stack frame from Ring 3 to Ring
+//! 0. This is also done by `swapgs`.
+//! E.g.:
+//! ```asm
+//! __swtich:
+//!   ; SWAPGS exchanges the CPL 0 data pointer from the `IA32_KERNEL_GS_BASE` MSR
+//!   ; with the GS base register.
+//!   swapgs
+//!
+//!   ; Save and get RSP.
+//!   mov gs:12, rsp
+//!   mov rsp, gs:4
+//! ```
 
 pub mod gdt;
+pub mod dispatcher;
 pub mod idt;
 pub mod syscall;
 
-use core::arch::asm;
+use core::arch::{asm, global_asm};
 
 use gdt::init_gdt;
 use log::info;
@@ -38,6 +95,63 @@ use crate::{
 };
 
 pub const SYSCALL_REGS: usize = 0x6;
+
+global_asm!(include_str!("trap.S"));
+global_asm!(include_str!("idt_vectors.S"));
+
+/// Trap frame of kernel interrupt
+///
+/// # Trap handler
+///
+/// You need to define a handler function like this:
+///
+/// ```
+/// use arch::interrupt::TrapFrame;
+///
+/// #[no_mangle]
+/// extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
+///     match tf.trap_num {
+///         3 => {
+///             println!("TRAP: BreakPoint");
+///             tf.rip += 1;
+///         }
+///         _ => panic!("TRAP: {:#x?}", tf),
+///     }
+/// }
+/// ```
+#[derive(Debug, Default, Clone, Copy)]
+#[repr(C)]
+pub struct TrapFrame {
+    // Pushed by 'trap.S'
+    pub rax: usize,
+    pub rbx: usize,
+    pub rcx: usize,
+    pub rdx: usize,
+    pub rsi: usize,
+    pub rdi: usize,
+    pub rbp: usize,
+    pub rsp: usize,
+    pub r8: usize,
+    pub r9: usize,
+    pub r10: usize,
+    pub r11: usize,
+    pub r12: usize,
+    pub r13: usize,
+    pub r14: usize,
+    pub r15: usize,
+    pub _pad: usize,
+
+    // Pushed by 'idt_vectors.S'.
+    // Also pushed by `syscall.S` when it is a syscall.
+    // error_code = 0x100 => syscall; others => interrupt.
+    pub trap_num: usize,
+    pub error_code: usize,
+
+    // Pushed by CPU
+    pub rip: usize,
+    pub cs: usize,
+    pub rflags: usize,
+}
 
 /// A struct that wrapps all the general registers for context switch.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -65,7 +179,7 @@ pub struct GeneralRegisters {
     pub fs: u64,
 }
 
-/// The context for the user processes. It is then stored into TSS.
+/// The context for the *user* processes. It is then stored into TSS.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub struct Context {
@@ -130,6 +244,8 @@ pub unsafe fn init_interrupt_all() -> KResult<()> {
     // Step 3: Set up the interrupt descriptor table.
     init_idt()?;
     info!("init_interrupt_all(): initialized idt.");
+    info!("init_interrupt_all(): try `int 0x3`. You will see the trap frame.");
+    asm!("int 0x3");
     // Step 4: Set up the syscall handlers.
     init_syscall()?;
     info!("init_interrupt_all(): initialized syscall handlers.");

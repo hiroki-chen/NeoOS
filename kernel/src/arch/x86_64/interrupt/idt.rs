@@ -9,8 +9,11 @@
 
 use alloc::boxed::Box;
 use x86_64::{
-    structures::idt::{Entry, HandlerFunc, InterruptDescriptorTable},
-    PrivilegeLevel,
+    structures::{
+        idt::{Entry, HandlerFunc, InterruptDescriptorTable},
+        DescriptorTablePointer,
+    },
+    PrivilegeLevel, VirtAddr,
 };
 
 use crate::error::KResult;
@@ -41,11 +44,18 @@ pub fn init_idt() -> KResult<()> {
     let kernel_idt_table = Box::leak(Box::new(InterruptDescriptorTable::new()));
 
     // Construct the entry from `kernel_idt_table`.
-    let entries: &'static mut [Entry<HandlerFunc>; IDT_ENTRY_SIZE] =
-        unsafe { core::mem::transmute(kernel_idt_table) };
+    let entries: &mut [Entry<HandlerFunc>; IDT_ENTRY_SIZE] =
+        unsafe { core::mem::transmute_copy(&kernel_idt_table) };
     // Copy `VECTORS` into `entries`.
     for i in 0..IDT_ENTRY_SIZE {
-        let entry = entries[i].set_handler_fn(unsafe { core::mem::transmute(VECTORS[i]) });
+        let entry = unsafe {
+            log::debug!(
+                "init_idt(): IDT vector #[{}]: {:#x}",
+                i,
+                VECTORS[i] as usize
+            );
+            entries[i].set_handler_addr(VirtAddr::new(VECTORS[i] as u64))
+        };
         // Set privilege level for enabling user-space interrupts.
         entry.set_privilege_level(if i == INT3 || i == INT4 {
             PrivilegeLevel::Ring3
@@ -54,11 +64,23 @@ pub fn init_idt() -> KResult<()> {
         });
     }
 
-    // Load IDT.
-    unsafe {
-        let entries: &mut InterruptDescriptorTable = core::mem::transmute(entries);
-        entries.load();
-    }
+    // Load LDT.
+    kernel_idt_table.load();
+    log::debug!("init_idt(): IDT loaded at {:#x?}", sidt());
 
     Ok(())
+}
+
+/// Dumps current IDT register
+#[allow(dead_code)]
+#[inline(always)]
+pub fn sidt() -> DescriptorTablePointer {
+    let mut dtp = DescriptorTablePointer {
+        limit: 0,
+        base: VirtAddr::zero(),
+    };
+    unsafe {
+        core::arch::asm!("sidt [{}]", in(reg) &mut dtp);
+    }
+    dtp
 }
