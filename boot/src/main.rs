@@ -138,11 +138,10 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         mmap: mmap_ptr as u64,
         mmap_len: mmap_len as u64,
     };
-    page_table::map_header(&kernel, &mut allocator, &mut pt, &header);
     page_table::map_gdt(&kernel, &mut allocator, &mut pt);
 
+    // Re-use `mmap_storage`.
     allocator.refactor_mmap_storage(mmap_ptr, entry_size);
-    page_table::map_mmap(&kernel, &mut allocator, &mut pt, mmap_ptr as u64, mmap_size);
     // Jump to the kernel.
     let stack_top = config.kernel_stack_address + config.kernel_stack_size * PAGE_SIZE;
 
@@ -151,7 +150,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         page_table::context_switch(
             &pt,
             kernel_entry,
-            &mut header as *mut Header as u64,
+            (&mut header as *mut Header as u64) + config.physical_mem,
             stack_top,
         )
     }

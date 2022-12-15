@@ -309,6 +309,7 @@ pub fn map_addr(
 }
 
 /// Map the rest free physical addresses.
+/// Note that this is just a linear mapping: 0xffff_8000_0000_0000 + physical_address.
 pub fn map_physical(
     kernel: &Kernel,
     frame_allocator: &mut (impl FrameAllocator<Size4KiB> + MaxPhysicalAddress<Size4KiB>),
@@ -352,50 +353,6 @@ pub fn map_stack(
         stack_addr,
         None,
         (stack_size * PAGE_SIZE) as usize,
-        flags,
-    );
-}
-
-// TODO: Map the command line and other fields.
-pub fn map_header(
-    kernel: &Kernel,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
-    page_tables: &mut PageTables,
-    header: &Header,
-) {
-    let header_len = core::mem::size_of::<Header>();
-    // For simplicity, we assume the size of the header is smaller than a page.
-    assert!((header_len as u64) < PAGE_SIZE);
-
-    // Map the boot header.
-    let boot_header_address = header as *const _ as u64;
-    let flags = PageTableFlags::PRESENT;
-    map_addr(
-        frame_allocator,
-        &mut page_tables.kernel,
-        boot_header_address,
-        Some(boot_header_address),
-        header_len,
-        flags,
-    );
-}
-
-/// Maps the memory descriptor array into the kernel page table.
-pub fn map_mmap(
-    _kernel: &Kernel,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
-    page_tables: &mut PageTables,
-    mmap_ptr: u64,
-    mmap_size: usize,
-) {
-    let flags = PageTableFlags::PRESENT;
-
-    map_addr(
-        frame_allocator,
-        &mut page_tables.kernel,
-        mmap_ptr,
-        Some(mmap_ptr),
-        mmap_size,
         flags,
     );
 }
