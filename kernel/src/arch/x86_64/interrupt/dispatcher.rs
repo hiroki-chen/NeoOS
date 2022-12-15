@@ -36,7 +36,7 @@ fn dump_all(tf: &mut TrapFrame) {
 
 /// Handles page fault.
 fn page_fault(tf: &mut TrapFrame) {
-    let pf_addr = arch::mm::get_pf_addr();
+    let pf_addr = arch::mm::paging::get_pf_addr();
     debug!(
         "page_fault(): detected page fault interrupt @ {:#x}. Layout:",
         pf_addr

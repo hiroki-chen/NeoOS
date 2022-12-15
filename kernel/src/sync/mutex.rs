@@ -85,7 +85,7 @@ impl MutexSupport for SpinNoInterrupt {
 
 pub struct MutexGuard<'a, T: ?Sized + 'a, S: MutexSupport + 'a> {
     pub(super) mutex: &'a Mutex<T, S>,
-    
+
     #[allow(unused)]
     guard: S::GuardData,
 }

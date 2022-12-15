@@ -3,15 +3,15 @@ use uart_16550::SerialPort;
 
 use crate::sync::mutex::SpinLockNoInterrupt as Mutex;
 
-use super::{Driver, DRIVERS, SERIAL_DRIVERS, IRQ_MANGER};
+use super::{Driver, DRIVERS, IRQ_MANGER, SERIAL_COM_0_UUID, SERIAL_COM_1_UUID, SERIAL_DRIVERS};
 
 pub const COM0_ADDR: u16 = 0x3f8;
 pub const COM1_ADDR: u16 = 0x2f8;
 
 /// Initialize the COM ports.
 pub fn init_all_serial_ports() {
-    let com0 = Arc::new(ComPort::new(COM0_ADDR));
-    let com1 = Arc::new(ComPort::new(COM1_ADDR));
+    let com0 = Arc::new(ComPort::new(COM0_ADDR, SERIAL_COM_0_UUID));
+    let com1 = Arc::new(ComPort::new(COM1_ADDR, SERIAL_COM_1_UUID));
 
     // Push to the driver.
     DRIVERS.write().push(com0.clone());
@@ -41,13 +41,19 @@ pub struct ComPort {
     serial_port: Mutex<SerialPort>,
     /// Base address: 0x*f8.
     addr: u16,
+    /// UUID.
+    uuid: &'static str,
 }
 
 impl ComPort {
-    pub fn new(addr: u16) -> Self {
+    pub fn new(addr: u16, uuid: &'static str) -> Self {
         let serial_port = Mutex::new(unsafe { SerialPort::new(addr) });
         serial_port.lock().init();
-        Self { serial_port, addr }
+        Self {
+            serial_port,
+            addr,
+            uuid,
+        }
     }
 
     pub fn get_addr(&self) -> u16 {
@@ -62,6 +68,10 @@ impl Driver for ComPort {
 
     fn ty(&self) -> super::Type {
         super::Type::SERIAL
+    }
+
+    fn uuid(&self) -> &'static str {
+        self.uuid
     }
 }
 

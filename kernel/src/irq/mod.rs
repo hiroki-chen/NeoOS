@@ -60,12 +60,12 @@ impl IrqManager {
 
     pub fn remove_irq(&mut self, irq: u64, driver: Arc<dyn Driver>, all: bool) {
         match all {
-            true => self.irq_all.retain(|x| !Arc::ptr_eq(x, &driver)),
+            true => self.irq_all.retain(|x| x.uuid() != driver.uuid()),
             false => {
                 if self.irq_devices.contains_key(&irq) {
                     self.irq_devices
                         .entry(irq)
-                        .and_modify(|v| v.retain(|x| !Arc::ptr_eq(x, &driver)));
+                        .and_modify(|v| v.retain(|x| x.uuid() != driver.uuid()));
                 }
             }
         }

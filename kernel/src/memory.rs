@@ -32,14 +32,14 @@ use bit_field::BitField;
 use core::ops::Range;
 
 use crate::{
-    arch::{KERNEL_BASE, KERNEL_HEAP_SIZE, PHYSICAL_MEMORY_START},
+    arch::{mm::paging::KernelPageTable, KERNEL_BASE, KERNEL_HEAP_SIZE, PHYSICAL_MEMORY_START},
     error::{Errno, KResult},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 use alloc::alloc::{alloc, dealloc, Layout};
 use buddy_system_allocator::Heap;
 use log::info;
-use x86_64::VirtAddr;
+use x86_64::PhysAddr;
 
 pub const HEAP_UNIT: usize = 0x4000;
 pub const BITMAP_SIZE: usize = 256_000_000usize;
@@ -326,26 +326,26 @@ pub struct KernelFrameAllocator;
 
 pub trait FrameAlloc: Clone + Send + Sync + 'static {
     /// Allocates a physical frame and returns it virtual address.
-    fn alloc(&self) -> KResult<VirtAddr>;
+    fn alloc(&self) -> KResult<PhysAddr>;
     /// Allocates a contiguous physical memory and returns the start virtual address.
-    fn alloc_contiguous(&self, size: usize, align_log2: usize) -> KResult<VirtAddr>;
+    fn alloc_contiguous(&self, size: usize, align_log2: usize) -> KResult<PhysAddr>;
     /// Decalloate the given virtual address.
     fn dealloc(&self, addr: u64) -> KResult<()>;
 }
 
 impl FrameAlloc for KernelFrameAllocator {
-    fn alloc(&self) -> KResult<VirtAddr> {
+    fn alloc(&self) -> KResult<PhysAddr> {
         LOCKED_FRAME_ALLOCATOR
             .lock()
             .alloc()
-            .map(|v| VirtAddr::new(v as u64))
+            .map(|v| PhysAddr::new(v as u64))
     }
 
-    fn alloc_contiguous(&self, size: usize, align_log2: usize) -> KResult<VirtAddr> {
+    fn alloc_contiguous(&self, size: usize, align_log2: usize) -> KResult<PhysAddr> {
         LOCKED_FRAME_ALLOCATOR
             .lock()
             .alloc_contiguous(size, align_log2)
-            .map(|v| VirtAddr::new(v as u64))
+            .map(|v| PhysAddr::new(v as u64))
     }
 
     fn dealloc(&self, addr: u64) -> KResult<()> {
@@ -370,7 +370,7 @@ pub const fn offset_from_kernel_base(virt: u64) -> u64 {
 }
 
 /// The memory can be used only after we have initialized the heap!
-pub fn init_heap() {
+pub fn init_heap() -> usize {
     const MACHINE_ALIGN: usize = core::mem::size_of::<usize>();
     const HEAP_BLOCK: usize = KERNEL_HEAP_SIZE / MACHINE_ALIGN;
     static mut HEAP: [usize; HEAP_BLOCK] = [0; HEAP_BLOCK];
@@ -380,7 +380,15 @@ pub fn init_heap() {
         super::ALLOCATOR
             .lock()
             .init(HEAP.as_ptr() as usize, HEAP_BLOCK * MACHINE_ALIGN);
+        HEAP.as_ptr() as usize
     }
+}
+
+pub fn init_kernel_map() -> KResult<()> {
+    let mut page_table = KernelPageTable::active();
+
+    // todo.
+    Ok(())
 }
 
 /// When OOM occurs, we try to grow the heap to prevent the kernel from panicking.
@@ -499,4 +507,16 @@ pub unsafe fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {
         0 => Ok(()),
         _ => Err(Errno::EFAULT),
     }
+}
+
+pub fn allocate_frame() -> KResult<PhysAddr> {
+    KernelFrameAllocator.alloc()
+}
+
+pub fn allocate_frame_contiguous(size: usize, align_log2: usize) -> KResult<PhysAddr> {
+    KernelFrameAllocator.alloc_contiguous(size, align_log2)
+}
+
+pub fn dealloc_frame(addr: u64) -> KResult<()> {
+    KernelFrameAllocator.dealloc(addr)
 }

@@ -140,7 +140,7 @@ where
             .map(|d| d.phys_start + d.page_count * S::SIZE)
             .max()
             .unwrap()
-            .max(0x100_000_000)
+            .max(0x0001_0000_0000)
     }
 }
 

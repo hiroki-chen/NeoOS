@@ -18,7 +18,9 @@ pub mod irq;
 pub mod logging;
 pub mod memory;
 pub mod mm;
+pub mod process;
 pub mod sync;
+pub mod time;
 
 use alloc::string::String;
 use core::panic::PanicInfo;

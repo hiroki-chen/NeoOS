@@ -2,7 +2,7 @@
 
 use x86::apic::{ioapic::IoApic, x2apic::X2APIC, xapic::XAPIC};
 
-use crate::memory::{virt_to_phys, phys_to_virt};
+use crate::memory::phys_to_virt;
 
 use super::cpu::cpu_feature_info;
 

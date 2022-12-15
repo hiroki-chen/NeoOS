@@ -38,6 +38,13 @@ pub fn cpu_id() -> usize {
         .initial_local_apic_id() as usize
 }
 
+pub fn cpu_frequency() -> u16 {
+    CpuId::new()
+        .get_processor_frequency_info()
+        .unwrap()
+        .processor_base_frequency()
+}
+
 pub fn cpu_feature_info() -> KResult<FeatureInfo> {
     match CpuId::new().get_feature_info() {
         Some(fi) => Ok(fi),
@@ -51,7 +58,7 @@ pub fn init_cpu() -> KResult<()> {
         log::error!("init_cpu(): CPU does not support x2APIC");
         return Err(Errno::EINVAL);
     }
-    
+
     let mut lapic = X2APIC::new();
     lapic.attach();
 

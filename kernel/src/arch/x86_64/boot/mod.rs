@@ -12,7 +12,7 @@ use crate::{
         acpi::init_acpi,
         cpu::{cpu_id, init_cpu},
         interrupt::init_interrupt_all,
-        mm::init_mm,
+        mm::paging::{init_kernel_page_tables, init_mm},
     },
     drivers::{
         keyboard::init_keyboard,
@@ -46,14 +46,23 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     }
 
     // Initialize the heap.
-    init_heap();
+    let heap = init_heap();
     // Initialize logging on the fly.
     // This operation is safe as long as the macro is not called.
     init_env_logger().unwrap();
     // Initialize the serial port for logging.
     init_all_serial_ports();
     warn!("_start(): logger started!");
-    info!("_Start(): logging level is {}", *LOG_LEVEL);
+    info!("_start(): logging level is {}", *LOG_LEVEL);
+    info!("_start(): heap starts at {:#x}", heap);
+
+    if let Err(errno) = init_kernel_page_tables() {
+        panic!(
+            "_start(): failed to initialize kernel page tables! Errno: {:?}",
+            errno
+        );
+    }
+    info!("_start(): initialized kernel page tables");
 
     // Initialize RTC for read.
     init_rtc();

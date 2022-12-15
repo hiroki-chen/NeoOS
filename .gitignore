@@ -6,3 +6,4 @@ log
 backup
 data
 .gdb_history
+.vscode

@@ -14,7 +14,7 @@ use crate::{
     error::{Errno, KResult},
 };
 
-use super::{Driver, Type, RTC_DRIVERS};
+use super::{Driver, Type, RTC_DRIVERS, RTC_UUID};
 
 const CMOS_ADDR: u16 = 0x70;
 const CMOS_DATA: u16 = 0x71;
@@ -44,29 +44,20 @@ fn decode_bcd(num: u64) -> u64 {
 }
 
 #[derive(Debug)]
-pub struct RealTimeClock;
+pub struct RealTimeClock(&'static str);
 
 impl ClockDriver for RealTimeClock {
     unsafe fn read_clock_raw(&self) -> u64 {
         // Disables interrupt.
         let rflags = disable_and_store();
-        let mut addr = Port::<u8>::new(CMOS_ADDR);
-        let mut data = Port::<u8>::new(CMOS_DATA);
 
-        // Check updates.
-        loop {
-            // 0A  RTC Status register A:
-            // 	|7|6|5|4|3|2|1|0|  RTC Status Register A
-            //  | | | | `---------- rate selection Bits for divider output
-            //  | | | |		 frequency (set to 0110 = 1.024kHz, 976.562æs)
-            //  | `-------------- 22 stage divider, time base being used;
-            //  |			  (initialized to 010 = 32.768kHz)
-            //  `-------------- 1=time update in progress, 0=time/date available
-            addr.write(0x0a);
-            if data.read() & (1 << 7) != 0 {
-                break;
-            }
-        }
+        // 0A  RTC Status register A:
+        // 	|7|6|5|4|3|2|1|0|  RTC Status Register A
+        //  | | | | `---------- rate selection Bits for divider output
+        //  | | | |		 frequency (set to 0110 = 1.024kHz, 976.562æs)
+        //  | `-------------- 22 stage divider, time base being used;
+        //  |			  (initialized to 010 = 32.768kHz)
+        //  `-------------- 1=time update in progress, 0=time/date available
 
         // Read all the times.
         let mut second = read_rtc(0x00) as u64;
@@ -76,24 +67,23 @@ impl ClockDriver for RealTimeClock {
         let mut month = read_rtc(0x08) as u64;
         let mut year = read_rtc(0x09) as u64;
 
-        
         // Binary Coded Decimal, or BCD, is another process for converting decimal numbers into their binary equivalents.
         if read_rtc(0x0b) & (1 << 2) == 0 {
-          second = decode_bcd(second);
-          minute = decode_bcd(minute);
-          hour = decode_bcd(hour);
-          day = decode_bcd(day);
-          month = decode_bcd(month);
-          year = decode_bcd(year);
+            second = decode_bcd(second);
+            minute = decode_bcd(minute);
+            hour = decode_bcd(hour);
+            day = decode_bcd(day);
+            month = decode_bcd(month);
+            year = decode_bcd(year);
         }
-        
+
         year += 2000;
-        
+
         if month <= 2 {
-          month = month + 10;
-          year = year - 1;
+            month += 10;
+            year -= 1;
         } else {
-          month = month - 2;
+            month -= 2;
         }
 
         let mut timepoint = 0u64;
@@ -122,10 +112,14 @@ impl Driver for RealTimeClock {
     fn ty(&self) -> Type {
         Type::RTC
     }
+
+    fn uuid(&self) -> &'static str {
+        self.0
+    }
 }
 
 pub fn init_rtc() {
-    let rtc = Arc::new(RealTimeClock {});
+    let rtc = Arc::new(RealTimeClock(RTC_UUID));
     RTC_DRIVERS.write().push(rtc);
 }
 

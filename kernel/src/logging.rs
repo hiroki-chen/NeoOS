@@ -5,6 +5,7 @@ use crate::{
     arch::io::writefmt,
     error::{Errno, KResult},
     sync::mutex::SpinLockNoInterrupt as Mutex,
+    time::SystemTime,
     LOG_LEVEL,
 };
 use core::fmt;
@@ -35,7 +36,8 @@ impl Log for EnvLogger {
         if self.enabled(record.metadata()) {
             color_print(
                 format_args!(
-                    "[{:>5}][#{}] {}\n",
+                    "{} [{:>5}][#{}] {}\n",
+                    SystemTime::now(),
                     record.level(),
                     crate::arch::cpu::cpu_id(),
                     record.args()

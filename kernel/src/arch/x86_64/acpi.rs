@@ -4,9 +4,9 @@
 
 use core::ptr::NonNull;
 
-use acpi::{AcpiHandler, AcpiTables, PhysicalMapping};
+use acpi::{AcpiHandler, AcpiTables, HpetInfo, PhysicalMapping};
 use boot_header::Header;
-use log::{debug, error};
+use log::{debug, error, info};
 
 use crate::{
     arch::PHYSICAL_MEMORY_START,
@@ -54,6 +54,12 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
     };
 
     debug!("init_acpi(): revision: {:#x}", table.revision);
+
+    // Get IA-PC High Precision Event Timer Table for `rdtsc` timer.
+    if let Ok(hpet_table) = HpetInfo::new(&table) {
+        info!("init_acpi(): detected hpet_table!");
+        info!("init_acpi(): HPET information:\n{:#x?}", hpet_table);
+    }
 
     Ok(())
 }

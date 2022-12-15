@@ -6,17 +6,19 @@ use pc_keyboard::{layouts::Us104Key, HandleControl, Keyboard, ScancodeSet1};
 
 use crate::sync::mutex::SpinLockNoInterrupt as Mutex;
 
-use super::{serial::SerialDriver, Driver, Type, DRIVERS, SERIAL_DRIVERS};
+use super::{serial::SerialDriver, Driver, Type, DRIVERS, KEYBOARD_UUID, SERIAL_DRIVERS};
 
 /// Represents an abstract "Keyboard".
 pub struct SystemKeyboard {
     keyboard: Mutex<Keyboard<Us104Key, ScancodeSet1>>,
+    uuid: &'static str,
 }
 
 impl SystemKeyboard {
     pub fn new() -> Self {
         Self {
             keyboard: Mutex::new(Keyboard::new(HandleControl::Ignore)),
+            uuid: KEYBOARD_UUID,
         }
     }
 }
@@ -28,6 +30,10 @@ impl Driver for SystemKeyboard {
 
     fn ty(&self) -> Type {
         Type::KEYBOARD
+    }
+
+    fn uuid(&self) -> &'static str {
+        self.uuid
     }
 }
 
