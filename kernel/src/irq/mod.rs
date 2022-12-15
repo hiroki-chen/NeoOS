@@ -72,12 +72,12 @@ impl IrqManager {
     }
 
     /// Dispatches the IRQ to the corresponding controller.
-    pub fn dispatch_irq(&mut self, irq: u64) -> KResult<()> {
+    pub fn dispatch_irq(&self, irq: u64) -> KResult<()> {
         // Check unique handler.
         if self.irq_devices.contains_key(&irq) {
-            if let Entry::Occupied(entry) = self.irq_devices.entry(irq) {
+            if let Some(drivers) = self.irq_devices.get(&irq) {
                 // Try to handle it.
-                for d in entry.get().iter() {
+                for d in drivers.iter() {
                     if d.dispatch(Some(irq)) {
                         return Ok(());
                     }

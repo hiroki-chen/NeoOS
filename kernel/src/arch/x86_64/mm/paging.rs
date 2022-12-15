@@ -16,7 +16,7 @@ use x86_64::{
 
 use crate::{
     error::KResult,
-    memory::{allocate_frame, dealloc_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
+    memory::{allocate_frame, deallocate_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
 };
 
 struct PTFrameAllocator;
@@ -38,7 +38,7 @@ unsafe impl FrameAllocator<Size4KiB> for PTFrameAllocator {
 
 impl FrameDeallocator<Size4KiB> for PTFrameAllocator {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
-        if let Err(errno) = dealloc_frame(frame.start_address().as_u64()) {
+        if let Err(errno) = deallocate_frame(frame.start_address().as_u64()) {
             error!(
                 "deallocate_frame(): failed to deallocate the frame {:#x?}! Errno: {:?}",
                 frame, errno
@@ -158,7 +158,7 @@ impl Drop for KernelPageTable {
             "drop(): dropping page table at {:#x?}",
             self.page_table_frame
         );
-        dealloc_frame(self.page_table_frame.start_address().as_u64()).unwrap();
+        deallocate_frame(self.page_table_frame.start_address().as_u64()).unwrap();
     }
 }
 

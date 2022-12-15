@@ -3,7 +3,7 @@ use uart_16550::SerialPort;
 
 use crate::sync::mutex::SpinLockNoInterrupt as Mutex;
 
-use super::{Driver, DRIVERS, IRQ_MANGER, SERIAL_COM_0_UUID, SERIAL_COM_1_UUID, SERIAL_DRIVERS};
+use super::{Driver, DRIVERS, IRQ_MANAGER, SERIAL_COM_0_UUID, SERIAL_COM_1_UUID, SERIAL_DRIVERS};
 
 pub const COM0_ADDR: u16 = 0x3f8;
 pub const COM1_ADDR: u16 = 0x2f8;
@@ -20,8 +20,8 @@ pub fn init_all_serial_ports() {
     SERIAL_DRIVERS.write().push(com0.clone());
     SERIAL_DRIVERS.write().push(com1.clone());
     // Push to the IRQ.
-    IRQ_MANGER.write().register_irq(0x4, com0, false);
-    IRQ_MANGER.write().register_irq(0x3, com1, false);
+    IRQ_MANAGER.write().register_irq(0x4, com0, false);
+    IRQ_MANAGER.write().register_irq(0x3, com1, false);
 }
 
 /// Driver for the serial ports. We use it to mainly print logs.
@@ -84,5 +84,12 @@ impl SerialDriver for ComPort {
         for byte in bytes.iter() {
             self.serial_port.lock().send(*byte);
         }
+    }
+}
+
+/// Sends to the teleprinter.
+pub fn send_to_tty(byte: u8) {
+    match byte {
+        _ => unimplemented!(),
     }
 }

@@ -44,7 +44,7 @@ fn decode_bcd(num: u64) -> u64 {
 }
 
 #[derive(Debug)]
-pub struct RealTimeClock(&'static str);
+pub struct RealTimeClock;
 
 impl ClockDriver for RealTimeClock {
     unsafe fn read_clock_raw(&self) -> u64 {
@@ -114,12 +114,12 @@ impl Driver for RealTimeClock {
     }
 
     fn uuid(&self) -> &'static str {
-        self.0
+        RTC_UUID
     }
 }
 
 pub fn init_rtc() {
-    let rtc = Arc::new(RealTimeClock(RTC_UUID));
+    let rtc = Arc::new(RealTimeClock {});
     RTC_DRIVERS.write().push(rtc);
 }
 

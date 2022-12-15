@@ -86,6 +86,7 @@ pub mod syscall;
 use core::arch::{asm, global_asm};
 
 use log::info;
+use x86::apic::{x2apic::X2APIC, ApicControl};
 
 use crate::{
     arch::{
@@ -106,6 +107,10 @@ pub const INVALID_OPCODE_INTERRUPT: usize = 0x06;
 pub const DEVICE_NOT_AVAILABLE_INTERRUPT: usize = 0x07;
 pub const DOUBLE_FAULT_INTERRUPT: usize = 0x08;
 pub const PAGE_FAULT_INTERRUPT: usize = 0x0e;
+
+pub const IRQ_MIN: usize = 0x20;
+pub const IRQ_MAX: usize = 0x3f;
+pub const SYSCALL: usize = 0x100;
 
 pub const SYSCALL_REGS: usize = 0x6;
 
@@ -286,4 +291,12 @@ pub unsafe fn restore(flags: usize) {
 #[inline(always)]
 pub unsafe fn disable() {
     asm!("cli", options(nomem, nostack));
+}
+
+/// Notify the CPU that we have received this IRQ.
+#[inline(always)]
+pub fn eoi() {
+    let mut lapic = X2APIC::new();
+    lapic.attach();
+    lapic.eoi();
 }

@@ -16,6 +16,7 @@ use crate::{
     },
     drivers::{
         keyboard::init_keyboard,
+        pci_bus::init_pci,
         rtc::{init_rtc, read_clock},
         serial::init_all_serial_ports,
     },
@@ -95,6 +96,11 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
         panic!("_start(): failed to initialize CPU #0. Errno: {:?}", errno);
     }
     info!("_start(): initialized x2APIC.");
+
+    if let Err(errno) = init_pci() {
+        panic!("_start(): failed to initialize PCI. Errno: {:?}", errno);
+    }
+    info!("_start(): initialized PCI devices.");
 
     init_keyboard();
     info!("_start(): initialized keyboard.");

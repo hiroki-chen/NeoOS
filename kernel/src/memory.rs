@@ -517,6 +517,6 @@ pub fn allocate_frame_contiguous(size: usize, align_log2: usize) -> KResult<Phys
     KernelFrameAllocator.alloc_contiguous(size, align_log2)
 }
 
-pub fn dealloc_frame(addr: u64) -> KResult<()> {
+pub fn deallocate_frame(addr: u64) -> KResult<()> {
     KernelFrameAllocator.dealloc(addr)
 }
