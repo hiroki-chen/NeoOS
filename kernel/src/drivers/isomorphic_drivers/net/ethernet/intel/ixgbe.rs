@@ -439,7 +439,7 @@ impl<P: Provider> IXGBE<P> {
         // Legacy descriptor, 8K buffer size
         // Enable packet drop
         ixgbe[IXGBE_SRRCTL].update(|x| {
-            *x = (*x & !0xf) | (8 << 0) | (1 << 28);
+            *x = (*x & !0xf) | (8) | (1 << 28);
         });
 
         ixgbe[IXGBE_RDH].write(0); // RDH

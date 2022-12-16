@@ -308,7 +308,7 @@ pub fn map_addr(
 }
 
 /// Map the rest free physical addresses.
-/// Note that this is just a linear mapping: 0xffff_8000_0000_0000 + physical_address.
+/// Note that this is just a linear mapping: 0xffff_8880_0000_0000 + physical_address.
 pub fn map_physical(
     kernel: &Kernel,
     frame_allocator: &mut (impl FrameAllocator<Size4KiB> + MaxPhysicalAddress<Size4KiB>),

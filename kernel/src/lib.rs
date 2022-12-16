@@ -1,12 +1,12 @@
 #![no_std]
 #![no_main]
 #![allow(clippy::missing_safety_doc)]
+#![allow(clippy::uninit_assumed_init)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::fn_to_numeric_cast)]
 #![feature(abi_efiapi)]
 #![feature(allocator_api)]
 #![feature(alloc_error_handler)]
-#![feature(const_fn_trait_bound)]
 #![feature(exclusive_range_pattern)]
 #![feature(lang_items)]
 

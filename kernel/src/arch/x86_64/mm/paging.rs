@@ -6,17 +6,19 @@ use boot_header::{Header, MemoryDescriptor, MemoryType};
 
 use log::{debug, error, info};
 use x86_64::{
+    instructions::tlb::flush,
     registers::control::{Cr2, Cr3, Cr3Flags},
     structures::paging::{
-        mapper::PageTableFrameMapping, FrameAllocator, FrameDeallocator, MappedPageTable, Mapper,
-        Page, PageTable, PageTableFlags, PhysFrame, Size4KiB,
+        mapper::PageTableFrameMapping, page_table::PageTableEntry, FrameAllocator,
+        FrameDeallocator, MappedPageTable, Mapper, Page, PageTable, PageTableFlags, PhysFrame,
+        Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
 
 use crate::{
     arch::PHYSICAL_MEMORY_START,
-    error::KResult,
+    error::{Errno, KResult},
     memory::{allocate_frame, deallocate_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
 };
 
@@ -116,7 +118,7 @@ pub trait PageTableBehaviors: Sized {
     fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors>;
 
     /// Get a mutable reference of the content of a page of virtual address `addr`
-    fn get_page_slice_mut<'a>(&mut self, addr: VirtAddr) -> &'a mut [u8];
+    fn get_page_slice_mut<'a>(&mut self, addr: VirtAddr) -> KResult<&'a mut [u8]>;
 
     /// When copied user data (in page fault handler)，maybe need to flush I/D cache.
     fn flush_cache_copy_user(&mut self, start: VirtAddr, end: VirtAddr, execute: bool);
@@ -127,7 +129,109 @@ pub struct PageTableMapper;
 
 unsafe impl PageTableFrameMapping for PageTableMapper {
     fn frame_to_pointer(&self, frame: PhysFrame) -> *mut PageTable {
-        frame_to_page_table(frame) as *mut PageTable
+        frame_to_page_table(frame)
+    }
+}
+
+/// A wrapper for page table entry that contains its page and physical frame.
+/// Built atop x86_64 page entry.
+pub struct PageEntryWrapper(&'static mut PageTableEntry, Page, PhysFrame);
+
+impl EntryBehaviors for PageEntryWrapper {
+    fn update(&mut self) {
+        let addr = self.1.start_address();
+        flush(addr);
+    }
+
+    fn accessed(&self) -> bool {
+        self.0.flags().contains(PageTableFlags::ACCESSED)
+    }
+
+    fn dirty(&self) -> bool {
+        self.0.flags().contains(PageTableFlags::DIRTY)
+    }
+
+    fn user(&self) -> bool {
+        self.0.flags().contains(PageTableFlags::USER_ACCESSIBLE)
+    }
+
+    fn present(&self) -> bool {
+        self.0.flags().contains(PageTableFlags::PRESENT)
+    }
+
+    fn writable(&self) -> bool {
+        self.0.flags().contains(PageTableFlags::WRITABLE)
+    }
+
+    fn execute(&self) -> bool {
+        !self.0.flags().contains(PageTableFlags::NO_EXECUTE)
+    }
+
+    fn swapped(&self) -> bool {
+        self.0.flags().contains(PageTableFlags::BIT_11)
+    }
+
+    fn writable_shared(&self) -> bool {
+        self.0.flags().contains(PageTableFlags::BIT_10)
+    }
+
+    fn readonly_shared(&self) -> bool {
+        self.0.flags().contains(PageTableFlags::BIT_9)
+    }
+
+    fn mmio(&self) -> u8 {
+        0
+    }
+
+    fn target(&self) -> PhysAddr {
+        self.0.addr()
+    }
+
+    fn set_execute(&mut self, value: bool) {
+        self.0.flags().set(PageTableFlags::NO_EXECUTE, value)
+    }
+
+    fn set_mmio(&mut self, value: u8) {
+        error!("Do no set MMIO for entries!");
+    }
+
+    fn set_present(&mut self, value: bool) {
+        self.0.flags().set(PageTableFlags::PRESENT, value)
+    }
+
+    fn set_user(&mut self, value: bool) {
+        self.0.flags().set(PageTableFlags::USER_ACCESSIBLE, value)
+    }
+    fn set_writable(&mut self, value: bool) {
+        self.0.flags().set(PageTableFlags::WRITABLE, value)
+    }
+
+    fn set_shared(&mut self, writable: bool) {
+        self.0.flags().set(PageTableFlags::BIT_10, writable);
+        self.0.flags().set(PageTableFlags::BIT_9, !writable);
+    }
+
+    fn set_swapped(&mut self, value: bool) {
+        self.0.flags().set(PageTableFlags::BIT_11, value);
+    }
+
+    fn clear_accessed(&mut self) {
+        self.0.flags().remove(PageTableFlags::ACCESSED);
+    }
+
+    fn clear_dirty(&mut self) {
+        self.0.flags().remove(PageTableFlags::DIRTY);
+    }
+
+    fn clear_shared(&mut self) {
+        self.0
+            .flags()
+            .remove(PageTableFlags::BIT_9 | PageTableFlags::BIT_10);
+    }
+
+    fn set_target(&mut self, target: PhysAddr) {
+        let flags = self.0.flags();
+        self.0.set_addr(target, flags);
     }
 }
 
@@ -136,6 +240,8 @@ pub struct KernelPageTable {
     /// The page table itself.
     pub page_table: MappedPageTable<'static, PageTableMapper>,
     pub page_table_frame: PhysFrame,
+    /// The last accessed page table entry.
+    pub page_table_entry: Option<PageEntryWrapper>,
 }
 
 impl KernelPageTable {
@@ -152,11 +258,12 @@ impl KernelPageTable {
     /// This function is unsafe because the page table address `addr` must be valid.
     pub unsafe fn new(addr: u64) -> ManuallyDrop<Self> {
         let page_table_frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(addr));
-        let page_table = frame_to_page_table(page_table_frame);
+        let page_table = unsafe { &mut *frame_to_page_table(page_table_frame) };
 
         ManuallyDrop::new(Self {
             page_table: MappedPageTable::new(page_table, PageTableMapper {}),
             page_table_frame,
+            page_table_entry: None,
         })
     }
 
@@ -169,9 +276,7 @@ impl KernelPageTable {
     /// set to `DEBUG` or `TRACE`.
     pub fn print(&mut self) {
         debug!("================= Kernel Page Table =================");
-
-        let mut index = 0usize;
-        for entry in self.page_table.level_4_table().iter() {
+        for (index, entry) in self.page_table.level_4_table().iter().enumerate() {
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 debug!(
                     "Entry #{:0>4x} | Address: {:0>16x}, flags: {:<?}",
@@ -180,8 +285,6 @@ impl KernelPageTable {
                     entry.flags()
                 );
             }
-
-            index += 1;
         }
 
         debug!("================= Kernel Page Table =================");
@@ -203,7 +306,7 @@ impl PageTableBehaviors for KernelPageTable {
     fn empty() -> Self {
         let phys_addr = allocate_frame().expect("empty(): failed to allocate frame");
         let page_table_frame = PhysFrame::<Size4KiB>::containing_address(phys_addr);
-        let table = frame_to_page_table(page_table_frame);
+        let table = unsafe { &mut *frame_to_page_table(page_table_frame) };
 
         // Clear it.
         table.zero();
@@ -211,6 +314,7 @@ impl PageTableBehaviors for KernelPageTable {
             Self {
                 page_table: MappedPageTable::new(table, PageTableMapper {}),
                 page_table_frame,
+                page_table_entry: None,
             }
         }
     }
@@ -250,18 +354,48 @@ impl PageTableBehaviors for KernelPageTable {
     fn flush_cache_copy_user(&mut self, _: VirtAddr, _: VirtAddr, _: bool) {}
 
     fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors> {
-        todo!()
+        let mut page_table = frame_to_page_table(self.page_table_frame);
+
+        for page_table_level in 1..=4 {
+            // Get the index for level at `page_table_level`.
+            let index = index_at_level(page_table_level, addr.as_u64());
+            let entry = unsafe { &mut (&mut *page_table)[index as usize] };
+
+            // If this is not page table entry (PTE), continue walking.
+            if page_table_level == 4 {
+                let page = Page::<Size4KiB>::containing_address(addr);
+                self.page_table_entry = Some(PageEntryWrapper(entry, page, self.page_table_frame));
+                return Ok(self.page_table_entry.as_mut().unwrap());
+            }
+
+            if !entry.flags().contains(PageTableFlags::PRESENT) {
+                return Err(Errno::EEXIST);
+            }
+        }
+
+        Err(Errno::EEXIST)
     }
 
-    fn get_page_slice_mut<'a>(&mut self, addr: VirtAddr) -> &'a mut [u8] {
-        todo!()
+    fn get_page_slice_mut<'a>(&mut self, addr: VirtAddr) -> KResult<&'a mut [u8]> {
+        if let Ok(frame) = self
+            .page_table
+            .translate_page(Page::<Size4KiB>::containing_address(addr))
+        {
+            let virt_addr = phys_to_virt(frame.start_address().as_u64());
+            let slice = unsafe { core::slice::from_raw_parts_mut(virt_addr as *mut u8, 0x1000) };
+
+            Ok(slice)
+        } else {
+            error!("get_page_slice_mut(): invalid operation at {:#x}", addr);
+            Err(Errno::EINVAL)
+        }
     }
 }
 
-pub fn frame_to_page_table(frame: PhysFrame) -> &'static mut PageTable {
+pub fn frame_to_page_table(frame: PhysFrame) -> *mut PageTable {
     let addr = phys_to_virt(frame.start_address().as_u64());
 
-    unsafe { &mut *(addr as *mut PageTable) }
+    addr as *mut PageTable
 }
 
 /// This function will take the page table constructed by the bootloader and reconstruct
@@ -332,4 +466,10 @@ pub fn set_page_table(page_table_addr: u64) {
             Cr3Flags::empty(),
         );
     }
+}
+
+/// Extract the page entry index for `level`.
+#[inline]
+pub fn index_at_level(level: usize, addr: u64) -> u64 {
+    (addr >> (12 + (4 - level) * 9)) & 0o777
 }

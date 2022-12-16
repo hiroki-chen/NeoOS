@@ -348,7 +348,7 @@ impl<P: Provider> AHCI<P> {
 
             let received_fis = unsafe { &mut *(rfis_va as *mut AHCIReceivedFIS) };
             let cmd_list = unsafe {
-              let a = P::PAGE_SIZE / size_of::<AHCICommandHeader>();
+                let a = P::PAGE_SIZE / size_of::<AHCICommandHeader>();
                 slice::from_raw_parts_mut(
                     cmd_list_va as *mut AHCICommandHeader,
                     P::PAGE_SIZE / size_of::<AHCICommandHeader>(),
