@@ -15,6 +15,7 @@ extern crate alloc;
 pub mod debug;
 pub mod drivers;
 pub mod error;
+pub mod fs;
 pub mod irq;
 pub mod logging;
 pub mod memory;
