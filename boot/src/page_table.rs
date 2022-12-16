@@ -20,7 +20,6 @@ use x86_64::{
 use xmas_elf::program::{self, ProgramHeader};
 
 use crate::utils::Kernel;
-use boot_header::Header;
 
 pub const PAGE_MASK: u64 = 0xFFFFFFFFFFFFF000;
 pub const PAGE_SIZE: u64 = 0x1000;
@@ -529,6 +528,11 @@ fn handle_bss_section(
                     .map_to(page, frame, flags, frame_allocator)
                     .unwrap()
                     .flush();
+                page_tables
+                    .bootloader
+                    .map_to(page, frame, flags, frame_allocator)
+                    .unwrap()
+                    .flush();
             }
         }
 
@@ -549,7 +553,7 @@ pub unsafe fn context_switch(
     header_address: u64,
     stack_top: u64,
 ) -> ! {
-    asm!("mov cr3, {}; mov rsp, {}; push 0x10000; jmp {}",
+    asm!("mov cr3, {}; mov rsp, {}; push 0x0; call {}",
         in(reg) page_tables.kernel_level_4_frame.start_address().as_u64(),
         in(reg) stack_top,
         in(reg) entry,

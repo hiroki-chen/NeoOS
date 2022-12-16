@@ -384,13 +384,6 @@ pub fn init_heap() -> usize {
     }
 }
 
-pub fn init_kernel_map() -> KResult<()> {
-    let mut page_table = KernelPageTable::active();
-
-    // todo.
-    Ok(())
-}
-
 /// When OOM occurs, we try to grow the heap to prevent the kernel from panicking.
 pub fn grow_heap_on_oom(mem: &mut Heap<32>, layout: &core::alloc::Layout) {
     info!(
@@ -459,7 +452,7 @@ impl Drop for KernelStack {
 /// Checks whether the given address is within the kernel stack.
 #[inline(always)]
 pub fn check_within_stack(bp: u64) -> bool {
-    (0xFFFF_FF01_0000_0000..=0xFFFF_FF01_0000_0000 + 512 * 0x1000).contains(&bp)
+    (0xFFFF_FFFF_F000_0000..=0xFFFF_FFFF_F000_0000 + 512 * 0x1000).contains(&bp)
 }
 
 /// Checks whether the given memory region is within the kernel memory space.

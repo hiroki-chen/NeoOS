@@ -141,19 +141,55 @@ pub struct KernelPageTable {
 impl KernelPageTable {
     /// Get the active page table for the kernel.
     pub fn active() -> ManuallyDrop<Self> {
-        let page_table_frame = Cr3::read().0;
+        let page_table_addr = Cr3::read_raw().0.start_address().as_u64();
+
+        unsafe { Self::new(page_table_addr) }
+    }
+
+    /// Load from some address.
+    ///
+    /// # Safety
+    /// This function is unsafe because the page table address `addr` must be valid.
+    pub unsafe fn new(addr: u64) -> ManuallyDrop<Self> {
+        let page_table_frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(addr));
         let page_table = frame_to_page_table(page_table_frame);
 
-        unsafe {
-            ManuallyDrop::new(Self {
-                page_table: MappedPageTable::new(page_table, PageTableMapper {}),
-                page_table_frame,
-            })
+        ManuallyDrop::new(Self {
+            page_table: MappedPageTable::new(page_table, PageTableMapper {}),
+            page_table_frame,
+        })
+    }
+
+    /// Dumps the kernel page table.
+    ///
+    /// We cannot implement `Debug` or `Display` trait for this struct because they require
+    /// immutable reference to `self` but `level_4_table()` requires mutable ones.
+    ///
+    /// This print function requires the compilatio time environment variable `LOG_LEVEL` to be
+    /// set to `DEBUG` or `TRACE`.
+    pub fn print(&mut self) {
+        debug!("================= Kernel Page Table =================");
+
+        let mut index = 0usize;
+        for entry in self.page_table.level_4_table().iter() {
+            if entry.flags().contains(PageTableFlags::PRESENT) {
+                debug!(
+                    "Entry #{:0>4x} | Address: {:0>16x}, flags: {:<?}",
+                    index,
+                    entry.addr().as_u64(),
+                    entry.flags()
+                );
+            }
+
+            index += 1;
         }
+
+        debug!("================= Kernel Page Table =================");
     }
 }
 
 impl Drop for KernelPageTable {
+    /// If you want to invalidate this page table, call this function `manually`.
     fn drop(&mut self) {
         info!(
             "drop(): dropping page table at {:#x?}",
@@ -228,18 +264,14 @@ pub fn frame_to_page_table(frame: PhysFrame) -> &'static mut PageTable {
     unsafe { &mut *(addr as *mut PageTable) }
 }
 
-/// We obtained an initial page table from UEFI, but we still need to setup our own page
-/// table. This page table is used to bootstrap later initialization of page tables.
-/// The UEFI-created page table is used to map the physical memory of the system into the kernel's
-/// virtual address space, allowing the kernel to access the system's memory and begin executing.
-pub fn init_kernel_page_tables() -> KResult<()> {
-    // Do remapping.
-    let bootstrap_pg = get_page_table();
+/// This function will take the page table constructed by the bootloader and reconstruct
+/// mapping from virtual adrdress into physical address. Then, it completely invalidates
+/// previous page tables. After this function is exeucted, we can divide the kernel virtual
+/// memory space into several segments listed in the module document above.
+pub fn init_kernel_page_table() -> KResult<()> {
+    let mut page_table = KernelPageTable::active();
 
-    debug!(
-        "init_kernel_page_tables(): get bootstrapped page table at {:#x}",
-        bootstrap_pg as *mut _ as u64
-    );
+    page_table.print();
 
     Ok(())
 }

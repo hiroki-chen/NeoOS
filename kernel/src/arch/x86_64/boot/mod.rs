@@ -12,7 +12,7 @@ use crate::{
         acpi::init_acpi,
         cpu::{cpu_id, init_cpu},
         interrupt::init_interrupt_all,
-        mm::paging::{init_kernel_page_tables, init_mm},
+        mm::paging::{init_kernel_page_table, init_mm},
     },
     drivers::{
         keyboard::init_keyboard,
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     info!("_start(): logging level is {}", *LOG_LEVEL);
     info!("_start(): heap starts at {:#x}", heap);
 
-    if let Err(errno) = init_kernel_page_tables() {
+    if let Err(errno) = init_kernel_page_table() {
         panic!(
             "_start(): failed to initialize kernel page tables! Errno: {:?}",
             errno
