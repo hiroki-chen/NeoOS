@@ -32,7 +32,7 @@ use bit_field::BitField;
 use core::ops::Range;
 
 use crate::{
-    arch::{mm::paging::KernelPageTable, KERNEL_BASE, KERNEL_HEAP_SIZE, PHYSICAL_MEMORY_START},
+    arch::{KERNEL_BASE, KERNEL_HEAP_SIZE, PHYSICAL_MEMORY_START},
     error::{Errno, KResult},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
@@ -338,14 +338,14 @@ impl FrameAlloc for KernelFrameAllocator {
         LOCKED_FRAME_ALLOCATOR
             .lock()
             .alloc()
-            .map(|v| PhysAddr::new(v as u64))
+            .map(|v| PhysAddr::new(v as u64 * 0x1000))
     }
 
     fn alloc_contiguous(&self, size: usize, align_log2: usize) -> KResult<PhysAddr> {
         LOCKED_FRAME_ALLOCATOR
             .lock()
             .alloc_contiguous(size, align_log2)
-            .map(|v| PhysAddr::new(v as u64))
+            .map(|v| PhysAddr::new(v as u64 * 0x1000))
     }
 
     fn dealloc(&self, addr: u64) -> KResult<()> {

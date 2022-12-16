@@ -7,11 +7,11 @@ edition = "2021"
 [dependencies]
 acpi = "4.1.1"
 atomic_enum = "0.2.0"
+bitflags = "1.3.2"
 bit_field = "0.10.1"
 buddy_system_allocator = { version = "0.8.0", features = ["const_fn"] }
 boot_header = { path = "../boot_header" }
 chrono = { version = "0.4.23", default-features = false, features = ["alloc"] }
-isomorphic_drivers = { git = "https://github.com/hiroki-chen/isomorphic_drivers.git", features = ["log"] }
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 log = "0.4"
 pci =  { git = "https://github.com/hiroki-chen/pci-rs.git" }
@@ -19,6 +19,7 @@ pc-keyboard = "0.6.1"
 raw-cpuid = "10.6.0"
 spin = "0.9.4"
 uart_16550 = "0.2.18"
+volatile = "0.3"
 x86_64 = { version = "0.14.10", features = ["abi_x86_interrupt"] }
 x86 = "0.52.0"
 

@@ -300,7 +300,10 @@ pub fn init_mm(header: &'static Header) -> KResult<()> {
     for descriptor in mmap.iter() {
         log::debug!("init_mm(): {:?}", descriptor);
 
-        if descriptor.ty == MemoryType::CONVENTIONAL {
+        if descriptor.ty == MemoryType::CONVENTIONAL
+            || descriptor.ty == MemoryType::BOOT_SERVICES_CODE
+            || descriptor.ty == MemoryType::BOOT_SERVICES_DATA
+        {
             let start_frame = descriptor.phys_start as usize / 0x1000;
             let end_frame = start_frame + descriptor.page_count as usize;
             allocator.insert(start_frame..end_frame)?;

@@ -3,7 +3,7 @@
 //!
 //! This module probes devices on the BUS and initialize them.
 
-use log::{debug, error, info};
+use log::{debug, info};
 use pci::{CSpaceAccessMethod, Location, PCIDevice, PortOps, BAR};
 use x86_64::instructions::port::Port;
 

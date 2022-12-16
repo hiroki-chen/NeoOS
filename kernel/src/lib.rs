@@ -4,10 +4,11 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::fn_to_numeric_cast)]
 #![feature(abi_efiapi)]
-#![feature(exclusive_range_pattern)]
-#![feature(lang_items)]
 #![feature(allocator_api)]
 #![feature(alloc_error_handler)]
+#![feature(const_fn_trait_bound)]
+#![feature(exclusive_range_pattern)]
+#![feature(lang_items)]
 
 extern crate alloc;
 

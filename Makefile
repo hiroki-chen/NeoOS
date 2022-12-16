@@ -25,18 +25,26 @@ EFI 		 			?= $(BOOT_DIR)/bootx64.efi
 KERNEL_TARGET	?= target/x86_64/debug/kernel
 KERNEL_IMAGE	?= $(BOOT_DIR)/kernel.img
 DEBUG					?= 1
+DISK					?= disk.img
+DISK_SIZE			?= 10G
 QEMU_COMMAND	?= qemu-system-x86_64 -enable-kvm \
 									-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
 									-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
 									-drive format=raw,file=fat:rw:esp \
 									-nographic -smp 2 -no-reboot -m 4G -rtc clock=vm \
-									-device ahci,id=ahci
+									-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
+									-device ahci,id=ahci0 \
+									-device ide-hd,drive=sfsimg,bus=ahci0.0
 
 ifeq ($(DEBUG), 1)
 	QEMU_COMMAND += -s -S
 endif
 
 all: kernel
+
+# Creates virtual hard disk
+hard_disk:
+	@cd $(WORK_DIR) && qemu-img create -f qcow2 $(DISK) $(DISK_SIZE)
 
 debug: kernel
 	@$(QEMU_COMMAND) -s S &
@@ -54,7 +62,7 @@ efi:
 	@cd boot && cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem --target x86_64-unknown-uefi
 	@cp $(EFI_TARGET) $(EFI)
 
-run: kernel
+run: kernel hard_disk
 	@cp boot.cfg $(BOOT_DIR)
 	@cd $(WORK_DIR) && cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_VARS.fd .
 	@cd $(WORK_DIR) && \

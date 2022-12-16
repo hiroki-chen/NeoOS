@@ -4,6 +4,8 @@ pub mod pci_bus;
 pub mod rtc;
 pub mod serial;
 
+mod isomorphic_drivers;
+
 use crate::sync::mutex::SpinLock as Mutex;
 
 use alloc::vec::Vec;

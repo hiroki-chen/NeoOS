@@ -1,10 +1,6 @@
 //! This module implements block-like drivers.
 
 use alloc::sync::Arc;
-use isomorphic_drivers::{
-    block::ahci::{AHCI, BLOCK_SIZE},
-    provider::Provider,
-};
 use log::debug;
 
 use crate::{
@@ -13,7 +9,13 @@ use crate::{
     sync::mutex::SpinLock as Mutex,
 };
 
-use super::{Driver, Type, AHCI_UUID, BLOCK_DRIVERS, DRIVERS};
+use super::{
+    isomorphic_drivers::{
+        block::ahci::{AHCI, BLOCK_SIZE},
+        provider::Provider,
+    },
+    Driver, Type, AHCI_UUID, BLOCK_DRIVERS, DRIVERS,
+};
 
 pub trait BlockDriver: Driver {
     /// Read block.
@@ -42,7 +44,7 @@ impl Provider for AhciProvider {
         }
         .as_u64();
 
-        (phys_addr as usize, phys_to_virt(phys_addr) as usize)
+        (phys_to_virt(phys_addr) as usize, phys_addr as usize)
     }
 
     fn dealloc_dma(vaddr: usize, size: usize) {
@@ -97,6 +99,11 @@ impl BlockDriver for AhciDriver {
 }
 
 pub fn init_ahci(header: usize, size: usize) -> KResult<Arc<AhciDriver>> {
+    debug!(
+        "init_ahci(): initializing AHCI at {:#x} with size {:#x}",
+        header, size
+    );
+
     match AHCI::new(header, size) {
         Some(ahci) => {
             let ahci = Arc::new(AhciDriver {
@@ -107,6 +114,7 @@ pub fn init_ahci(header: usize, size: usize) -> KResult<Arc<AhciDriver>> {
 
             Ok(ahci)
         }
+        // No device!
         None => Err(Errno::EACCES),
     }
 }
