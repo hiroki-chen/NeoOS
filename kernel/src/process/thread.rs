@@ -10,7 +10,8 @@
 use alloc::sync::Arc;
 
 use crate::{
-    arch::mm::paging::KernelPageTable, mm::MemoryManager, sync::mutex::SpinLockNoInterrupt as Mutex,
+    arch::mm::paging::KernelPageTable, error::KResult, mm::MemoryManager,
+    sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
 use super::Process;
@@ -42,5 +43,10 @@ pub struct Thread {
 }
 
 pub struct ThreadInner {
-    state: ThreadState,
+    pub state: ThreadState,
+}
+
+/// Gets a handle to the thread that invokes it.
+pub fn current_thread() -> KResult<Arc<Thread>> {
+    todo!()
 }

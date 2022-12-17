@@ -5,7 +5,7 @@
 //! space are called frames. Each page can be individually mapped to a frame, which makes it possible
 //! to split larger memory regions across non-continuous physical frames.
 
-mod callback;
+pub mod callback;
 
 use alloc::{boxed::Box, vec::Vec};
 use bitflags::bitflags;
@@ -17,11 +17,24 @@ use x86_64::{
 };
 
 use crate::{
-    arch::mm::paging::PageTableBehaviors,
+    arch::mm::paging::{PageTableBehaviors, PageTableMoreBehaviors},
     error::{Errno, KResult},
 };
 
 use callback::ArenaCallback;
+
+bitflags! {
+  pub struct MmapFlags: u16 {
+      /// Changes are shared.
+      const SHARED = 1 << 0;
+      /// Changes are private.
+      const PRIVATE = 1 << 1;
+      /// Place the mapping at the exact address
+      const FIXED = 1 << 4;
+      /// The mapping is not backed by any file. (non-POSIX)
+      const ANONYMOUS = 1 << 5;
+  }
+}
 
 bitflags! {
     pub struct ArenaFlags: u8 {
@@ -32,15 +45,36 @@ bitflags! {
     }
 }
 
+bitflags! {
+    pub struct MmapPerm: u64 {
+        const NONE = 0x0001;
+        const READ = 0x0010;
+        const WRITE = 0x0100;
+        const EXECUTE= 0x01000;
+    }
+}
+
+impl Into<ArenaFlags> for MmapPerm {
+    fn into(self) -> ArenaFlags {
+        let mut arena_flags = ArenaFlags::empty();
+
+        if self.contains(MmapPerm::EXECUTE) {
+            arena_flags.set(ArenaFlags::NON_EXECUTABLE, false);
+        }
+
+        arena_flags
+    }
+}
+
 /// A continuous memory region.
 #[derive(Clone, Debug)]
 pub struct Arena {
     /// The virtual memory region managed by this arena.
-    range: Range<u64>,
+    pub range: Range<u64>,
     /// Memory flags.
-    flags: ArenaFlags,
+    pub flags: ArenaFlags,
     /// The memory write / read callback.
-    callback: Box<dyn ArenaCallback>,
+    pub callback: Box<dyn ArenaCallback>,
 }
 
 impl Arena {
@@ -100,7 +134,7 @@ impl Arena {
 /// This is only used to manage the memory of *high-level* processes.
 pub struct MemoryManager<P>
 where
-    P: PageTableBehaviors,
+    P: PageTableBehaviors + PageTableMoreBehaviors,
 {
     arena: Vec<Arena>,
     page_table: P,
@@ -108,7 +142,7 @@ where
 
 impl<P> MemoryManager<P>
 where
-    P: PageTableBehaviors,
+    P: PageTableBehaviors + PageTableMoreBehaviors,
 {
     pub fn new(empty_page_table: bool) -> Self {
         Self {
@@ -119,5 +153,11 @@ where
                 P::new()
             },
         }
+    }
+
+    /// Extends this memory space.
+    pub fn add(&mut self, other: Arena) {
+        todo!();
+        // self.arena.push(other);
     }
 }

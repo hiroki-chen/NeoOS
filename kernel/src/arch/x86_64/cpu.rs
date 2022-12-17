@@ -3,7 +3,10 @@
 use alloc::{format, string::String};
 
 use raw_cpuid::{CpuId, FeatureInfo};
-use x86::apic::{x2apic::X2APIC, ApicControl};
+use x86::{
+    apic::{x2apic::X2APIC, ApicControl},
+    random::rdrand64,
+};
 use x86_64::{
     instructions,
     registers::control::{Cr0, Cr0Flags, Cr4, Cr4Flags},
@@ -91,4 +94,11 @@ unsafe fn enable_float_processing_unit() {
         cr0.remove(Cr0Flags::EMULATE_COPROCESSOR);
         cr0.insert(Cr0Flags::MONITOR_COPROCESSOR);
     });
+}
+
+/// Wrapper function for getting random number in the CPU. Mounted as `/dev/random`.
+pub fn rdrand() -> u64 {
+    let mut ans = 0;
+    unsafe { rdrand64(&mut ans) };
+    ans
 }

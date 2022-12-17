@@ -1,5 +1,5 @@
-use crate::sync::mutex::SpinLockNoInterrupt as Mutex;
-use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use crate::{sync::mutex::SpinLockNoInterrupt as Mutex, mm::MemoryManager, arch::mm::paging::KernelPageTable};
+use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 use lazy_static::lazy_static;
 use spin::RwLock;
 
@@ -16,11 +16,13 @@ lazy_static! {
 /// kernel/process/thread.rs
 pub struct Process {
     /// The process id.
-    process_id: Pid,
+    pub process_id: Pid,
     /// The thread lists.
-    threads: Vec<usize>,
-    // struct mm_struct		*mm;
-    // struct mm_struct		*active_mm;
+    pub threads: Vec<usize>,
+    /// struct mm_struct		*mm; shared with threads.
+    pub vm: Arc<Mutex<MemoryManager<KernelPageTable>>>,
+    /// Current exeuction path.
+    pub exec_path: String,
+    /// Wording directory.
+    pub pwd: String,
 }
-
-

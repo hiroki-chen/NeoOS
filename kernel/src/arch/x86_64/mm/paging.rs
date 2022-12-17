@@ -95,15 +95,7 @@ pub trait EntryBehaviors {
     fn set_mmio(&mut self, value: u8);
 }
 
-pub trait PageTableBehaviors: Sized {
-    /// Creates an empty page table and remap itself.
-    fn new() -> Self {
-        let mut pt = Self::empty();
-        pt.remap_kernel();
-        pt
-    }
-    /// Empty.
-    fn empty() -> Self;
+pub trait PageTableBehaviors {
     /// Remaps the kernel memory space.
     fn remap_kernel(&mut self);
     /// Map a page of virual address `addr` to the frame of physics address `target`
@@ -122,6 +114,17 @@ pub trait PageTableBehaviors: Sized {
 
     /// When copied user data (in page fault handler)，maybe need to flush I/D cache.
     fn flush_cache_copy_user(&mut self, start: VirtAddr, end: VirtAddr, execute: bool);
+}
+
+pub trait PageTableMoreBehaviors: Sized + PageTableBehaviors {
+    /// Creates an empty page table and remap itself.
+    fn new() -> Self {
+        let mut pt = Self::empty();
+        pt.remap_kernel();
+        pt
+    }
+    /// Empty.
+    fn empty() -> Self;
 }
 
 /// Implements `PageTableFrameMapping`.
@@ -303,22 +306,6 @@ impl Drop for KernelPageTable {
 }
 
 impl PageTableBehaviors for KernelPageTable {
-    fn empty() -> Self {
-        let phys_addr = allocate_frame().expect("empty(): failed to allocate frame");
-        let page_table_frame = PhysFrame::<Size4KiB>::containing_address(phys_addr);
-        let table = unsafe { &mut *frame_to_page_table(page_table_frame) };
-
-        // Clear it.
-        table.zero();
-        unsafe {
-            Self {
-                page_table: MappedPageTable::new(table, PageTableMapper {}),
-                page_table_frame,
-                page_table_entry: None,
-            }
-        }
-    }
-
     fn remap_kernel(&mut self) {
         todo!();
     }
@@ -388,6 +375,24 @@ impl PageTableBehaviors for KernelPageTable {
         } else {
             error!("get_page_slice_mut(): invalid operation at {:#x}", addr);
             Err(Errno::EINVAL)
+        }
+    }
+}
+
+impl PageTableMoreBehaviors for KernelPageTable {
+    fn empty() -> Self {
+        let phys_addr = allocate_frame().expect("empty(): failed to allocate frame");
+        let page_table_frame = PhysFrame::<Size4KiB>::containing_address(phys_addr);
+        let table = unsafe { &mut *frame_to_page_table(page_table_frame) };
+
+        // Clear it.
+        table.zero();
+        unsafe {
+            Self {
+                page_table: MappedPageTable::new(table, PageTableMapper {}),
+                page_table_frame,
+                page_table_entry: None,
+            }
         }
     }
 }

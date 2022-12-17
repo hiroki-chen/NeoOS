@@ -29,14 +29,18 @@
 //! ==================|============|==================|=========|================================
 
 use bit_field::BitField;
-use core::ops::Range;
+use core::{fmt::Debug, ops::Range};
 
 use crate::{
     arch::{KERNEL_BASE, KERNEL_HEAP_SIZE, PHYSICAL_MEMORY_START},
     error::{Errno, KResult},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
-use alloc::alloc::{alloc, dealloc, Layout};
+use alloc::{
+    alloc::{alloc, dealloc, Layout},
+    vec::Vec,
+};
+
 use buddy_system_allocator::Heap;
 use log::info;
 use x86_64::PhysAddr;
@@ -324,7 +328,7 @@ pub type Chunk256MiB = BitAllocUnit<Chunk16MiB>;
 #[derive(Debug, Clone)]
 pub struct KernelFrameAllocator;
 
-pub trait FrameAlloc: Clone + Send + Sync + 'static {
+pub trait FrameAlloc: Debug + Clone + Send + Sync + 'static {
     /// Allocates a physical frame and returns it virtual address.
     fn alloc(&self) -> KResult<PhysAddr>;
     /// Allocates a contiguous physical memory and returns the start virtual address.
@@ -513,3 +517,23 @@ pub fn allocate_frame_contiguous(size: usize, align_log2: usize) -> KResult<Phys
 pub fn deallocate_frame(addr: u64) -> KResult<()> {
     KernelFrameAllocator.dealloc(addr)
 }
+
+/// kmalloc: Allocate heap from kernel memory. This function ensures that we always return
+/// a contiguous *physical* memory region.
+///
+/// # Safety
+/// This function is unsafe because the allocator must ensure that the memory is dropped.
+pub unsafe fn kmalloc(size: usize) -> KResult<*mut u8> {
+    if size >= 0x0001_0000 {
+        Err(Errno::ENOMEM)
+    } else {
+        // Allocate and leak it.
+        let mut mem = Vec::with_capacity(size);
+        mem.fill(0u8);
+        let mem = Vec::leak(mem);
+
+        Ok(mem.as_mut_ptr())
+    }
+}
+
+pub unsafe fn kfree(ptr: *mut u8) {}
