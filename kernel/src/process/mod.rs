@@ -1,4 +1,6 @@
-use crate::{sync::mutex::SpinLockNoInterrupt as Mutex, mm::MemoryManager, arch::mm::paging::KernelPageTable};
+use crate::{
+    arch::mm::paging::KernelPageTable, mm::MemoryManager, sync::mutex::SpinLockNoInterrupt as Mutex,
+};
 use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 use lazy_static::lazy_static;
 use spin::RwLock;

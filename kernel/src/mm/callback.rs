@@ -20,6 +20,10 @@ pub trait ArenaCallback: Debug + Send + Sync + 'static {
     fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: ArenaFlags);
 
     fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr);
+
+    /// Kernel interrupt handler -> kernel::handle_page_fault -> thread.vm::handle_page_fault ->
+    /// arena::callback::handle_page_fault (this interface).
+    fn handle_page_fault(&self, page_table: &mut dyn PageTableBehaviors, addr: u64) -> bool;
 }
 
 impl Clone for Box<dyn ArenaCallback> {
@@ -72,6 +76,10 @@ where
                 return;
             }
         };
+    }
+
+    fn handle_page_fault(&self, page_table: &mut dyn PageTableBehaviors, addr: u64) -> bool {
+        todo!()
     }
 }
 

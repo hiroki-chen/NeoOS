@@ -10,7 +10,9 @@
 use alloc::sync::Arc;
 
 use crate::{
-    arch::mm::paging::KernelPageTable, error::KResult, mm::MemoryManager,
+    arch::{cpu::cpu_id, mm::paging::KernelPageTable},
+    error::{Errno, KResult},
+    mm::MemoryManager,
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
@@ -42,11 +44,23 @@ pub struct Thread {
     pub vm: Arc<Mutex<MemoryManager<KernelPageTable>>>,
 }
 
-pub struct ThreadInner {
-    pub state: ThreadState,
-}
+#[derive(Default)]
+pub struct ThreadInner {}
+
+static mut CURRENT_THREAD_PER_CPU: [Option<Arc<Thread>>; 0x20] = [const { None }; 0x20];
 
 /// Gets a handle to the thread that invokes it.
 pub fn current_thread() -> KResult<Arc<Thread>> {
-    todo!()
+    let cpuid = cpu_id();
+
+    if cpuid < 0x20 {
+        unsafe {
+            Ok(CURRENT_THREAD_PER_CPU[cpuid]
+                .as_ref()
+                .ok_or(Errno::EINVAL)?
+                .clone())
+        }
+    } else {
+        Err(Errno::EINVAL)
+    }
 }

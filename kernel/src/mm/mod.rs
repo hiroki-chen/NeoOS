@@ -10,7 +10,7 @@ pub mod callback;
 use alloc::{boxed::Box, vec::Vec};
 use bitflags::bitflags;
 use core::ops::Range;
-use log::debug;
+use log::{debug, error};
 use x86_64::{
     structures::paging::{Page, Size4KiB},
     VirtAddr,
@@ -22,6 +22,7 @@ use crate::{
         PAGE_SIZE,
     },
     error::{Errno, KResult},
+    memory::{is_page_aligned, page_mask},
 };
 
 use callback::ArenaCallback;
@@ -77,6 +78,7 @@ pub struct Arena {
     /// Memory flags.
     pub flags: ArenaFlags,
     /// The memory write / read callback.
+    /// We do not care how it is implemented.
     pub callback: Box<dyn ArenaCallback>,
 }
 
@@ -84,6 +86,65 @@ impl Arena {
     /// Returns true if a given address is within this area.
     pub fn contains_addr(&self, addr: u64) -> bool {
         self.range.contains(&addr)
+    }
+
+    /// Maps itself into `page_table`.
+    pub fn map(&self, page_table: &mut dyn PageTableBehaviors) -> KResult<()> {
+        if !is_page_aligned(self.range.start) {
+            error!("map(): arena not aligned to 4 KB.");
+            return Err(Errno::EINVAL);
+        }
+        if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
+            error!("map(): corrupted arena size");
+            return Err(Errno::EINVAL);
+        }
+
+        for mem in self.range.clone().step_by(PAGE_SIZE) {
+            let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mem));
+            // Invoke callback and let it do something for us.
+            self.callback
+                .map(page_table, page.start_address(), self.flags);
+        }
+
+        Ok(())
+    }
+
+    /// Unmaps itself.
+    pub fn unmap(&self, page_table: &mut dyn PageTableBehaviors) -> KResult<()> {
+        if !is_page_aligned(self.range.start) {
+            error!("map(): arena not aligned to 4 KB.");
+            return Err(Errno::EINVAL);
+        }
+        if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
+            error!("map(): corrupted arena size");
+            return Err(Errno::EINVAL);
+        }
+
+        for mem in self.range.clone().step_by(PAGE_SIZE) {
+            let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mem));
+            // Invoke callback and let it do something for us.
+            self.callback.unmap(page_table, page.start_address());
+        }
+
+        Ok(())
+    }
+
+    /// Returns true if this arena overlaps with [start, end].
+    pub fn overlap_with(&self, range: &Range<u64>) -> bool {
+        let self_start = Page::<Size4KiB>::containing_address(VirtAddr::new(self.range.start))
+            .start_address()
+            .as_u64();
+        let self_end = Page::<Size4KiB>::containing_address(VirtAddr::new(self.range.end))
+            .start_address()
+            .as_u64();
+        let other_start = Page::<Size4KiB>::containing_address(VirtAddr::new(range.start))
+            .start_address()
+            .as_u64();
+        let other_end = Page::<Size4KiB>::containing_address(VirtAddr::new(range.end))
+            .start_address()
+            .as_u64();
+
+        !(self_end <= other_start || self_start >= other_end)
     }
 
     /// Checks whether a read request is valid, i.e., the given address + size should
@@ -139,6 +200,7 @@ pub struct MemoryManager<P>
 where
     P: PageTableBehaviors + PageTableMoreBehaviors,
 {
+    /// The free chunk list in Linux.
     arena: Vec<Arena>,
     page_table: P,
 }
@@ -158,9 +220,104 @@ where
         }
     }
 
+    /// Receives the page fault handling request from the kernel.
+    pub fn handle_page_fault(&mut self, addr: u64) -> bool {
+        // Locate memory region where page fault occurs.
+        match self.arena.iter().find(|arena| arena.contains_addr(addr)) {
+            Some(arena) => {
+                // Dispatch to the handler.
+                arena.callback.handle_page_fault(&mut self.page_table, addr)
+            }
+            None => {
+                error!("handle_page_fault(): cannot find arena for this address ?!");
+                false
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        for arena in self.arena.iter_mut() {
+            debug!("clear(): dropping arena {:?}", arena.range);
+            arena.unmap(&mut self.page_table).unwrap();
+        }
+
+        self.arena.clear();
+    }
+
+    /// Returns true if the [addr, addr + size) is not occupied.
+    pub fn is_free(&self, addr: u64, size: usize) -> bool {
+        self.arena
+            .iter()
+            .find(|item| item.overlap_with(&(addr..addr + size as u64)))
+            .is_none()
+    }
+
+    /// Finds a free arena that can be used for a given size.
+    pub fn find_free_arena(&self, addr_hint: u64, size: usize) -> KResult<VirtAddr> {
+        core::iter::once(addr_hint)
+            .chain(self.arena.iter().map(|item| item.range.clone().end))
+            .map(|addr| page_mask(addr + PAGE_SIZE as u64 - 1))
+            .find(|addr| self.is_free(*addr, size))
+            .ok_or(Errno::ENOMEM)
+            .map(|raw_addr| VirtAddr::new(raw_addr))
+    }
+
+    /// Returns true if `self.arena` has some memory regions overlapping with `other`.
+    pub fn check_overlap(&self, other: &Arena) -> bool {
+        self.arena
+            .iter()
+            .find(|item| item.overlap_with(&other.range))
+            .is_some()
+    }
+
     /// Extends this memory space.
     pub fn add(&mut self, other: Arena) {
-        todo!();
-        // self.arena.push(other);
+        let start_addr = other.range.start & !(PAGE_SIZE as u64 - 1);
+        let end_addr = (other.range.end + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+
+        // Performs sanity check: we must ensure that `other` is valid.
+        if start_addr >= end_addr {
+            panic!(
+              "add(): cannot add this arena into the vm because the memory region is invalid. Address: {:#x} >= {:#x}!",
+              start_addr,
+              end_addr);
+        }
+        if self.check_overlap(&other) {
+            panic!("add(): cannot allocate memory regions that overlap with each other!");
+        }
+
+        self.add_ordered(other);
+    }
+
+    /// Adds to `self.arena` and sort the vector based on their starting addresses (ascending).
+    fn add_ordered(&mut self, other: Arena) {
+        other.map(&mut self.page_table).unwrap();
+
+        // Find the correct index and insert.
+        let index = match self
+            .arena
+            .binary_search_by(|item| item.range.clone().cmp(other.range.clone()))
+        {
+            Ok(index) => index,
+            Err(index) => index,
+        };
+
+        // Insert into the arena.
+        self.arena.insert(index, other);
+    }
+
+    /// Returns the page table.
+    pub fn page_table(&mut self) -> &mut P {
+        &mut self.page_table
+    }
+
+    /// Returns the iterator.
+    pub fn iter(&self) -> impl Iterator<Item = &Arena> {
+        self.arena.iter()
+    }
+
+    /// Validates the page table.
+    pub unsafe fn validate(&self) {
+        self.page_table.validate();
     }
 }

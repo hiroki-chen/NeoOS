@@ -123,6 +123,16 @@ impl File {
         }
     }
 
+    pub fn clone(&self, fd_cloexec: bool) -> Self {
+        Self {
+            inode: self.inode.clone(),
+            path: self.path.clone(),
+            fd_cloexec,
+            file_option: self.file_option.clone(),
+            ty: self.ty.clone(),
+        }
+    }
+
     pub fn set_option(&self, option: FileOpenOption) {
         let mut cur_option = self.file_option.write();
         let non_blocking = option.contains(FileOpenOption::NON_BLOCKING)
@@ -313,7 +323,7 @@ impl File {
 
                 let current = thread::current_thread().unwrap();
                 current.vm.lock().add(arena);
-                
+
                 Ok(())
             }
             _ => Err(Errno::EINVAL),

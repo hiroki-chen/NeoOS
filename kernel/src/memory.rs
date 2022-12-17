@@ -30,9 +30,12 @@
 
 use bit_field::BitField;
 use core::{fmt::Debug, ops::Range};
+use num_traits::AsPrimitive;
 
 use crate::{
-    arch::{KERNEL_BASE, KERNEL_HEAP_SIZE, PAGE_SIZE, PHYSICAL_MEMORY_START, USER_MEM_TOP},
+    arch::{
+        KERNEL_BASE, KERNEL_HEAP_SIZE, PAGE_MASK, PAGE_SIZE, PHYSICAL_MEMORY_START, USER_MEM_TOP,
+    },
     error::{Errno, KResult},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
@@ -504,6 +507,23 @@ pub unsafe fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {
         0 => Ok(()),
         _ => Err(Errno::EFAULT),
     }
+}
+
+/// Checks whether the lower 3 bits are zero.
+pub fn is_page_aligned<T>(num: T) -> bool
+where
+    T: AsPrimitive<usize>,
+{
+    num.as_() & PAGE_MASK == 0
+}
+
+/// Ignores the lower bits of 0xfff.
+pub fn page_mask<T>(num: T) -> T
+where
+    T: AsPrimitive<usize>,
+    usize: AsPrimitive<T>,
+{
+    (num.as_() & !PAGE_MASK).as_()
 }
 
 pub fn allocate_frame() -> KResult<PhysAddr> {

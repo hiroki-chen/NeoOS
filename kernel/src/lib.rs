@@ -8,6 +8,7 @@
 #![feature(allocator_api)]
 #![feature(alloc_error_handler)]
 #![feature(exclusive_range_pattern)]
+#![feature(inline_const)]
 #![feature(lang_items)]
 
 extern crate alloc;

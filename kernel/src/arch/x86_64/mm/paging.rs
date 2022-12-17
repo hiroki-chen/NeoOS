@@ -4,7 +4,7 @@ use core::mem::ManuallyDrop;
 
 use boot_header::{Header, MemoryDescriptor, MemoryType};
 
-use log::{debug, error, info};
+use log::{debug, error, info, trace, warn};
 use x86_64::{
     instructions::tlb::flush,
     registers::control::{Cr2, Cr3, Cr3Flags},
@@ -17,9 +17,10 @@ use x86_64::{
 };
 
 use crate::{
-    arch::{PHYSICAL_MEMORY_START, PAGE_SIZE},
+    arch::{PAGE_SIZE, PHYSICAL_MEMORY_START},
     error::{Errno, KResult},
     memory::{allocate_frame, deallocate_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
+    process::thread::current_thread,
 };
 
 struct PTFrameAllocator;
@@ -49,6 +50,20 @@ impl FrameDeallocator<Size4KiB> for PTFrameAllocator {
             panic!();
         }
     }
+}
+
+/// Handles the page fault by the current thread.
+pub fn handle_page_fault(addr: u64) -> bool {
+    let thread = current_thread().expect("handle_page_fault(): no thread is running?");
+
+    trace!(
+        "handle_page_fault(): page fault @ {:#x} handled by {:#x}",
+        addr,
+        thread.id
+    );
+
+    let mut vm = thread.vm.lock();
+    vm.handle_page_fault(addr)
 }
 
 pub trait EntryBehaviors {
@@ -114,6 +129,13 @@ pub trait PageTableBehaviors {
 
     /// When copied user data (in page fault handler)，maybe need to flush I/D cache.
     fn flush_cache_copy_user(&mut self, start: VirtAddr, end: VirtAddr, execute: bool);
+
+    /// Validates this page table by overwriting CR3.
+    ///
+    /// # Safety
+    /// This function is unsafe because we must ensure that the page table is valid; otherwise,
+    /// the page fault handler will capture PF but it does not know how to deal with it.
+    unsafe fn validate(&self);
 }
 
 pub trait PageTableMoreBehaviors: Sized + PageTableBehaviors {
@@ -376,6 +398,26 @@ impl PageTableBehaviors for KernelPageTable {
             error!("get_page_slice_mut(): invalid operation at {:#x}", addr);
             Err(Errno::EINVAL)
         }
+    }
+
+    unsafe fn validate(&self) {
+        // Performs page table switching!
+        let old_page_table = Cr3::read().0.start_address().as_u64();
+        let new_page_table = self.page_table_frame.start_address().as_u64();
+
+        if old_page_table == new_page_table {
+            warn!(
+                "validate(): duplicate page table found: {:#x}",
+                new_page_table
+            );
+            return;
+        }
+
+        debug!(
+            "validate(): page table from {:#x} to {:#x}",
+            old_page_table, new_page_table
+        );
+        set_page_table(new_page_table);
     }
 }
 
