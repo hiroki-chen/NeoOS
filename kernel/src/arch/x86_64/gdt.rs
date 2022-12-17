@@ -22,7 +22,10 @@ use x86_64::{
     PrivilegeLevel, VirtAddr,
 };
 
-use crate::error::{Errno, KResult};
+use crate::{
+    arch::PAGE_SIZE,
+    error::{Errno, KResult},
+};
 
 // The layout of GDT entry is given as follows (x86_64).
 //
@@ -76,7 +79,7 @@ pub unsafe fn init_gdt() -> KResult<()> {
     // Step 3: Set up the TSS entries.
     let mut tss = Box::new(TaskStateSegment::new());
     // Allocate stack for trap from user
-    let trap_stack_top = Box::leak(Box::new([0u8; 0x1000])).as_ptr() as u64 + 0x1000;
+    let trap_stack_top = Box::leak(Box::new([0u8; PAGE_SIZE])).as_ptr() as u64 + PAGE_SIZE as u64;
     tss.privilege_stack_table[0] = VirtAddr::new(trap_stack_top);
     let tss: &'static _ = Box::leak(tss);
     let (tss0, tss1) = match Descriptor::tss_segment(tss) {

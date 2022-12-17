@@ -32,7 +32,7 @@ use bit_field::BitField;
 use core::{fmt::Debug, ops::Range};
 
 use crate::{
-    arch::{KERNEL_BASE, KERNEL_HEAP_SIZE, PHYSICAL_MEMORY_START},
+    arch::{KERNEL_BASE, KERNEL_HEAP_SIZE, PAGE_SIZE, PHYSICAL_MEMORY_START, USER_MEM_TOP},
     error::{Errno, KResult},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
@@ -342,20 +342,20 @@ impl FrameAlloc for KernelFrameAllocator {
         LOCKED_FRAME_ALLOCATOR
             .lock()
             .alloc()
-            .map(|v| PhysAddr::new(v as u64 * 0x1000))
+            .map(|v| PhysAddr::new(v as u64 * PAGE_SIZE as u64))
     }
 
     fn alloc_contiguous(&self, size: usize, align_log2: usize) -> KResult<PhysAddr> {
         LOCKED_FRAME_ALLOCATOR
             .lock()
             .alloc_contiguous(size, align_log2)
-            .map(|v| PhysAddr::new(v as u64 * 0x1000))
+            .map(|v| PhysAddr::new(v as u64 * PAGE_SIZE as u64))
     }
 
     fn dealloc(&self, addr: u64) -> KResult<()> {
         LOCKED_FRAME_ALLOCATOR
             .lock()
-            .dealloc((addr / 0x1000) as usize)
+            .dealloc((addr / PAGE_SIZE as u64) as usize)
     }
 }
 
@@ -400,7 +400,7 @@ pub fn grow_heap_on_oom(mem: &mut Heap<32>, layout: &core::alloc::Layout) {
     for _i in 0..0x4000 {
         let page = KernelFrameAllocator.alloc().unwrap();
         let virtual_addr = page + PHYSICAL_MEMORY_START;
-        addrs[addr_len] = (virtual_addr.as_u64(), 0x1000);
+        addrs[addr_len] = (virtual_addr.as_u64(), PAGE_SIZE);
         addr_len += 1;
     }
 
@@ -456,13 +456,13 @@ impl Drop for KernelStack {
 /// Checks whether the given address is within the kernel stack.
 #[inline(always)]
 pub fn check_within_stack(bp: u64) -> bool {
-    (0xFFFF_FFFF_F000_0000..=0xFFFF_FFFF_F000_0000 + 512 * 0x1000).contains(&bp)
+    (0xFFFF_FFFF_F000_0000..=0xFFFF_FFFF_F000_0000 + 512 * PAGE_SIZE as u64).contains(&bp)
 }
 
 /// Checks whether the given memory region is within the kernel memory space.
 #[inline(always)]
 pub fn check_within_kernel(addr: u64, size: usize) -> bool {
-    !(addr < PHYSICAL_MEMORY_START && (addr + size as u64) < PHYSICAL_MEMORY_START)
+    !(addr < USER_MEM_TOP && (addr + size as u64) < USER_MEM_TOP)
 }
 
 /// Checks whether the given memory region is within the user space (0x0 - 0xffff7fffffffffff) below kernel space.

@@ -17,7 +17,10 @@ use x86_64::{
 };
 
 use crate::{
-    arch::mm::paging::{PageTableBehaviors, PageTableMoreBehaviors},
+    arch::{
+        mm::paging::{PageTableBehaviors, PageTableMoreBehaviors},
+        PAGE_SIZE,
+    },
     error::{Errno, KResult},
 };
 
@@ -99,7 +102,7 @@ impl Arena {
                 .as_u64(),
         );
         let max = ((ptr as u64) + size as u64).min(
-            Page::<Size4KiB>::containing_address(VirtAddr::new(arena_end + 0x1000 - 1))
+            Page::<Size4KiB>::containing_address(VirtAddr::new(arena_end + PAGE_SIZE as u64 - 1))
                 .start_address()
                 .as_u64(),
         );

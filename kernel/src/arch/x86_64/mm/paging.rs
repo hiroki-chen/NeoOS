@@ -17,7 +17,7 @@ use x86_64::{
 };
 
 use crate::{
-    arch::PHYSICAL_MEMORY_START,
+    arch::{PHYSICAL_MEMORY_START, PAGE_SIZE},
     error::{Errno, KResult},
     memory::{allocate_frame, deallocate_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
 };
@@ -369,7 +369,7 @@ impl PageTableBehaviors for KernelPageTable {
             .translate_page(Page::<Size4KiB>::containing_address(addr))
         {
             let virt_addr = phys_to_virt(frame.start_address().as_u64());
-            let slice = unsafe { core::slice::from_raw_parts_mut(virt_addr as *mut u8, 0x1000) };
+            let slice = unsafe { core::slice::from_raw_parts_mut(virt_addr as *mut u8, PAGE_SIZE) };
 
             Ok(slice)
         } else {
@@ -443,7 +443,7 @@ pub fn init_mm(header: &'static Header) -> KResult<()> {
             || descriptor.ty == MemoryType::BOOT_SERVICES_CODE
             || descriptor.ty == MemoryType::BOOT_SERVICES_DATA
         {
-            let start_frame = descriptor.phys_start as usize / 0x1000;
+            let start_frame = descriptor.phys_start as usize / PAGE_SIZE;
             let end_frame = start_frame + descriptor.page_count as usize;
             allocator.insert(start_frame..end_frame)?;
         }
