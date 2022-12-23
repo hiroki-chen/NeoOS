@@ -7,12 +7,15 @@
 //! types that are guaranteed to be threadsafe are easily shared between threads using the
 //! atomically-reference-counted container, Arc.
 
-use alloc::sync::Arc;
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc};
+use lazy_static::lazy_static;
+use spin::RwLock;
 
 use crate::{
-    arch::{cpu::cpu_id, mm::paging::KernelPageTable},
+    arch::{cpu::cpu_id, interrupt::Context, mm::paging::KernelPageTable},
     error::{Errno, KResult},
     mm::MemoryManager,
+    signal::{SignalSet, Stack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
@@ -44,13 +47,57 @@ pub struct Thread {
     pub vm: Arc<Mutex<MemoryManager<KernelPageTable>>>,
 }
 
+/// Finds a free tid and assigns it to the current thread by `register`.
+pub fn find_available_tid() -> KResult<u64> {
+    (1u64..)
+        .find(|id| THREAD_TABLE.read().get(&id).is_none())
+        .ok_or(Errno::EBUSY)
+}
+
+impl Thread {
+    /// Activates this thread and registers it to the global thread table `THREAD_TABLE`.
+    pub fn register(mut self) -> KResult<Arc<Self>> {
+        let mut table = THREAD_TABLE.write();
+
+        let id = find_available_tid()?;
+        self.id = id;
+        let arced_self = Arc::new(self);
+        table.insert(id, arced_self.clone());
+
+        Ok(arced_self)
+    }
+
+    /// Forks this thread.
+    pub fn fork(&mut self, context: &Context) -> Arc<Self> {
+        // Cow the vm.
+        let vm = Arc::new(Mutex::new(self.vm.lock().clone()));
+
+        todo!()
+    }
+}
+
 #[derive(Default)]
-pub struct ThreadInner {}
+pub struct ThreadInner {
+    /// Signals that this thread ignores.
+    sigmask: SignalSet,
+    /// The thread context.
+    thread_context: Option<ThreadContext>,
+    /// The signal alternative stack.
+    sigaltstack: Stack,
+}
+
+pub struct ThreadContext {
+    user_context: Box<Context>,
+}
 
 static mut CURRENT_THREAD_PER_CPU: [Option<Arc<Thread>>; 0x20] = [const { None }; 0x20];
 
+lazy_static! {
+    pub static ref THREAD_TABLE: RwLock<BTreeMap<u64, Arc<Thread>>> = RwLock::new(BTreeMap::new());
+}
+
 /// Gets a handle to the thread that invokes it.
-pub fn current_thread() -> KResult<Arc<Thread>> {
+pub fn current() -> KResult<Arc<Thread>> {
     let cpuid = cpu_id();
 
     if cpuid < 0x20 {

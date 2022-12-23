@@ -22,13 +22,15 @@ pub mod logging;
 pub mod memory;
 pub mod mm;
 pub mod process;
+pub mod signal;
 pub mod sync;
 pub mod time;
 
 use alloc::string::String;
 use core::panic::PanicInfo;
+use drivers::SERIAL_DRIVERS;
 use lazy_static::lazy_static;
-use log::error;
+use log::{error, info};
 // We do not want OOM to cause kernel crash.
 use buddy_system_allocator::LockedHeapWithRescue;
 
@@ -54,6 +56,9 @@ extern "C" {
 pub fn kmain() -> ! {
     loop {
         // todo
+        let serial = SERIAL_DRIVERS.read();
+        let dev = serial.first().unwrap();
+        info!("kmain(): {}", dev.read());
     }
 }
 

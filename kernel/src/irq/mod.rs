@@ -15,6 +15,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
+use log::debug;
 
 use crate::{
     arch::apic::enable_irq,

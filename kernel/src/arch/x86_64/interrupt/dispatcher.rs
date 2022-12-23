@@ -12,6 +12,7 @@ use crate::{
         mm::pretty_interpret,
     },
     drivers::IRQ_MANAGER,
+    process::thread::current,
 };
 
 use super::TrapFrame;
@@ -61,6 +62,20 @@ fn page_fault(tf: &mut TrapFrame) {
 
     pretty_interpret(tf.error_code);
 
-    // If the page fault cannot be handled correctly, the CPU dies.
-    // arch::cpu::die();
+    let thread = match current() {
+        Ok(t) => t,
+        Err(errno) => {
+            error!(
+                "page_fault(): no current thread running! Errno: {:?}",
+                errno
+            );
+            arch::cpu::die();
+        }
+    };
+
+    let mut vm = thread.vm.lock();
+    if !vm.handle_page_fault(pf_addr) {
+        error!("page_fault(): this thread cannot handle page fault!");
+        arch::cpu::die();
+    }
 }

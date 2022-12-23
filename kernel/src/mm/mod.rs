@@ -18,14 +18,22 @@ use x86_64::{
 
 use crate::{
     arch::{
-        mm::paging::{PageTableBehaviors, PageTableMoreBehaviors},
+        mm::paging::{EntryBehaviors, PageTableBehaviors, PageTableMoreBehaviors},
         PAGE_SIZE,
     },
     error::{Errno, KResult},
-    memory::{is_page_aligned, page_mask},
+    memory::{is_page_aligned, page_frame_number, page_mask},
 };
 
 use callback::ArenaCallback;
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ArenaFlags {
+    pub writable: bool,
+    pub user_accessible: bool,
+    pub non_executable: bool,
+    pub mmio: u8,
+}
 
 bitflags! {
   pub struct MmapFlags: u16 {
@@ -41,29 +49,28 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct ArenaFlags: u8 {
-        const USER_ACCESSIBLE= 0b00000001;
-        const WRITABLE = 0b00000010;
-        const NON_EXECUTABLE = 0b00000100;
-        const MMIO = 0b00001000;
+    pub struct MmapPerm: u64 {
+        const NONE = 0b0001;
+        const READ = 0b0010;
+        const WRITE = 0b0100;
+        const EXECUTE= 0b01000;
     }
 }
 
 bitflags! {
-    pub struct MmapPerm: u64 {
-        const NONE = 0x0001;
-        const READ = 0x0010;
-        const WRITE = 0x0100;
-        const EXECUTE= 0x01000;
+    pub struct AccessType: u64 {
+        const EXECUTE = 0b0001;
+        const WRITE = 0b0010;
+        const USER = 0b0100;
     }
 }
 
 impl Into<ArenaFlags> for MmapPerm {
     fn into(self) -> ArenaFlags {
-        let mut arena_flags = ArenaFlags::empty();
+        let mut arena_flags = ArenaFlags::default();
 
         if self.contains(MmapPerm::EXECUTE) {
-            arena_flags.set(ArenaFlags::NON_EXECUTABLE, false);
+            arena_flags.non_executable = false;
         }
 
         arena_flags
@@ -103,7 +110,7 @@ impl Arena {
             let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mem));
             // Invoke callback and let it do something for us.
             self.callback
-                .map(page_table, page.start_address(), self.flags);
+                .map(page_table, page.start_address(), &self.flags);
         }
 
         Ok(())
@@ -182,7 +189,7 @@ impl Arena {
     /// Returns `Errno::EINVAL` to indicate an invalid operation.
     /// Returns `Errno::EPERM` to indicate a non-writable memory address.
     pub fn check_write<T>(&self, ptr: *mut T, size: usize) -> KResult<usize> {
-        if !self.flags.contains(ArenaFlags::WRITABLE) {
+        if !self.flags.writable {
             debug!(
                 "checked_write(): error writing {:#x} with size {:#x}",
                 ptr as u64, size
@@ -244,6 +251,34 @@ where
         self.arena.clear();
     }
 
+    pub fn clone(&mut self) -> Self {
+        let mut new_page_table = P::new();
+        let MemoryManager {
+            ref mut page_table,
+            ref arena,
+            ..
+        } = self;
+
+        for item in self.arena.iter() {
+            let page_start = Page::<Size4KiB>::containing_address(VirtAddr::new(item.range.start));
+            let page_end = Page::<Size4KiB>::containing_address(VirtAddr::new(item.range.end));
+
+            for page in Page::range_inclusive(page_start, page_end) {
+                item.callback.clone_and_map(
+                    &mut new_page_table,
+                    page_table,
+                    page.start_address(),
+                    &item.flags,
+                )
+            }
+        }
+
+        Self {
+            arena: self.arena.clone(),
+            page_table: new_page_table,
+        }
+    }
+
     /// Returns true if the [addr, addr + size) is not occupied.
     pub fn is_free(&self, addr: u64, size: usize) -> bool {
         self.arena
@@ -272,8 +307,8 @@ where
 
     /// Extends this memory space.
     pub fn add(&mut self, other: Arena) {
-        let start_addr = other.range.start & !(PAGE_SIZE as u64 - 1);
-        let end_addr = (other.range.end + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+        let start_addr = page_frame_number(other.range.start);
+        let end_addr = page_frame_number(other.range.end + PAGE_SIZE as u64 - 1);
 
         // Performs sanity check: we must ensure that `other` is valid.
         if start_addr >= end_addr {
@@ -320,4 +355,10 @@ where
     pub unsafe fn validate(&self) {
         self.page_table.validate();
     }
+}
+
+pub fn check_permission(access_type: &AccessType, entry: &dyn EntryBehaviors) -> bool {
+    (!access_type.contains(AccessType::WRITE) || entry.writable())
+        && (!access_type.contains(AccessType::EXECUTE) || entry.execute())
+        && (!access_type.contains(AccessType::USER) || entry.user())
 }

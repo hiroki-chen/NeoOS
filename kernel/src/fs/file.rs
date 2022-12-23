@@ -55,10 +55,11 @@ pub enum Flock {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
 pub enum FileType {
-    CONVENTIONAL,
-    PIPE,
-    SOCKET,
+    CONVENTIONAL = 0,
+    PIPE = 1,
+    SOCKET = 2,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,7 +295,7 @@ impl File {
             return Err(Errno::EBADF);
         }
 
-        let mut offset = &mut file_option.offset;
+        let offset = &mut file_option.offset;
         let name = self.inode.entry(*offset as usize)?;
         *offset += 1;
         Ok(name)
@@ -321,7 +322,7 @@ impl File {
                     }),
                 };
 
-                let current = thread::current_thread().unwrap();
+                let current = thread::current().unwrap();
                 current.vm.lock().add(arena);
 
                 Ok(())
@@ -329,4 +330,10 @@ impl File {
             _ => Err(Errno::EINVAL),
         }
     }
+}
+
+/// Anything that looks like a `file`.
+pub enum FileObject {
+    File(File),
+    Socket,
 }

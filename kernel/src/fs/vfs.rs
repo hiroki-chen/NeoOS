@@ -46,16 +46,24 @@ pub trait INode: Any + Sync + Send {
     }
 
     /// Returns the entry at `index`.
-    fn entry(&self, index: usize) -> KResult<String>;
+    fn entry(&self, index: usize) -> KResult<String> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Returns the filesystem.
-    fn filesystem(&self) -> KResult<Arc<dyn FileSytem>>;
+    fn filesystem(&self) -> KResult<Arc<dyn FileSytem>> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Returns the metadata of this INode.
-    fn metadata(&self) -> KResult<INodeMetadata>;
+    fn metadata(&self) -> KResult<INodeMetadata> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Sets the metadata.
-    fn set_metadata(&self, metadata: &INodeMetadata) -> KResult<()>;
+    fn set_metadata(&self, metadata: &INodeMetadata) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Reads the file into buffer.
     fn read_buf_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize>;
@@ -64,47 +72,73 @@ pub trait INode: Any + Sync + Send {
     fn write_buf_at(&self, offset: usize, buf: &[u8]) -> KResult<usize>;
 
     /// Resize to the given size.
-    fn resize(&self, new_size: usize) -> KResult<()>;
+    fn resize(&self, new_size: usize) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Creates hard link to `target`.
-    fn link(&self, target: &Arc<dyn INode>, name: &str) -> KResult<()>;
+    fn link(&self, target: &Arc<dyn INode>, name: &str) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Finds the INode in the directory.
-    fn find(&self, name: &str) -> KResult<Arc<dyn INode>>;
+    fn find(&self, name: &str) -> KResult<Arc<dyn INode>> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Unlinks to `name`.
-    fn unlink(&self, name: &str) -> KResult<()>;
+    fn unlink(&self, name: &str) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Creats a new `INode` in the directory.
-    fn create(&self, inode_name: &str, ty: INodeType, mode: u16) -> KResult<Arc<dyn INode>>;
+    fn create(&self, inode_name: &str, ty: INodeType, mode: u16) -> KResult<Arc<dyn INode>> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Move to another inode. N.b.: `move` is a Rust keyword.
     /// Rename if `target == self`.
-    fn do_move(&self, target: &Arc<dyn INode>, old_name: &str, new_name: &str) -> KResult<()>;
+    fn do_move(&self, target: &Arc<dyn INode>, old_name: &str, new_name: &str) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Syncs all the data of this `INode` (including metadata).
-    fn sync_all(&self) -> KResult<()>;
+    fn sync_all(&self) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Syncs data except the metadata.
-    fn sync_data(&self) -> KResult<()>;
+    fn sync_data(&self) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Upper-cast to `Any`.
     fn cast_to_any(&self) -> &dyn Any;
 
     /// Returns the IOCTL device.
-    fn ioctl(&self, cmdline: u64, size: usize) -> KResult<()>;
+    fn ioctl(&self, cmdline: u64, size: usize) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Maps into memory.
-    fn mmap(&self, mem: MemoryMap) -> KResult<()>;
+    fn mmap(&self, mem: MemoryMap) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Updates last accessed time.
-    fn set_atime(&self, atime: u64) -> KResult<()>;
+    fn set_atime(&self, atime: u64) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Updates last modified time.
-    fn set_mtime(&self, mtime: u64) -> KResult<()>;
+    fn set_mtime(&self, mtime: u64) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 
     /// Updates the last st change.
-    fn set_stchange(&self, stchange: u64) -> KResult<()>;
+    fn set_stchange(&self, stchange: u64) -> KResult<()> {
+        Err(Errno::ENOSPC)
+    }
 }
 
 /// A utility trait if you want to read the INode into a vector as manipulating `[u8]` is burdensome.
@@ -161,6 +195,7 @@ pub struct MemoryMap {
 
 /// Granularity: second.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[repr(C)]
 pub struct Time {
     /// Last accessed timestamp.
     pub last_accessed: usize,
@@ -216,4 +251,36 @@ pub struct INodeMetadata {
     pub block_num: usize,
     /// Type.
     pub ty: INodeType,
+}
+
+/// `MaybeDirty` denotes a value can be written or read as dirty. This is used to lazily
+/// write modified data back to the disk for better performance.
+pub struct MaybeDirty<T> {
+    inner: T,
+    dirty: bool,
+}
+
+impl<T> MaybeDirty<T> {
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            dirty: false,
+        }
+    }
+
+    pub fn new_dirty(inner: T) -> Self {
+        Self { inner, dirty: true }
+    }
+
+    pub fn toggle(&mut self) {
+        self.dirty = !self.dirty;
+    }
+
+    pub fn clear(&mut self) {
+        self.dirty = false;
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
 }

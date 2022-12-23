@@ -4,7 +4,7 @@
 //!
 //! A futex consists of a kernelspace wait queue that is attached to an atomic integer in userspace.
 
-use core::{task::Waker, future::Future};
+use core::{future::Future, task::Waker};
 
 use alloc::{collections::VecDeque, sync::Arc};
 

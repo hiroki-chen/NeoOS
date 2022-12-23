@@ -85,8 +85,8 @@ pub mod syscall;
 
 use core::arch::{asm, global_asm};
 
+use apic::{LocalApic, XApic};
 use log::info;
-use x86::apic::{x2apic::X2APIC, ApicControl};
 
 use crate::{
     arch::{
@@ -94,6 +94,7 @@ use crate::{
         interrupt::{idt::init_idt, syscall::init_syscall},
     },
     error::KResult,
+    memory::phys_to_virt,
 };
 
 // Defines a enumeration over CPU auto-generated interrupts.
@@ -296,7 +297,7 @@ pub unsafe fn disable() {
 /// Notify the CPU that we have received this IRQ.
 #[inline(always)]
 pub fn eoi() {
-    let mut lapic = X2APIC::new();
-    lapic.attach();
+    let mut lapic = unsafe { XApic::new(phys_to_virt(0xfee0_0000) as usize) };
+
     lapic.eoi();
 }

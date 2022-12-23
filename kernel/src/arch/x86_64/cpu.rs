@@ -2,11 +2,9 @@
 
 use alloc::{format, string::String};
 
+use apic::{LocalApic, XApic};
 use raw_cpuid::{CpuId, FeatureInfo};
-use x86::{
-    apic::{x2apic::X2APIC, ApicControl},
-    random::rdrand64,
-};
+use x86::random::rdrand64;
 use x86_64::{
     instructions,
     registers::control::{Cr0, Cr0Flags, Cr4, Cr4Flags},
@@ -15,6 +13,7 @@ use x86_64::{
 use crate::{
     arch::apic::AcpiSupport,
     error::{Errno, KResult},
+    memory::phys_to_virt,
 };
 
 pub fn cpu_name(level: i64) -> String {
@@ -57,19 +56,15 @@ pub fn cpu_feature_info() -> KResult<FeatureInfo> {
 
 /// Initialize the Advanced Programmable Interrupt Controller.
 pub fn init_cpu() -> KResult<()> {
-    if !X2APIC::does_cpu_support() {
-        log::error!("init_cpu(): CPU does not support x2APIC");
+    if !XApic::does_cpu_support() {
+        log::error!("init_cpu(): CPU does not support xAPIC");
         return Err(Errno::EINVAL);
     }
 
-    let mut lapic = X2APIC::new();
-    lapic.attach();
+    let mut lapic = unsafe { XApic::new(phys_to_virt(0xfee0_0000) as usize) };
+    lapic.cpu_init();
 
-    log::info!(
-        "init_cpu(): x2APIC version is {:#x}, id is {:#x}",
-        lapic.version(),
-        lapic.id()
-    );
+    log::info!("init_cpu(): xAPIC info:\n{:#x?}", lapic);
     unsafe {
         enable_float_processing_unit();
     }

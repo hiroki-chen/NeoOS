@@ -20,7 +20,7 @@ use crate::{
     arch::{PAGE_SIZE, PHYSICAL_MEMORY_START},
     error::{Errno, KResult},
     memory::{allocate_frame, deallocate_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
-    process::thread::current_thread,
+    process::thread::current,
 };
 
 struct PTFrameAllocator;
@@ -54,7 +54,7 @@ impl FrameDeallocator<Size4KiB> for PTFrameAllocator {
 
 /// Handles the page fault by the current thread.
 pub fn handle_page_fault(addr: u64) -> bool {
-    let thread = current_thread().expect("handle_page_fault(): no thread is running?");
+    let thread = current().expect("handle_page_fault(): no thread is running?");
 
     trace!(
         "handle_page_fault(): page fault @ {:#x} handled by {:#x}",

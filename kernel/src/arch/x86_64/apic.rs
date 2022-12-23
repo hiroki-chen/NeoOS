@@ -1,10 +1,10 @@
 //! Some helper functions for hanlding x2APIC, xAPIC, as well as IOAPIC.
 
-use x86::apic::{ioapic::IoApic, x2apic::X2APIC, xapic::XAPIC};
+use apic::{IoApic, X2Apic, XApic};
 
 use crate::memory::phys_to_virt;
 
-use super::cpu::cpu_feature_info;
+use super::{cpu::cpu_feature_info, interrupt::IRQ_MIN};
 
 pub const IOAPIC_ADDR: u64 = 0xfec0_0000;
 
@@ -13,7 +13,7 @@ pub trait AcpiSupport {
     fn does_cpu_support() -> bool;
 }
 
-impl AcpiSupport for X2APIC {
+impl AcpiSupport for X2Apic {
     fn does_cpu_support() -> bool {
         cpu_feature_info()
             .expect("does_cpu_support(): failed to fetch CPU feature information")
@@ -21,7 +21,7 @@ impl AcpiSupport for X2APIC {
     }
 }
 
-impl AcpiSupport for XAPIC {
+impl AcpiSupport for XApic {
     fn does_cpu_support() -> bool {
         cpu_feature_info()
             .expect("does_cpu_support(): failed to fetch CPU feature information")
@@ -33,6 +33,6 @@ impl AcpiSupport for XAPIC {
 #[inline(always)]
 pub fn enable_irq(irq: u64) {
     let mut ioapic = unsafe { IoApic::new(phys_to_virt(IOAPIC_ADDR) as usize) };
-
+    ioapic.set_irq_vector(irq as u8, (IRQ_MIN + irq as usize) as u8);
     ioapic.enable(irq as u8, 0);
 }

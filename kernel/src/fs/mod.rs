@@ -1,7 +1,9 @@
 use crate::error::{Errno, KResult};
 
+pub mod devfs;
 pub mod file;
 pub mod vfs;
+pub mod sfs;
 
 use alloc::{
     string::{String, ToString},

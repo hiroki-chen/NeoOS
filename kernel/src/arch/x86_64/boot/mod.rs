@@ -95,7 +95,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     if let Err(errno) = init_cpu() {
         panic!("_start(): failed to initialize CPU #0. Errno: {:?}", errno);
     }
-    info!("_start(): initialized x2APIC.");
+    info!("_start(): initialized xAPIC.");
 
     if let Err(errno) = init_pci() {
         panic!("_start(): failed to initialize PCI. Errno: {:?}", errno);

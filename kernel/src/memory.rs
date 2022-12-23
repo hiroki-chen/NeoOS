@@ -526,6 +526,15 @@ where
     (num.as_() & !PAGE_MASK).as_()
 }
 
+/// Extract the page frame number.
+pub fn page_frame_number<T>(addr: T) -> T
+where
+    T: AsPrimitive<usize>,
+    usize: AsPrimitive<T>,
+{
+    (addr.as_() & PAGE_MASK).as_()
+}
+
 pub fn allocate_frame() -> KResult<PhysAddr> {
     KernelFrameAllocator.alloc()
 }
@@ -556,4 +565,6 @@ pub unsafe fn kmalloc(size: usize) -> KResult<*mut u8> {
     }
 }
 
-pub unsafe fn kfree(ptr: *mut u8) {}
+pub unsafe fn kfree(ptr: *mut u8) {
+    unimplemented!()
+}
