@@ -337,3 +337,9 @@ pub enum FileObject {
     File(File),
     Socket,
 }
+
+impl Drop for FileObject {
+    fn drop(&mut self) {
+        // todo.
+    }
+}

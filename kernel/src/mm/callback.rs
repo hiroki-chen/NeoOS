@@ -60,6 +60,41 @@ pub struct FileArenaCallback<F, A> {
     pub frame_allocator: A,
 }
 
+/// The callback for normal memory allocators.
+#[derive(Clone, Debug)]
+pub struct SystemArenaCallback<A>
+where
+    A: FrameAlloc,
+{
+    frame_allocator: A,
+}
+
+#[derive(Clone, Debug)]
+pub struct SimpleArenaCallback<A>
+where
+    A: FrameAlloc,
+{
+    frame_allocator: A,
+}
+
+impl<A> SystemArenaCallback<A>
+where
+    A: FrameAlloc,
+{
+    pub fn new(frame_allocator: A) -> Self {
+        Self { frame_allocator }
+    }
+}
+
+impl<A> SimpleArenaCallback<A>
+where
+    A: FrameAlloc,
+{
+    pub fn new(frame_allocator: A) -> Self {
+        Self { frame_allocator }
+    }
+}
+
 impl<F, A> FileArenaCallback<F, A>
 where
     F: ReadAsFile,
@@ -146,8 +181,7 @@ where
         addr: u64,
         access_type: AccessType,
     ) -> bool {
-        let page_frame = page_frame_number(addr);
-        let entry = match page_table.get_entry(VirtAddr::new(page_frame)) {
+        let entry = match page_table.get_entry(VirtAddr::new(addr)) {
             Ok(e) => e,
             Err(errno) => return false,
         };
@@ -194,4 +228,148 @@ impl<F, A> Debug for FileArenaCallback<F, A> {
             self.mem_start, self.file_start, self.file_end
         )
     }
+}
+
+impl<A> ArenaCallback for SystemArenaCallback<A>
+where
+    A: FrameAlloc,
+{
+    fn clone_as_box(&self) -> Box<dyn ArenaCallback> {
+        Box::new(self.clone())
+    }
+
+    fn clone_and_map(
+        &self,
+        dst: &mut dyn PageTableBehaviors,
+        src: &mut dyn PageTableBehaviors,
+        addr: VirtAddr,
+        flags: &ArenaFlags,
+    ) {
+        let entry = src
+            .get_entry(addr)
+            .expect("clone_and_map(): failed to get entry");
+        if entry.present() {
+            // eager map and copy data
+            let data = src.get_page_slice_mut(addr).unwrap();
+            let target = self
+                .frame_allocator
+                .alloc()
+                .expect("clone_and_map(): failed to alloc frame");
+            let entry = dst.map(addr, target);
+
+            entry.set_execute(!flags.non_executable);
+            entry.set_writable(flags.writable);
+            entry.set_user(flags.user_accessible);
+            entry.set_mmio(flags.mmio);
+            entry.update();
+
+            dst.get_page_slice_mut(addr).unwrap().copy_from_slice(data);
+        } else {
+            // delay map
+            self.map(dst, addr, flags);
+        }
+    }
+
+    fn do_handle_page_fault(
+        &self,
+        page_table: &mut dyn PageTableBehaviors,
+        addr: u64,
+        access_type: AccessType,
+    ) -> bool {
+        let entry = match page_table.get_entry(VirtAddr::new(addr)) {
+            Ok(e) => e,
+            Err(errno) => return false,
+        };
+
+        if entry.present() {
+            match check_permission(&access_type, entry) {
+                true => return true,
+                false => {
+                    error!("do_handle_page_fault(): entry exists but access type violation was found. Access type: {:#x?}", access_type);
+                    return false;
+                }
+            }
+        }
+
+        // Allocate a new physical frame for this page table entry.
+        let frame = match self.frame_allocator.alloc() {
+            Ok(f) => f,
+            Err(errno) => {
+                error!("do_handle_page_fault(): failed to allocate frame for page table entry. Error: {:?}", errno);
+                return false;
+            }
+        };
+
+        // Map to this entry.
+        entry.set_target(frame);
+        entry.set_present(true);
+        entry.update();
+
+        let data = page_table.get_page_slice_mut(VirtAddr::new(addr)).unwrap();
+        for d in data {
+            *d = 0;
+        }
+
+        true
+    }
+
+    fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {
+        let entry = page_table.map(addr, PhysAddr::new(0));
+        entry.set_present(false);
+        entry.set_execute(!flags.non_executable);
+        entry.set_writable(flags.writable);
+        entry.set_user(flags.user_accessible);
+        entry.set_mmio(flags.mmio);
+        entry.update();
+    }
+
+    fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {
+        let entry = page_table
+            .get_entry(addr)
+            .expect("unmap(): failed to get entry");
+        self.frame_allocator.dealloc(addr.as_u64()).unwrap();
+        page_table.unmap(addr);
+    }
+}
+
+impl<A> ArenaCallback for SimpleArenaCallback<A>
+where
+    A: FrameAlloc,
+{
+    fn clone_as_box(&self) -> Box<dyn ArenaCallback> {
+        Box::new(self.clone())
+    }
+
+    fn clone_and_map(
+        &self,
+        dst: &mut dyn PageTableBehaviors,
+        src: &mut dyn PageTableBehaviors,
+        addr: VirtAddr,
+        flags: &ArenaFlags,
+    ) {
+        self.map(dst, addr, flags);
+        let data = src.get_page_slice_mut(addr).unwrap();
+        dst.get_page_slice_mut(addr).unwrap().copy_from_slice(data);
+    }
+
+    fn do_handle_page_fault(
+        &self,
+        page_table: &mut dyn PageTableBehaviors,
+        addr: u64,
+        access_type: AccessType,
+    ) -> bool {
+        false
+    }
+
+    fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {
+        let entry = page_table.map(addr, PhysAddr::new(0));
+        entry.set_present(false);
+        entry.set_execute(!flags.non_executable);
+        entry.set_writable(flags.writable);
+        entry.set_user(flags.user_accessible);
+        entry.set_mmio(flags.mmio);
+        entry.update();
+    }
+
+    fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {}
 }

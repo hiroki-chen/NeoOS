@@ -12,9 +12,10 @@ use lazy_static::lazy_static;
 use spin::RwLock;
 
 use crate::{
-    arch::{cpu::cpu_id, interrupt::Context, mm::paging::KernelPageTable},
+    arch::{cpu::cpu_id, interrupt::Context, mm::paging::KernelPageTable, PAGE_SIZE},
     error::{Errno, KResult},
-    mm::MemoryManager,
+    memory::{KernelFrameAllocator, KernelStack, USER_STACK_SIZE, USER_STACK_START},
+    mm::{callback::SystemArenaCallback, Arena, ArenaFlags, MemoryManager},
     signal::{SignalSet, Stack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
@@ -55,6 +56,24 @@ pub fn find_available_tid() -> KResult<u64> {
 }
 
 impl Thread {
+    /// Prepares the user stack. Returns the stack top.
+    fn prepare_user_stack(vm: &mut MemoryManager<KernelPageTable>) -> KResult<usize> {
+        let user_stack_bottom = USER_STACK_START;
+        let user_stack_top = USER_STACK_START + USER_STACK_SIZE;
+
+        // reserve 4 pages for init info.
+        let mut flags = ArenaFlags::default();
+        flags.non_executable = false;
+        flags.user_accessible = true;
+        vm.add(Arena {
+            range: user_stack_bottom as u64..(user_stack_top - PAGE_SIZE * 4) as u64,
+            flags,
+            callback: Box::new(SystemArenaCallback::new(KernelFrameAllocator)),
+        });
+
+        todo!()
+    }
+
     /// Activates this thread and registers it to the global thread table `THREAD_TABLE`.
     pub fn register(mut self) -> KResult<Arc<Self>> {
         let mut table = THREAD_TABLE.write();
@@ -73,6 +92,29 @@ impl Thread {
         let vm = Arc::new(Mutex::new(self.vm.lock().clone()));
 
         todo!()
+    }
+
+    /// Creates a raw thread with in-memory instructions.
+    /// Returns the user stack top.
+    ///
+    /// # Safety
+    /// This function is unsafe because `inst_addr` must be valid.
+    pub unsafe fn from_raw(inst_addr: u64) -> KResult<u64> {
+        let mut vm = Arc::new(Mutex::new(MemoryManager::<KernelPageTable>::new(false)));
+
+        let mut context = Context::default();
+        context.set_rip(inst_addr);
+        context.set_rsp(0x0); // todo.
+        context.regs.rflags = 0x3202;
+
+        let thread = Thread {
+            id: 0,
+            parent: todo!(),
+            inner: todo!(),
+            vm,
+        };
+
+        Ok(context.get_rsp())
     }
 }
 

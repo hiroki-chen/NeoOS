@@ -48,6 +48,8 @@ use buddy_system_allocator::Heap;
 use log::info;
 use x86_64::PhysAddr;
 
+pub const USER_STACK_SIZE: usize = 0x0040_0000;
+pub const USER_STACK_START: usize = 0x0000_8000_0000_0000 - USER_STACK_SIZE;
 pub const HEAP_UNIT: usize = 0x4000;
 pub const BITMAP_SIZE: usize = 256_000_000usize;
 /// The locked frame allocator for user-space processes.

@@ -136,6 +136,9 @@ pub trait PageTableBehaviors {
     /// This function is unsafe because we must ensure that the page table is valid; otherwise,
     /// the page fault handler will capture PF but it does not know how to deal with it.
     unsafe fn validate(&self);
+
+    /// Gets the starting virtual address of this page table.
+    fn cr3(&self) -> u64;
 }
 
 pub trait PageTableMoreBehaviors: Sized + PageTableBehaviors {
@@ -145,8 +148,28 @@ pub trait PageTableMoreBehaviors: Sized + PageTableBehaviors {
         pt.remap_kernel();
         pt
     }
+
     /// Empty.
     fn empty() -> Self;
+
+    /// Execute function `f` with this page table activated
+    unsafe fn with<T>(&self, f: impl FnOnce() -> T) -> T {
+        let cur = get_page_table() as *const _ as u64;
+        let new = self.cr3();
+
+        debug!("with(): switch from {:#x} to {:#x}", cur, new);
+        if cur != new {
+            set_page_table(new);
+        }
+
+        let ans = f();
+
+        debug!("with(): switch back.");
+        if cur != new {
+            set_page_table(cur);
+        }
+        ans
+    }
 }
 
 /// Implements `PageTableFrameMapping`.
@@ -418,6 +441,10 @@ impl PageTableBehaviors for KernelPageTable {
             old_page_table, new_page_table
         );
         set_page_table(new_page_table);
+    }
+
+    fn cr3(&self) -> u64 {
+        self.page_table_frame.start_address().as_u64()
     }
 }
 

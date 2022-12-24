@@ -227,6 +227,11 @@ where
         }
     }
 
+    /// Executes function `f` with `page_table`.
+    pub unsafe fn with(&self, f: impl FnOnce()) {
+        self.page_table.with(f)
+    }
+
     /// Receives the page fault handling request from the kernel.
     pub fn handle_page_fault(&mut self, addr: u64) -> bool {
         // Locate memory region where page fault occurs.
