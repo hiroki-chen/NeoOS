@@ -12,7 +12,7 @@
 //!
 //! It is only a set of interfaces that are backend-agnostic.
 
-use core::{any::Any, future::Future, ops::Range, pin::Pin};
+use core::{any::Any, fmt::Debug, future::Future, ops::Range, pin::Pin};
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use bitflags::bitflags;
@@ -282,5 +282,15 @@ impl<T> MaybeDirty<T> {
 
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+}
+
+impl<T> Debug for MaybeDirty<T>
+where
+    T: Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let tag = if self.dirty { "Dirty" } else { "Clean" };
+        write!(f, "[{}] {:?}", tag, self.inner)
     }
 }

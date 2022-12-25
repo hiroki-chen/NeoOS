@@ -14,7 +14,7 @@ use spin::RwLock;
 use crate::{
     arch::{cpu::cpu_id, interrupt::Context, mm::paging::KernelPageTable, PAGE_SIZE},
     error::{Errno, KResult},
-    memory::{KernelFrameAllocator, KernelStack, USER_STACK_SIZE, USER_STACK_START},
+    memory::{KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
     mm::{callback::SystemArenaCallback, Arena, ArenaFlags, MemoryManager},
     signal::{SignalSet, Stack},
     sync::mutex::SpinLockNoInterrupt as Mutex,

@@ -21,6 +21,7 @@ use event::EventBus;
 use self::thread::THREAD_TABLE;
 
 pub mod event;
+pub mod ld;
 pub mod thread;
 
 lazy_static! {

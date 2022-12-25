@@ -5,7 +5,9 @@
 //! of the total number of disk blocks are used as inode blocks. The remaining blocks in the filesystem are
 //! used as plain data blocks.
 
-use alloc::{rc::Weak, sync::Arc};
+use core::fmt::Debug;
+
+use alloc::sync::{Arc, Weak};
 use bitvec::prelude::*;
 use spin::RwLock;
 
@@ -13,7 +15,7 @@ use crate::error::KResult;
 
 use super::{
     file::FileType,
-    vfs::{MaybeDirty, Time},
+    vfs::{FileSytem, MaybeDirty, Time},
 };
 
 pub const MAGIC_NUMBER: u32 = 0xf0f03410;
@@ -43,7 +45,7 @@ impl SuperBlock {
 /// The INode for storage. Shares in common with vfs::INodeMetadata.
 #[derive(Debug)]
 #[repr(C)]
-pub struct SFSINode {
+pub struct DiskINode {
     pub size: u32,
     pub ty: FileType,
     pub nlinks: u32,
@@ -54,6 +56,24 @@ pub struct SFSINode {
     pub indirect: u32,
     pub db_indirect: u32,
     pub device_inode_id: usize,
+}
+
+/// The INode for SFS.
+pub struct SFSINode {
+    id: u64,
+    disk_inode: RwLock<MaybeDirty<DiskINode>>,
+    filesystem: Arc<SimpleFileSystem>,
+    device_inode_id: usize,
+}
+
+impl Debug for SFSINode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "INode {{ id: {}, disk: {:?} }}",
+            self.id, self.disk_inode
+        )
+    }
 }
 
 pub trait Device: Send + Sync {
@@ -67,4 +87,25 @@ pub struct SimpleFileSystem {
     device: Arc<dyn Device>,
     slf: Weak<Self>,
     freemap: RwLock<MaybeDirty<BitVec<u8, Lsb0>>>,
+}
+
+impl FileSytem for SimpleFileSystem {
+    fn metadata(&self) -> KResult<super::vfs::FsMetadata> {
+        todo!()
+    }
+
+    fn root(&self) -> KResult<Arc<dyn super::vfs::INode>> {
+        todo!()
+    }
+
+    fn sync(&self) -> KResult<()> {
+        todo!()
+    }
+}
+
+impl Drop for SimpleFileSystem {
+    fn drop(&mut self) {
+        self.sync()
+            .expect("Failed to sync when dropping the SimpleFileSystem");
+    }
 }

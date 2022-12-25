@@ -87,19 +87,11 @@ pub fn panic_unwind(info: &PanicInfo<'_>) -> ! {
     error!("{}", info);
     let frame = Frame::new();
     frame.unwind(*UNWIND_DEPTH);
-    loop {
-        unsafe {
-            core::arch::asm!("cli; hlt");
-        }
-    }
+    arch::cpu::die();
 }
 
 #[alloc_error_handler]
 pub fn alloc_error(layout: alloc::alloc::Layout) -> ! {
     error!("allocator: allocation failed in {:?}", layout);
-    loop {
-        unsafe {
-            core::arch::asm!("cli; hlt");
-        }
-    }
+    arch::cpu::die();
 }

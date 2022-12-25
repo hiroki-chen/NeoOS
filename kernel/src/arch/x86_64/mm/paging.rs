@@ -17,7 +17,7 @@ use x86_64::{
 };
 
 use crate::{
-    arch::{PAGE_SIZE, PHYSICAL_MEMORY_START},
+    arch::{KERNEL_PM4, PAGE_SIZE, PHYSICAL_MEMORY_PM4, PHYSICAL_MEMORY_START},
     error::{Errno, KResult},
     memory::{allocate_frame, deallocate_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
     process::thread::current,
@@ -111,7 +111,8 @@ pub trait EntryBehaviors {
 }
 
 pub trait PageTableBehaviors {
-    /// Remaps the kernel memory space.
+    /// Remaps the kernel memory space. This ensures that the user-space applications can access
+    /// kernel-space memory regions.
     fn remap_kernel(&mut self);
     /// Map a page of virual address `addr` to the frame of physics address `target`
     /// Return the page table entry of the mapped virual address
@@ -126,9 +127,6 @@ pub trait PageTableBehaviors {
 
     /// Get a mutable reference of the content of a page of virtual address `addr`
     fn get_page_slice_mut<'a>(&mut self, addr: VirtAddr) -> KResult<&'a mut [u8]>;
-
-    /// When copied user data (in page fault handler)，maybe need to flush I/D cache.
-    fn flush_cache_copy_user(&mut self, start: VirtAddr, end: VirtAddr, execute: bool);
 
     /// Validates this page table by overwriting CR3.
     ///
@@ -352,7 +350,19 @@ impl Drop for KernelPageTable {
 
 impl PageTableBehaviors for KernelPageTable {
     fn remap_kernel(&mut self) {
-        todo!();
+        let page_table = get_page_table();
+
+        let kernel_space = page_table[KERNEL_PM4 as usize].clone();
+        let physical_space = page_table[PHYSICAL_MEMORY_PM4 as usize].clone();
+        let new_table = unsafe { &mut *frame_to_page_table(self.page_table_frame) };
+        new_table[KERNEL_PM4 as usize].set_addr(
+            kernel_space.addr(),
+            kernel_space.flags() | PageTableFlags::GLOBAL,
+        );
+        new_table[PHYSICAL_MEMORY_PM4 as usize].set_addr(
+            physical_space.addr(),
+            physical_space.flags() | PageTableFlags::GLOBAL,
+        );
     }
 
     fn map(&mut self, addr: VirtAddr, target: PhysAddr) -> &mut dyn EntryBehaviors {
@@ -383,10 +393,8 @@ impl PageTableBehaviors for KernelPageTable {
             .flush();
     }
 
-    fn flush_cache_copy_user(&mut self, _: VirtAddr, _: VirtAddr, _: bool) {}
-
     fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors> {
-        let mut page_table = frame_to_page_table(self.page_table_frame);
+        let page_table = frame_to_page_table(self.page_table_frame);
 
         for page_table_level in 1..=4 {
             // Get the index for level at `page_table_level`.
