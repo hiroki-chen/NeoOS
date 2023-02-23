@@ -1,7 +1,6 @@
 //! This is based on the example at https://rust-osdev.github.io/uefi-rs
 #![no_std]
 #![no_main]
-#![feature(abi_efiapi)]
 
 mod page_table;
 mod utils;
