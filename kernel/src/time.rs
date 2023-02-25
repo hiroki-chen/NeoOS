@@ -7,7 +7,7 @@ pub use core::time::Duration;
 use chrono::prelude::*;
 
 use crate::{
-    arch::cpu::cpu_frequency,
+    arch::timer::timer,
     drivers::rtc,
     error::{Errno, KResult},
 };
@@ -28,18 +28,18 @@ pub struct SystemTime(Duration);
 impl Instant {
     /// Constructs a tiempoint from now.
     pub fn now() -> Self {
-        Instant(Duration::from_nanos(rdtsc()))
+        Instant(timer())
     }
 
     /// Calculate the elaped time.
     pub fn elapsed(&self) -> Duration {
-        let now = rdtsc();
-        let freq = cpu_frequency();
-        Duration::from_nanos((now - self.0.as_nanos() as u64) / freq as u64)
+        let now = timer();
+        Duration::from_nanos(now.as_nanos() as u64 - self.0.as_nanos() as u64)
     }
 }
 
 impl SystemTime {
+    /// System time( date command) is rtc time, but date application may not go to HW to get the time from RTC.
     pub fn now() -> Self {
         SystemTime(rtc::read_clock().unwrap_or(Duration::from_secs(0)))
     }
@@ -61,25 +61,4 @@ impl Display for SystemTime {
         let newdate = datetime.format("%Y-%m-%dT%H:%M:%SZ");
         write!(f, "{}", newdate)
     }
-}
-
-/// Reads the current value of the processor’s time-stamp counter.
-///
-/// The processor monotonically increments the time-stamp counter MSR every clock cycle and resets it
-/// to 0 whenever the processor is reset.
-fn rdtsc() -> u64 {
-    let eax: u32;
-    let edx: u32;
-    {
-        unsafe {
-            core::arch::asm!(
-              "rdtsc",
-              lateout("eax") eax,
-              lateout("edx") edx,
-              options(nomem, nostack)
-            );
-        }
-    }
-
-    (edx as u64) << 32 | eax as u64
 }

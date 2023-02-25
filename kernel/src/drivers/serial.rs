@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use uart_16550::SerialPort;
 use x86_64::instructions::port::Port;
 
-use crate::sync::mutex::SpinLockNoInterrupt as Mutex;
+use crate::{print, sync::mutex::SpinLockNoInterrupt as Mutex};
 
 use super::{Driver, DRIVERS, IRQ_MANAGER, SERIAL_COM_0_UUID, SERIAL_COM_1_UUID, SERIAL_DRIVERS};
 
@@ -66,7 +66,21 @@ impl ComPort {
 }
 
 impl Driver for ComPort {
-    fn dispatch(&self, _irq: Option<u64>) -> bool {
+    fn dispatch(&self, irq: Option<u64>) -> bool {
+        log::trace!("serial::dispatch(): received IRQ {:#x?}", irq);
+
+        let read_byte = {
+            let read_byte = self.read();
+            if read_byte == 0xd {
+                0xa
+            } else {
+                read_byte
+            }
+        } as char;
+        print!("{read_byte}");
+
+        // TODO: Send this key into some character device so that the application can read it.
+
         true
     }
 

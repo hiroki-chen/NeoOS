@@ -3,9 +3,11 @@ pub mod apic;
 pub mod boot;
 pub mod cpu;
 pub mod gdt;
+pub mod hpet;
 pub mod interrupt;
 pub mod io;
 pub mod mm;
+pub mod timer;
 
 // Some constants.
 pub const PAGE_SIZE: usize = 0x1000;

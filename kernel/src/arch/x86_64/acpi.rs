@@ -6,10 +6,15 @@ use core::{ptr::NonNull, sync::atomic::Ordering};
 
 use acpi::{AcpiHandler, AcpiTables, HpetInfo, InterruptModel, PhysicalMapping, PlatformInfo};
 use boot_header::Header;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 
 use crate::{
-    arch::{interrupt::pic::disable_pic, PHYSICAL_MEMORY_START},
+    arch::{
+        hpet::init_hpet,
+        interrupt::pic::disable_pic,
+        timer::{TimerSource, TIMER_SOURCE},
+        PHYSICAL_MEMORY_START,
+    },
     error::{Errno, KResult},
     irq::{IrqType, IRQ_TYPE},
 };
@@ -73,11 +78,11 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
 
     // Get IA-PC High Precision Event Timer Table for `rdtsc` timer.
     if let Ok(hpet_table) = HpetInfo::new(&table) {
-        info!("init_acpi(): detected hpet_table!");
-        info!("init_acpi(): HPET information:\n{:#x?}", hpet_table);
-
-        if hpet_table.hpet_number == 0x0 || hpet_table.clock_tick_unit == 0x0 {
-            warn!("init_acpi(): this architecture does not support HEPT features.");
+        // Initialize the HPET timer.
+        if let Err(errno) = init_hpet(&hpet_table) {
+            log::error!("init_acpi(): cannot initialize HPET due to {:?}.", errno);
+            // Ignore this and fall back to `Acpi` timer.
+            TIMER_SOURCE.store(TimerSource::Apic, Ordering::Release);
         }
     }
 
