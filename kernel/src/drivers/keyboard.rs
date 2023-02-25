@@ -91,6 +91,10 @@ impl SerialDriver for SystemKeyboard {
         // Do nothing!
         panic!("Write to keyboard is meaningless!");
     }
+
+    fn enable_irq(&self) {
+        panic!("Should not call me!");
+    }
 }
 
 pub fn init_keyboard() {

@@ -113,7 +113,7 @@ pub fn register(process: Arc<Mutex<Process>>, id: u64) {
 }
 
 pub fn search_by_id(id: u64) -> KResult<Arc<Mutex<Process>>> {
-    let mut table = KERNEL_PROCESS_LIST.read();
+    let table = KERNEL_PROCESS_LIST.read();
     table
         .iter()
         .find(|item| item.1.lock().process_id == id)
@@ -122,7 +122,7 @@ pub fn search_by_id(id: u64) -> KResult<Arc<Mutex<Process>>> {
 }
 
 pub fn search_by_group_id(id: u64) -> Vec<Arc<Mutex<Process>>> {
-    let mut table = KERNEL_PROCESS_LIST.read();
+    let table = KERNEL_PROCESS_LIST.read();
     table
         .iter()
         .filter(|item| item.1.lock().process_group_id == id)

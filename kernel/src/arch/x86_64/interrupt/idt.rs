@@ -38,6 +38,7 @@ extern "C" {
     static VECTORS: [extern "C" fn(); IDT_ENTRY_SIZE];
 }
 
+/// Initialize all the interrupt vectors for later usage.
 pub fn init_idt() -> KResult<()> {
     // The crate x86_64 automatically wraps IDT table for us.
     // Do not drop this since the ownership is transferred to the CPU.

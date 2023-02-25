@@ -9,13 +9,7 @@
 //! traits! So we can manage the device tree conveniently.
 //!
 
-use alloc::{
-    collections::{btree_map::Entry, BTreeMap},
-    sync::Arc,
-    vec,
-    vec::Vec,
-};
-use log::debug;
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 
 use crate::{
     arch::apic::enable_irq,
@@ -50,12 +44,7 @@ impl IrqManager {
         if all {
             self.irq_all.push(driver.clone());
         } else {
-            match self.irq_devices.entry(irq) {
-                Entry::Occupied(mut e) => e.get_mut().push(driver),
-                Entry::Vacant(e) => {
-                    e.insert(vec![driver]);
-                }
-            }
+            self.irq_devices.entry(irq).or_default().push(driver);
         }
     }
 

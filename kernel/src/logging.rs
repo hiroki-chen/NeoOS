@@ -8,9 +8,12 @@ use crate::{
     time::SystemTime,
     LOG_LEVEL,
 };
+use alloc::vec::Vec;
 use core::fmt;
 use lazy_static::lazy_static;
 use log::{Level, LevelFilter, Log, Metadata, Record};
+
+pub const BANNER: &str = include_str!("./banner.txt");
 
 lazy_static! {
     // Lock the logger instance.
@@ -88,7 +91,7 @@ macro_rules! println {
         $crate::logging::print!("\n")
     };
     ($($arg:tt)*) => {{
-        $crate::logging::print!(format_args_nl!($($arg)*));
+        $crate::print!("{}", format_args_nl!($($arg)*));
     }};
 }
 
@@ -124,5 +127,13 @@ fn log_level_to_color_code(level: Level) -> u8 {
         Level::Info => 37,
         Level::Debug => 32,
         Level::Trace => 36,
+    }
+}
+
+pub fn print_banner() {
+    let strs = BANNER.split('\n').collect::<Vec<_>>();
+
+    for s in strs {
+        println!("{}", s);
     }
 }

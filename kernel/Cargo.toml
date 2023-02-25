@@ -10,7 +10,10 @@ apic = { git = "https://github.com/rcore-os/apic-rs.git" }
 atomic_enum = "0.2.0"
 bitflags = "1.3.2"
 bit_field = "0.10.1"
-bitvec = { version = "1.0.1", default-features = false, features = ["atomic", "alloc"] }
+bitvec = { version = "1.0.1", default-features = false, features = [
+  "atomic",
+  "alloc",
+] }
 buddy_system_allocator = { version = "0.8.0", features = ["const_fn"] }
 boot_header = { path = "../boot_header" }
 chrono = { version = "0.4.23", default-features = false, features = ["alloc"] }
@@ -20,7 +23,7 @@ num-traits = { version = "0.2", default-features = false }
 pci = { git = "https://github.com/hiroki-chen/pci-rs.git" }
 pc-keyboard = "0.6.1"
 raw-cpuid = "10.6.0"
-spin = "0.9.4"
+spin = { version = "0.9.5", default-features = false, features = ['rwlock'] }
 uart_16550 = "0.2.18"
 volatile = "0.3"
 x86_64 = { version = "0.14.10", features = ["abi_x86_interrupt"] }

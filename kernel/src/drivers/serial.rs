@@ -1,5 +1,6 @@
 use alloc::sync::Arc;
 use uart_16550::SerialPort;
+use x86_64::instructions::port::Port;
 
 use crate::sync::mutex::SpinLockNoInterrupt as Mutex;
 
@@ -32,6 +33,9 @@ pub trait SerialDriver: Driver {
 
     /// Writes a byte array into the driver.
     fn write(&self, bytes: &[u8]);
+
+    /// Enable the interrupt request.
+    fn enable_irq(&self);
 }
 
 /// COM (communication port)[1][2] is the original, yet still common, name of the serial port interface on PC-compatible
@@ -62,7 +66,7 @@ impl ComPort {
 }
 
 impl Driver for ComPort {
-    fn dispatch(&self, irq: Option<u64>) -> bool {
+    fn dispatch(&self, _irq: Option<u64>) -> bool {
         true
     }
 
@@ -77,12 +81,23 @@ impl Driver for ComPort {
 
 impl SerialDriver for ComPort {
     fn read(&self) -> u8 {
+        // Because sometimes we do not have a physical keyboard, we may need to use the serial port
+        // to get some input. All the serial ports can be controlled by IRQ 3 - 4.
         self.serial_port.lock().receive()
     }
 
     fn write(&self, bytes: &[u8]) {
         for byte in bytes.iter() {
             self.serial_port.lock().send(*byte);
+        }
+    }
+
+    fn enable_irq(&self) {
+        let addr = self.addr;
+        // Interrupt enable register.
+        let mut ier = Port::<u8>::new(addr + 0x1);
+        unsafe {
+            ier.write(0x03);
         }
     }
 }

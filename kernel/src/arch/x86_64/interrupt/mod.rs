@@ -85,7 +85,7 @@ pub mod syscall;
 
 use core::arch::{asm, global_asm};
 
-use apic::{LocalApic, XApic};
+use apic::{LocalApic, X2Apic};
 use log::info;
 
 use crate::{
@@ -94,7 +94,6 @@ use crate::{
         interrupt::{idt::init_idt, syscall::init_syscall},
     },
     error::KResult,
-    memory::phys_to_virt,
 };
 
 // Defines a enumeration over CPU auto-generated interrupts.
@@ -255,7 +254,7 @@ impl Context {
 /// Initialize the trap handler and the interrupt descriptor table.
 pub unsafe fn init_interrupt_all() -> KResult<()> {
     // Step 1: This operation should be atomic, so no other interrupts could happten.
-    disable();
+    let flags = disable_and_store();
     info!("init_interrupt_all(): disabled interrupts.");
     // Step 2: Set up the global descriptor table.
     init_gdt()?;
@@ -268,6 +267,8 @@ pub unsafe fn init_interrupt_all() -> KResult<()> {
     // Step 4: Set up the syscall handlers.
     init_syscall()?;
     info!("init_interrupt_all(): initialized syscall handlers.");
+    // Step 5: Restore the interrupt.
+    restore(flags);
 
     Ok(())
 }
@@ -285,7 +286,8 @@ pub unsafe fn disable_and_store() -> usize {
 /// Restores the previously disabled interrupt.
 #[inline(always)]
 pub unsafe fn restore(flags: usize) {
-    asm!("push {flags}; popf", flags = in(reg) flags)
+    asm!("push {flags}; popf", flags = in(reg) flags);
+    asm!("sti");
 }
 
 /// Disables interrupts without getting the RFLAGS.
@@ -297,7 +299,7 @@ pub unsafe fn disable() {
 /// Notify the CPU that we have received this IRQ.
 #[inline(always)]
 pub fn eoi() {
-    let mut lapic = unsafe { XApic::new(phys_to_virt(0xfee0_0000) as usize) };
+    let mut lapic = X2Apic {};
 
     lapic.eoi();
 }

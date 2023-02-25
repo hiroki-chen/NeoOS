@@ -4,11 +4,11 @@
 #![allow(clippy::uninit_assumed_init)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::fn_to_numeric_cast)]
-#![feature(abi_efiapi)]
 #![feature(allocator_api)]
 #![feature(alloc_error_handler)]
 #![feature(exclusive_range_pattern)]
 #![feature(inline_const)]
+#![feature(format_args_nl)]
 #![feature(lang_items)]
 
 extern crate alloc;
@@ -28,13 +28,15 @@ pub mod time;
 
 use alloc::string::String;
 use core::panic::PanicInfo;
-use drivers::SERIAL_DRIVERS;
 use lazy_static::lazy_static;
 use log::{error, info};
 // We do not want OOM to cause kernel crash.
 use buddy_system_allocator::LockedHeapWithRescue;
 
-use crate::debug::{Frame, UNWIND_DEPTH};
+use crate::{
+    debug::{Frame, UNWIND_DEPTH},
+    logging::print_banner,
+};
 
 lazy_static! {
     pub static ref LOG_LEVEL: String = option_env!("OS_LOG_LEVEL").unwrap_or("info").to_lowercase();
@@ -54,12 +56,10 @@ extern "C" {
 
 /// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
 pub fn kmain() -> ! {
-    loop {
-        // todo
-        let serial = SERIAL_DRIVERS.read();
-        let dev = serial.first().unwrap();
-        info!("kmain(): {}", dev.read());
-    }
+    info!("kmain(): kernel main procedure started.");
+    print_banner();
+
+    loop {}
 }
 
 /// The global allocator for the heap memory.

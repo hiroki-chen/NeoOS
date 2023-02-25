@@ -4,9 +4,9 @@
 
 use core::ptr::NonNull;
 
-use acpi::{AcpiHandler, AcpiTables, HpetInfo, PhysicalMapping};
+use acpi::{AcpiHandler, AcpiTables, HpetInfo, PhysicalMapping, PlatformInfo};
 use boot_header::Header;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 
 use crate::{
     arch::PHYSICAL_MEMORY_START,
@@ -55,10 +55,24 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
 
     debug!("init_acpi(): revision: {:#x}", table.revision);
 
+    // Check IoAPIC information.
+    if let Ok(platform_info) = PlatformInfo::new(&table) {
+        info!("init_acpi(): showing platform information!");
+        info!("Interrupt model: {:#x?}", platform_info.interrupt_model);
+        info!(
+            "Processor information: {:#x?}",
+            platform_info.processor_info.unwrap().boot_processor
+        );
+    }
+
     // Get IA-PC High Precision Event Timer Table for `rdtsc` timer.
     if let Ok(hpet_table) = HpetInfo::new(&table) {
         info!("init_acpi(): detected hpet_table!");
         info!("init_acpi(): HPET information:\n{:#x?}", hpet_table);
+
+        if hpet_table.hpet_number == 0x0 || hpet_table.clock_tick_unit == 0x0 {
+            warn!("init_acpi(): this architecture does not support HEPT features.");
+        }
     }
 
     Ok(())

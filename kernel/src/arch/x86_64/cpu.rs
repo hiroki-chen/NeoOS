@@ -2,7 +2,7 @@
 
 use alloc::{format, string::String};
 
-use apic::{LocalApic, XApic};
+use apic::{LocalApic, X2Apic};
 use raw_cpuid::{CpuId, FeatureInfo};
 use x86::random::rdrand64;
 use x86_64::{
@@ -13,7 +13,6 @@ use x86_64::{
 use crate::{
     arch::apic::AcpiSupport,
     error::{Errno, KResult},
-    memory::phys_to_virt,
 };
 
 pub fn cpu_name(level: i64) -> String {
@@ -25,6 +24,11 @@ pub fn cpu_name(level: i64) -> String {
 }
 
 /// Put CPU into non-responsive state.
+///
+/// # Purpose of this function
+///
+/// The function `die()` will put the CPU into an endless loop. This function is invoked
+/// typically after an unrecoverable error within the kernel world (e.g., allocation error).
 pub fn die() -> ! {
     loop {
         unsafe {
@@ -56,15 +60,20 @@ pub fn cpu_feature_info() -> KResult<FeatureInfo> {
 
 /// Initialize the Advanced Programmable Interrupt Controller.
 pub fn init_cpu() -> KResult<()> {
-    if !XApic::does_cpu_support() {
-        log::error!("init_cpu(): CPU does not support xAPIC");
+    if !X2Apic::does_cpu_support() {
+        log::error!("init_cpu(): CPU does not support x2APIC");
         return Err(Errno::EINVAL);
     }
 
-    let mut lapic = unsafe { XApic::new(phys_to_virt(0xfee0_0000) as usize) };
-    lapic.cpu_init();
+    let mut apic = X2Apic {};
+    apic.cpu_init();
 
-    log::info!("init_cpu(): xAPIC info:\n{:#x?}", lapic);
+    log::info!(
+        "init_cpu(): xAPIC info:\n version: {:#x?}; id: {:#x?}, icr: {:#x?}",
+        apic.version(),
+        apic.id(),
+        apic.icr()
+    );
     unsafe {
         enable_float_processing_unit();
     }
@@ -96,4 +105,12 @@ pub fn rdrand() -> u64 {
     let mut ans = 0;
     unsafe { rdrand64(&mut ans) };
     ans
+}
+
+/// Dump the flag register.
+pub unsafe fn dump_flags() -> u64 {
+    let mut flags: u64;
+
+    core::arch::asm!("pushfq; pop {}", out(reg) flags);
+    flags
 }

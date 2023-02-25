@@ -44,6 +44,8 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
                 cpu_id, errno
             );
         }
+
+        info!("init_cpu(): successfullly initialized CPU #{}", cpu_id);
     }
 
     // Initialize the heap.
@@ -115,6 +117,10 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
 
     // Step into the kernel main function.
     OK_THIS_CORE.store(true, Ordering::Relaxed);
+
+    {
+        crate::drivers::SERIAL_DRIVERS.read().first().unwrap().enable_irq();
+    }
 
     kmain();
 }
