@@ -97,7 +97,7 @@ impl SerialDriver for ComPort {
         // Interrupt enable register.
         let mut ier = Port::<u8>::new(addr + 0x1);
         unsafe {
-            ier.write(0x03);
+            ier.write(0x07);
         }
     }
 }

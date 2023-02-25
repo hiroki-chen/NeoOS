@@ -81,9 +81,13 @@
 
 pub mod dispatcher;
 pub mod idt;
+pub mod pic;
 pub mod syscall;
 
-use core::arch::{asm, global_asm};
+use core::{
+    arch::{asm, global_asm},
+    sync::atomic::Ordering,
+};
 
 use apic::{LocalApic, X2Apic};
 use log::info;
@@ -94,7 +98,10 @@ use crate::{
         interrupt::{idt::init_idt, syscall::init_syscall},
     },
     error::KResult,
+    irq::{IrqType, IRQ_TYPE},
 };
+
+use self::pic::{MASTER_PIC, SLAVE_PIC};
 
 // Defines a enumeration over CPU auto-generated interrupts.
 pub const DIVIDE_BY_ZERO_INTERRUPT: usize = 0x00;
@@ -298,8 +305,17 @@ pub unsafe fn disable() {
 
 /// Notify the CPU that we have received this IRQ.
 #[inline(always)]
-pub fn eoi() {
-    let mut lapic = X2Apic {};
-
-    lapic.eoi();
+pub fn eoi(irq: u8) {
+    match IRQ_TYPE.load(Ordering::Acquire) {
+        IrqType::Apic => {
+            let mut lapic = X2Apic {};
+            lapic.eoi();
+        }
+        IrqType::Pic => {
+            MASTER_PIC.write().ack();
+            if irq >= 8 {
+                SLAVE_PIC.write().ack();
+            }
+        }
+    }
 }

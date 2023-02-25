@@ -118,9 +118,5 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     // Step into the kernel main function.
     OK_THIS_CORE.store(true, Ordering::Relaxed);
 
-    {
-        crate::drivers::SERIAL_DRIVERS.read().first().unwrap().enable_irq();
-    }
-
     kmain();
 }

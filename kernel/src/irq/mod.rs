@@ -10,12 +10,23 @@
 //!
 
 use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use atomic_enum::atomic_enum;
 
 use crate::{
     arch::apic::enable_irq,
     drivers::Driver,
     error::{Errno, KResult},
 };
+
+pub static IRQ_TYPE: AtomicIrqType = AtomicIrqType::new(IrqType::Pic);
+
+#[repr(u8)]
+#[derive(Eq, PartialEq, PartialOrd, Ord)]
+#[atomic_enum]
+pub enum IrqType {
+    Pic = 0,
+    Apic = 1,
+}
 
 pub struct IrqManager {
     is_root: bool,

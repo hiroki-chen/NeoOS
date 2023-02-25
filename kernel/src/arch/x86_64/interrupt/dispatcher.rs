@@ -31,7 +31,7 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
             arch::cpu::die()
         }
         IRQ_MIN..=IRQ_MAX => {
-            eoi();
+            eoi(tf.trap_num as u8);
 
             let irq = tf.trap_num - IRQ_MIN;
             // Dispatch.
@@ -42,7 +42,7 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
             }
         }
 
-        _ => panic!("__trap_dispatcher(): unrecognized type!"),
+        _ => panic!("__trap_dispatcher(): unrecognized type {:#x?}!", tf.trap_num),
     }
 }
 

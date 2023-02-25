@@ -2,15 +2,16 @@
 //! for architectures that support ACPI. This module is designed to find and parse the
 //! static tables ACPI provides.
 
-use core::ptr::NonNull;
+use core::{ptr::NonNull, sync::atomic::Ordering};
 
-use acpi::{AcpiHandler, AcpiTables, HpetInfo, PhysicalMapping, PlatformInfo};
+use acpi::{AcpiHandler, AcpiTables, HpetInfo, InterruptModel, PhysicalMapping, PlatformInfo};
 use boot_header::Header;
 use log::{debug, error, info, warn};
 
 use crate::{
-    arch::PHYSICAL_MEMORY_START,
+    arch::{interrupt::pic::disable_pic, PHYSICAL_MEMORY_START},
     error::{Errno, KResult},
+    irq::{IrqType, IRQ_TYPE},
 };
 
 #[derive(Clone, Copy)]
@@ -63,6 +64,11 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
             "Processor information: {:#x?}",
             platform_info.processor_info.unwrap().boot_processor
         );
+
+        if let InterruptModel::Apic(_) = platform_info.interrupt_model {
+            disable_pic();
+            IRQ_TYPE.store(IrqType::Apic, Ordering::Release);
+        }
     }
 
     // Get IA-PC High Precision Event Timer Table for `rdtsc` timer.
