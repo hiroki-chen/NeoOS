@@ -93,7 +93,7 @@ bitflags! {
 }
 
 // Device registers
-const IXGBE_CTRL: usize = 0x00000 / 4;
+const IXGBE_CTRL: usize = 0x00000;
 const IXGBE_STATUS: usize = 0x00008 / 4;
 const IXGBE_CTRL_EXT: usize = 0x00018 / 4;
 const IXGBE_EICR: usize = 0x00800 / 4;

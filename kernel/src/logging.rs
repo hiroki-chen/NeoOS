@@ -14,6 +14,8 @@ use lazy_static::lazy_static;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
 pub const BANNER: &str = include_str!("./banner.txt");
+pub const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
+pub const META: &str = include_str!("../meta");
 
 lazy_static! {
     // Lock the logger instance.
@@ -133,7 +135,13 @@ fn log_level_to_color_code(level: Level) -> u8 {
 pub fn print_banner() {
     let strs = BANNER.split('\n').collect::<Vec<_>>();
 
+    println!("=====================================================");
     for s in strs {
         println!("{}", s);
     }
+
+    println!("{}", META);
+    println!("Kernel version: {}", VERSION.unwrap_or(""));
+    println!("Kernel: NeoOS kernel in /esp/efi/boot/kernel.img");
+    println!("=====================================================");
 }

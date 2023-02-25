@@ -39,7 +39,7 @@ pub trait INode: Any + Sync + Send {
     fn poll(&self) -> KResult<PollFlags>;
 
     /// Asynchronously polls the event. Non-blocking. Returns a future.
-    fn async_poll<'a>(&'a self) -> Pin<Box<AsyncPoll<'a>>> {
+    fn async_poll(&self) -> Pin<Box<AsyncPoll<'_>>> {
         // We must use `pin` to let it remain in the memory if not read.
         // So the ownership must be moved.
         Box::pin(async move { self.poll() })

@@ -104,7 +104,5 @@ impl SerialDriver for ComPort {
 
 /// Sends to the teleprinter.
 pub fn send_to_tty(byte: u8) {
-    match byte {
-        _ => unimplemented!(),
-    }
+    unimplemented!();
 }

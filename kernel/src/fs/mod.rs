@@ -79,7 +79,7 @@ impl dyn INode {
                     name
                 }
                 None => {
-                    let name = String::from(rest_path);
+                    let name = rest_path;
                     rest_path = "".to_string();
                     name
                 }

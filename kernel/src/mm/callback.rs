@@ -10,7 +10,7 @@ use crate::{
     arch::{mm::paging::PageTableBehaviors, PAGE_SIZE},
     error::KResult,
     fs::{file::ReadAsFile, vfs::INode},
-    memory::{page_frame_number, FrameAlloc},
+    memory::FrameAlloc,
 };
 
 use super::{check_permission, AccessType, ArenaFlags};

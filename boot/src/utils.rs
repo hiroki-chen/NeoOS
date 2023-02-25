@@ -23,12 +23,10 @@ fn parse_u64(config: &str, key: &str) -> u64 {
     };
     let entry = entry.trim_start_matches(&pattern);
 
-    let value = match entry.parse::<u64>() {
+    match entry.parse::<u64>() {
         Ok(num) => num,
         Err(_) => u64::from_str_radix(&entry[2..], 16).unwrap(),
-    };
-
-    value
+    }
 }
 
 fn parse_str<'a>(config: &'a str, key: &str) -> &'a str {
@@ -104,13 +102,13 @@ impl<'a> BootLoaderConfig<'a> {
     pub fn parse(config_buf: &'a [u8]) -> Self {
         let config_str = core::str::from_utf8(config_buf).unwrap();
 
-        let kernel_stack_size = parse_u64(&config_str, "kernel_stack_size");
-        let kernel_stack_address = parse_u64(&config_str, "kernel_stack_address");
-        let kernel_path = parse_str(&config_str, "kernel_path");
-        let cmdline = parse_str(&config_str, "cmdline");
-        let physical_mem = parse_u64(&config_str, "physical_mem");
-        let initramfs = parse_u64(&config_str, "initramfs");
-        let initramfs_size = parse_u64(&config_str, "initramfs_size");
+        let kernel_stack_size = parse_u64(config_str, "kernel_stack_size");
+        let kernel_stack_address = parse_u64(config_str, "kernel_stack_address");
+        let kernel_path = parse_str(config_str, "kernel_path");
+        let cmdline = parse_str(config_str, "cmdline");
+        let physical_mem = parse_u64(config_str, "physical_mem");
+        let initramfs = parse_u64(config_str, "initramfs");
+        let initramfs_size = parse_u64(config_str, "initramfs_size");
 
         Self {
             kernel_stack_size,

@@ -31,3 +31,4 @@ x86 = "0.52.0"
 
 [build-dependencies]
 cc = "1.0"
+rustc_version = "0.4.0"

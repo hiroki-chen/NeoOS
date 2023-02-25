@@ -76,11 +76,7 @@ impl Process {
     }
 
     pub fn exit(&mut self, exit_code: u64) {
-        let all_fd = self
-            .opened_files
-            .iter()
-            .map(|(fd, _)| *fd)
-            .collect::<Vec<u64>>();
+        let all_fd = self.opened_files.keys().copied().collect::<Vec<u64>>();
         for fd in all_fd.iter() {
             let file = self.opened_files.remove(fd).unwrap();
             drop(file);

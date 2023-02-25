@@ -518,5 +518,5 @@ fn from_ata_string(data: &[u8]) -> String {
         swapped_data.push(data[i + 1]);
         swapped_data.push(data[i]);
     }
-    return String::from_utf8(swapped_data).unwrap();
+    String::from_utf8(swapped_data).unwrap()
 }

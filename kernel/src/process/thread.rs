@@ -51,7 +51,7 @@ pub struct Thread {
 /// Finds a free tid and assigns it to the current thread by `register`.
 pub fn find_available_tid() -> KResult<u64> {
     (1u64..)
-        .find(|id| THREAD_TABLE.read().get(&id).is_none())
+        .find(|id| THREAD_TABLE.read().get(id).is_none())
         .ok_or(Errno::EBUSY)
 }
 
@@ -62,9 +62,11 @@ impl Thread {
         let user_stack_top = USER_STACK_START + USER_STACK_SIZE;
 
         // reserve 4 pages for init info.
-        let mut flags = ArenaFlags::default();
-        flags.non_executable = false;
-        flags.user_accessible = true;
+        let mut flags = ArenaFlags {
+            user_accessible: true,
+            non_executable: false,
+            ..Default::default()
+        };
         vm.add(Arena {
             range: user_stack_bottom as u64..(user_stack_top - PAGE_SIZE * 4) as u64,
             flags,

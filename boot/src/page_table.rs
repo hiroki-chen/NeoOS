@@ -112,8 +112,7 @@ where
 
     pub fn refactor_mmap_storage(&self, mmap_ptr: *mut u8, entry_size: usize) {
         // Refactor mmap.
-        let mut index = 0usize;
-        for descriptor in self.memory_map.clone().into_iter() {
+        for (index, descriptor) in self.memory_map.clone().enumerate() {
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     descriptor as *const MemoryDescriptor as *const u8,
@@ -121,8 +120,6 @@ where
                     entry_size,
                 );
             }
-
-            index += 1;
         }
     }
 }
@@ -135,7 +132,6 @@ where
     fn max_phys_addr(&self) -> u64 {
         self.memory_map
             .clone()
-            .into_iter()
             .map(|d| d.phys_start + d.page_count * S::SIZE)
             .max()
             .unwrap()
@@ -287,12 +283,12 @@ pub fn map_addr(
     let page_end = page_start + page_num;
 
     // Calculates the current memory index.
-    let mut cur = 0u64;
-    for page in Page::range_inclusive(page_start, page_end) {
+
+    for (cur, page) in Page::range_inclusive(page_start, page_end).enumerate() {
         let frame = match phys_addr {
-            Some(addr) => {
-                PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(addr + cur * PAGE_SIZE))
-            }
+            Some(addr) => PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(
+                addr + cur as u64 * PAGE_SIZE,
+            )),
             None => frame_allocator.allocate_frame().unwrap(),
         };
 
@@ -302,8 +298,6 @@ pub fn map_addr(
                 .unwrap()
                 .flush();
         }
-
-        cur += 1;
     }
 }
 
@@ -367,7 +361,7 @@ pub fn map_kernel(
     let kernel_start = PhysAddr::new(kernel.start_address as u64);
 
     for segment in kernel.elf.program_iter() {
-        if let Err(_) = program::sanity_check(segment, &kernel.elf) {
+        if program::sanity_check(segment, &kernel.elf).is_err() {
             panic!();
         }
 
@@ -506,7 +500,7 @@ fn handle_bss_section(
 
         // remap last page.
         unsafe {
-            let _ = page_tables.kernel.unmap(last_page.clone());
+            let _ = page_tables.kernel.unmap(last_page);
             page_tables
                 .kernel
                 .map_to(last_page, new_frame, flags, frame_allocator)

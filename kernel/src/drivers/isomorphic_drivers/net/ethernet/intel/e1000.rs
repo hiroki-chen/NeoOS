@@ -115,9 +115,9 @@ impl<P: Provider> E1000<P> {
         e1000[E1000_TDH].write(0); // TDH
         e1000[E1000_TDT].write(0); // TDT
 
-        for i in 0..send_queue.len() {
+        for element in send_queue.iter_mut() {
             let (buffer_page_va, buffer_page_pa) = P::alloc_dma(P::PAGE_SIZE);
-            send_queue[i].addr = buffer_page_pa as u64;
+            element.addr = buffer_page_pa as u64;
             send_buffers.push(buffer_page_va);
         }
 
@@ -130,10 +130,10 @@ impl<P: Provider> E1000<P> {
         let mut ral: u32 = 0;
         let mut rah: u32 = 0;
         for i in 0..4 {
-            ral = ral | (mac.as_bytes()[i] as u32) << (i * 8);
+            ral |= (mac.as_bytes()[i] as u32) << (i * 8);
         }
         for i in 0..2 {
-            rah = rah | (mac.as_bytes()[i + 4] as u32) << (i * 8);
+            rah |= (mac.as_bytes()[i + 4] as u32) << (i * 8);
         }
 
         e1000[E1000_RAL].write(ral); // RAL
@@ -141,8 +141,8 @@ impl<P: Provider> E1000<P> {
         e1000[E1000_RAH].write(rah | (1 << 31)); // RAH
 
         // MTA
-        for i in E1000_MTA..E1000_RAL {
-            e1000[i].write(0);
+        for element in e1000.iter_mut().take(E1000_RAL).skip(E1000_MTA) {
+            element.write(0);
         }
 
         // Program the descriptor base address with the address of the region.
@@ -159,9 +159,9 @@ impl<P: Provider> E1000<P> {
         e1000[E1000_RDT].write((recv_queue.len() - 1) as u32); // RDT
 
         // Receive buffers of appropriate size should be allocated and pointers to these buffers should be stored in the descriptor ring.
-        for i in 0..recv_queue.len() {
+        for element in recv_queue.iter_mut() {
             let (buffer_page_va, buffer_page_pa) = P::alloc_dma(P::PAGE_SIZE);
-            recv_queue[i].addr = buffer_page_pa as u64;
+            element.addr = buffer_page_pa as u64;
             recv_buffers.push(buffer_page_va);
         }
 
@@ -253,7 +253,7 @@ impl<P: Provider> E1000<P> {
 
         let target =
             unsafe { slice::from_raw_parts_mut(self.send_buffers[index] as *mut u8, buffer.len()) };
-        target.copy_from_slice(&buffer);
+        target.copy_from_slice(buffer);
 
         send_desc.len = buffer.len() as u16 + 4;
         send_desc.cmd = (1 << 3) | (1 << 1) | (1 << 0); // RS | IFCS | EOP

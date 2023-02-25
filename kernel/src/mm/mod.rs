@@ -65,11 +65,11 @@ bitflags! {
     }
 }
 
-impl Into<ArenaFlags> for MmapPerm {
-    fn into(self) -> ArenaFlags {
+impl From<MmapPerm> for ArenaFlags {
+    fn from(val: MmapPerm) -> ArenaFlags {
         let mut arena_flags = ArenaFlags::default();
 
-        if self.contains(MmapPerm::EXECUTE) {
+        if val.contains(MmapPerm::EXECUTE) {
             arena_flags.non_executable = false;
         }
 
@@ -288,8 +288,7 @@ where
     pub fn is_free(&self, addr: u64, size: usize) -> bool {
         self.arena
             .iter()
-            .find(|item| item.overlap_with(&(addr..addr + size as u64)))
-            .is_none()
+            .any(|item| item.overlap_with(&(addr..addr + size as u64)))
     }
 
     /// Finds a free arena that can be used for a given size.
@@ -299,15 +298,14 @@ where
             .map(|addr| page_mask(addr + PAGE_SIZE as u64 - 1))
             .find(|addr| self.is_free(*addr, size))
             .ok_or(Errno::ENOMEM)
-            .map(|raw_addr| VirtAddr::new(raw_addr))
+            .map(VirtAddr::new)
     }
 
     /// Returns true if `self.arena` has some memory regions overlapping with `other`.
     pub fn check_overlap(&self, other: &Arena) -> bool {
         self.arena
             .iter()
-            .find(|item| item.overlap_with(&other.range))
-            .is_some()
+            .any(|item| item.overlap_with(&other.range))
     }
 
     /// Extends this memory space.

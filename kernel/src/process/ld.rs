@@ -82,7 +82,7 @@ impl InitInfo {
         writer.write(&str_terminator);
         writer.write(envs.as_slice());
         writer.write(&str_terminator);
-        writer.write(&args.as_slice());
+        writer.write(args.as_slice());
 
         writer.stack
     }
