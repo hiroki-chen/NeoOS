@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 use uart_16550::SerialPort;
-use x86_64::instructions::port::Port;
+use x86_64::instructions::{interrupts::without_interrupts, port::Port};
 
 use crate::{print, sync::mutex::SpinLockNoInterrupt as Mutex};
 
@@ -101,9 +101,11 @@ impl SerialDriver for ComPort {
     }
 
     fn write(&self, bytes: &[u8]) {
-        for byte in bytes.iter() {
-            self.serial_port.lock().send(*byte);
-        }
+        without_interrupts(|| {
+            for byte in bytes.iter() {
+                self.serial_port.lock().send(*byte);
+            }
+        });
     }
 
     fn enable_irq(&self) {

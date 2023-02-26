@@ -7,6 +7,7 @@ pub mod hpet;
 pub mod interrupt;
 pub mod io;
 pub mod mm;
+pub mod pit;
 pub mod timer;
 
 // Some constants.

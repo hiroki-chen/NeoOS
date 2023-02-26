@@ -4,7 +4,10 @@
 
 use core::{ptr::NonNull, sync::atomic::Ordering};
 
-use acpi::{AcpiHandler, AcpiTables, HpetInfo, InterruptModel, PhysicalMapping, PlatformInfo};
+use acpi::{
+    platform::interrupt::Apic, AcpiHandler, AcpiTables, HpetInfo, InterruptModel, PhysicalMapping,
+    PlatformInfo,
+};
 use boot_header::Header;
 use log::{debug, error, info};
 
@@ -12,12 +15,14 @@ use crate::{
     arch::{
         hpet::init_hpet,
         interrupt::pic::disable_pic,
-        timer::{TimerSource, TIMER_SOURCE},
+        timer::{init_apic_timer, TimerSource, TIMER_SOURCE},
         PHYSICAL_MEMORY_START,
     },
     error::{Errno, KResult},
     irq::{IrqType, IRQ_TYPE},
 };
+
+use super::interrupt::ISA_TO_GSI;
 
 #[derive(Clone, Copy)]
 struct AcpiHandlerImpl;
@@ -70,9 +75,12 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
             platform_info.processor_info.unwrap().boot_processor
         );
 
-        if let InterruptModel::Apic(_) = platform_info.interrupt_model {
+        if let InterruptModel::Apic(apic_information) = platform_info.interrupt_model {
             disable_pic();
             IRQ_TYPE.store(IrqType::Apic, Ordering::Release);
+
+            // Collect mapping.
+            collect_irq_mapping(&apic_information);
         }
     }
 
@@ -87,4 +95,15 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
     }
 
     Ok(())
+}
+
+fn collect_irq_mapping(apic_information: &Apic) {
+    let mut mapping = ISA_TO_GSI.write();
+
+    apic_information
+        .interrupt_source_overrides
+        .iter()
+        .for_each(|iso| {
+            mapping.insert(iso.isa_source, iso.global_system_interrupt);
+        });
 }

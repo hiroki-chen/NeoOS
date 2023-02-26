@@ -124,14 +124,14 @@ pub fn init_rtc() {
 }
 
 pub fn read_clock() -> KResult<Duration> {
-    match RTC_DRIVERS.write().first_mut() {
+    match RTC_DRIVERS.read().first() {
         Some(rtc) => Ok(rtc.read_clock()),
         None => Err(Errno::EEXIST),
     }
 }
 
 pub fn read_clock_raw() -> KResult<u64> {
-    match RTC_DRIVERS.write().first_mut() {
+    match RTC_DRIVERS.read().first() {
         Some(rtc) => Ok(unsafe { rtc.read_clock_raw() }),
         None => Err(Errno::EEXIST),
     }

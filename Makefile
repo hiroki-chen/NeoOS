@@ -34,7 +34,8 @@ QEMU_COMMAND	?= qemu-system-x86_64 -enable-kvm \
 									-nographic -smp 2 -no-reboot -m 4G -rtc clock=vm \
 									-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
 									-device ahci,id=ahci0 \
-									-device ide-hd,drive=sfsimg,bus=ahci0.0
+									-device ide-hd,drive=sfsimg,bus=ahci0.0 \
+									-cpu host
 
 ifeq ($(DEBUG), 1)
 	QEMU_COMMAND += -s -S

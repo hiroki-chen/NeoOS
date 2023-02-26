@@ -7,7 +7,7 @@ pub use core::time::Duration;
 use chrono::prelude::*;
 
 use crate::{
-    arch::timer::timer,
+    arch::timer::rdtsc_timer,
     drivers::rtc,
     error::{Errno, KResult},
 };
@@ -28,12 +28,12 @@ pub struct SystemTime(Duration);
 impl Instant {
     /// Constructs a tiempoint from now.
     pub fn now() -> Self {
-        Instant(timer())
+        Instant(rdtsc_timer())
     }
 
     /// Calculate the elaped time.
     pub fn elapsed(&self) -> Duration {
-        let now = timer();
+        let now = rdtsc_timer();
         Duration::from_nanos(now.as_nanos() as u64 - self.0.as_nanos() as u64)
     }
 }

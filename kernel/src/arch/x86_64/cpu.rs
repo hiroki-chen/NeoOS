@@ -1,9 +1,12 @@
 //! Rust port of linux/arch/x86/cpu.c
 
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
 use alloc::{format, string::String};
 
 use apic::{LocalApic, X2Apic};
-use raw_cpuid::{CpuId, FeatureInfo};
+use log::{info, warn};
+use raw_cpuid::{CpuId, CpuIdResult, FeatureInfo};
 use x86::random::rdrand64;
 use x86_64::{
     instructions,
@@ -15,9 +18,26 @@ use crate::{
     error::{Errno, KResult},
 };
 
+use super::interrupt::{disable_and_store, restore, timer::TICK};
+
+pub static CPU_FREQUENCY: AtomicU64 = AtomicU64::new(0u64);
+pub static MEASURE_DONE: AtomicBool = AtomicBool::new(false);
+
+pub fn cpuid() -> CpuId {
+    CpuId::with_cpuid_fn(|a, c| {
+        let result = unsafe { core::arch::x86_64::__cpuid_count(a, c) };
+        CpuIdResult {
+            eax: result.eax,
+            ebx: result.ebx,
+            ecx: result.ecx,
+            edx: result.edx,
+        }
+    })
+}
+
 pub fn cpu_name(level: i64) -> String {
     match level {
-        64 => String::from(CpuId::new().get_vendor_info().unwrap().as_str()),
+        64 => String::from(cpuid().get_vendor_info().unwrap().as_str()),
         0..14 => format!("i{}86", level),
         _ => String::from("i686"),
     }
@@ -30,29 +50,36 @@ pub fn cpu_name(level: i64) -> String {
 /// The function `die()` will put the CPU into an endless loop. This function is invoked
 /// typically after an unrecoverable error within the kernel world (e.g., allocation error).
 pub fn die() -> ! {
-    loop {
-        unsafe {
+    unsafe {
+        core::arch::asm!("cli");
+        loop {
             core::arch::asm!("nop");
         }
     }
 }
 
 pub fn cpu_id() -> usize {
-    CpuId::new()
-        .get_feature_info()
-        .unwrap()
-        .initial_local_apic_id() as usize
+    cpuid().get_feature_info().unwrap().initial_local_apic_id() as usize
 }
 
 pub fn cpu_frequency() -> u16 {
-    CpuId::new()
-        .get_processor_frequency_info()
-        .unwrap()
-        .processor_base_frequency()
+    let freq = match cpuid().get_processor_frequency_info() {
+        None => 0,
+        Some(f) => f.processor_base_frequency(),
+    };
+
+    if freq == 0 {
+        warn!("cpu_frequency(): cpuid returns 0. Trying to fetch MSRs. ");
+        // Get frequency by MSR?
+
+        CPU_FREQUENCY.load(Ordering::Relaxed) as u16
+    } else {
+        freq
+    }
 }
 
 pub fn cpu_feature_info() -> KResult<FeatureInfo> {
-    match CpuId::new().get_feature_info() {
+    match cpuid().get_feature_info() {
         Some(fi) => Ok(fi),
         None => Err(Errno::EEXIST),
     }
@@ -79,6 +106,32 @@ pub fn init_cpu() -> KResult<()> {
     }
 
     Ok(())
+}
+
+pub fn measure_frequency() {
+    let mut sum = 0;
+    TICK.store(0, Ordering::Release);
+    while !MEASURE_DONE.load(Ordering::Acquire) {
+        unsafe {
+            let mut aux = 0u32;
+            let begin = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
+            let end = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
+            sum += end - begin;
+        }
+    }
+
+    // Measure.
+    let flags = unsafe { disable_and_store() };
+    let tick = TICK.load(Ordering::Acquire);
+    // PIT => 1 ms. MHz => 1,000,000 counts per second.
+    let estimated_frequency = sum * 100 / tick as u64;
+    CPU_FREQUENCY.store(estimated_frequency, Ordering::Relaxed);
+    TICK.store(0, Ordering::Release);
+    unsafe {
+        restore(flags);
+    }
+
+    info!("measure_frequency(): estimated frequency is {estimated_frequency}.");
 }
 
 /// Halts the CPU until the next interrupt arrives.

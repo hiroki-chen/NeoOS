@@ -83,14 +83,18 @@ pub mod dispatcher;
 pub mod idt;
 pub mod pic;
 pub mod syscall;
+pub mod timer;
 
 use core::{
     arch::{asm, global_asm},
     sync::atomic::Ordering,
 };
 
+use alloc::collections::BTreeMap;
 use apic::{LocalApic, X2Apic};
+use lazy_static::lazy_static;
 use log::info;
+use spin::RwLock;
 
 use crate::{
     arch::{
@@ -114,6 +118,7 @@ pub const INVALID_OPCODE_INTERRUPT: usize = 0x06;
 pub const DEVICE_NOT_AVAILABLE_INTERRUPT: usize = 0x07;
 pub const DOUBLE_FAULT_INTERRUPT: usize = 0x08;
 pub const PAGE_FAULT_INTERRUPT: usize = 0x0e;
+pub const TIMER_INTERRUPT: usize = 0x00;
 
 pub const IRQ_MIN: usize = 0x20;
 pub const IRQ_MAX: usize = 0x3f;
@@ -123,6 +128,19 @@ pub const SYSCALL_REGS: usize = 0x6;
 
 global_asm!(include_str!("trap.S"));
 global_asm!(include_str!("idt_vectors.S"));
+
+lazy_static! {
+    /// Interrupt Source Overrides are necessary to describe variances between the IA-PC standard dual 8259
+    /// interrupt definition and the platform’s implementation.
+    ///
+    /// It is assumed that the ISA interrupts will be identity-mapped into the first I/O APIC sources. Most
+    /// existing APIC designs, however, will contain at least one exception to this assumption.
+    ///
+    /// For example, if your machine has the ISA Programmable Interrupt Timer (PIT) connected to ISA IRQ 0, but
+    /// in APIC mode, it is connected to I/O APIC interrupt input 2, then you would need an Interrupt Source
+    /// Override where the source entry is ‘0’ and the Global System Interrupt is 2.
+    pub static ref ISA_TO_GSI: RwLock<BTreeMap<u8, u32>> = RwLock::new(BTreeMap::new());
+}
 
 /// Trap frame of kernel interrupt
 ///

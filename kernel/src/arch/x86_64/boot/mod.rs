@@ -10,9 +10,11 @@ use log::{info, warn};
 use crate::{
     arch::{
         acpi::init_acpi,
-        cpu::{cpu_id, init_cpu},
+        cpu::{cpu_id, init_cpu, measure_frequency},
         interrupt::init_interrupt_all,
         mm::paging::{init_kernel_page_table, init_mm},
+        pit::init_pit,
+        timer::{init_apic_timer, TimerSource, TIMER_SOURCE},
     },
     drivers::{
         keyboard::init_keyboard,
@@ -114,6 +116,17 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
         );
     }
     info!("_start(): initialized ACPI.");
+
+    if let Err(errno) = init_pit() {
+        panic!("_start(): failed to initialize the PIT! Errno: {:?}", errno);
+    }
+    info!("_start(): initialized PIT.");
+
+    measure_frequency();
+
+    if TIMER_SOURCE.load(Ordering::Relaxed) != TimerSource::Hpet {
+        init_apic_timer();
+    }
 
     // Step into the kernel main function.
     OK_THIS_CORE.store(true, Ordering::Relaxed);

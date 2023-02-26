@@ -8,6 +8,7 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::upper_case_acronyms)]
 #![feature(allocator_api)]
+#![feature(core_intrinsics)]
 #![feature(alloc_error_handler)]
 #![feature(exclusive_range_pattern)]
 #![feature(inline_const)]
@@ -28,6 +29,7 @@ pub mod process;
 pub mod signal;
 pub mod sync;
 pub mod time;
+pub mod trigger;
 
 use alloc::string::String;
 use core::panic::PanicInfo;
@@ -37,6 +39,7 @@ use log::{error, info};
 use buddy_system_allocator::LockedHeapWithRescue;
 
 use crate::{
+    arch::interrupt::disable,
     debug::{Frame, UNWIND_DEPTH},
     logging::print_banner,
 };

@@ -6,8 +6,8 @@ use crate::{
     arch::{
         self,
         interrupt::{
-            eoi, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT, IRQ_MAX, IRQ_MIN,
-            PAGE_FAULT_INTERRUPT,
+            eoi, timer::handle_timer, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT, IRQ_MAX,
+            IRQ_MIN, PAGE_FAULT_INTERRUPT, TIMER_INTERRUPT,
         },
         mm::pretty_interpret,
     },
@@ -20,29 +20,36 @@ use super::TrapFrame;
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
 #[no_mangle]
 pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
-    debug!("__trap_dispatcher(): trap type: {:#x}", tf.trap_num);
-
     // Dispatch based on tf.trap_num.
     match tf.trap_num {
         BREAKPOINT_INTERRUPT => dump_all(tf),
         PAGE_FAULT_INTERRUPT => page_fault(tf),
         DOUBLE_FAULT_INTERRUPT => {
-            error!("__trap_dispatcher(): interrupt canno be handled! CPU is dead.");
+            error!("__trap_dispatcher(): interrupt cannot be handled! CPU is dead.");
             arch::cpu::die()
         }
         IRQ_MIN..=IRQ_MAX => {
             eoi(tf.trap_num as u8);
 
             let irq = tf.trap_num - IRQ_MIN;
-            // Dispatch.
-            if let Err(errno) = IRQ_MANAGER.read().dispatch_irq(irq as u64) {
-                error!("__trap_dispatcher(): IRQ manager returned {:?}", errno);
+            if irq == TIMER_INTERRUPT {
+                // Prevent logging when timer interrupt occurs because the previous contexts may hold
+                // the lock so that the whole program hangs due to deadlock.
+                handle_timer();
             } else {
-                trace!("__trap_dispatcher() IRQ handled.");
+                // Dispatch.
+                if let Err(errno) = IRQ_MANAGER.read().dispatch_irq(irq as u64) {
+                    error!("__trap_dispatcher(): IRQ manager returned {:?}", errno);
+                } else {
+                    trace!("__trap_dispatcher() IRQ handled.");
+                }
             }
         }
 
-        _ => panic!("__trap_dispatcher(): unrecognized type {:#x?}!", tf.trap_num),
+        _ => panic!(
+            "__trap_dispatcher(): unrecognized type {:#x?}!",
+            tf.trap_num
+        ),
     }
 }
 
