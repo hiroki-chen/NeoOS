@@ -9,6 +9,7 @@
 #![allow(clippy::upper_case_acronyms)]
 #![feature(allocator_api)]
 #![feature(core_intrinsics)]
+#![feature(rustc_attrs)]
 #![feature(alloc_error_handler)]
 #![feature(exclusive_range_pattern)]
 #![feature(inline_const)]
@@ -33,6 +34,9 @@ pub mod signal;
 pub mod sync;
 pub mod time;
 pub mod trigger;
+
+#[cfg(target_arch = "x86_64")]
+pub mod f64;
 
 use alloc::string::String;
 use core::panic::PanicInfo;
