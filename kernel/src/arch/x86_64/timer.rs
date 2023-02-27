@@ -2,16 +2,19 @@ use core::{sync::atomic::Ordering, time::Duration};
 
 use atomic_enum::atomic_enum;
 use lazy_static::lazy_static;
-use log::{debug, error, info};
+use log::{error, info};
 use x86::msr::{
     rdmsr, wrmsr, IA32_X2APIC_CUR_COUNT, IA32_X2APIC_DIV_CONF, IA32_X2APIC_INIT_COUNT,
     IA32_X2APIC_LVT_TIMER,
 };
 
 use crate::{
-    arch::interrupt::{
-        disable_and_store, restore,
-        timer::{APIC_UP, TICK},
+    arch::{
+        apic::disable_irq,
+        interrupt::{
+            disable_and_store, restore,
+            timer::{APIC_UP, TICK},
+        },
     },
     error::{Errno, KResult},
 };
@@ -99,14 +102,14 @@ pub fn init_apic_timer() -> KResult<()> {
                 TICK.store(0usize, Ordering::Release);
 
                 // Try 10 times => 100ms.
-                while TICK.load(Ordering::Acquire) < 10 {}
+                while TICK.load(Ordering::Acquire) == 0 {}
 
                 let flags = disable_and_store();
                 TICK.store(0usize, Ordering::Release);
                 APIC_UP.store(true, Ordering::Release);
                 // Stop the timer so that we can read from it.
                 wrmsr(IA32_X2APIC_LVT_TIMER, 0x10000);
-                let apic_timer_current = (0xFFFFFFFF - rdmsr(IA32_X2APIC_CUR_COUNT)) / 10;
+                let apic_timer_current = 0xFFFFFFFF - rdmsr(IA32_X2APIC_CUR_COUNT);
                 // Now we know how often the APIC timer has ticked in 10ms.
 
                 // Start timer as periodic on IRQ 0, divider 16, with the number of ticks we counted
@@ -117,6 +120,10 @@ pub fn init_apic_timer() -> KResult<()> {
                 info!("init_apic_timer(): successfully initialized APIC timer.");
 
                 restore(flags);
+
+                // Disable the old PIT and switches to APIC timer.
+                // This time, IRQ 0 is automatically reigstered for APIC timer.
+                disable_irq(0x0);
             }
 
             Ok(())

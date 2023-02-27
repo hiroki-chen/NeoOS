@@ -17,8 +17,10 @@ pub const CHAN0_DIVISOR: u16 = 11931;
 pub const RATE: u128 = (CHAN0_DIVISOR as u128 * PERIOD_FS) / 1_000_000;
 
 const SELECT_CHAN0: u8 = 0b00 << 6;
+const SELECT_CHAN2: u8 = 0b10;
 const ACCESS_LATCH: u8 = 0b00 << 4;
 const ACCESS_LOHI: u8 = 0b11 << 4;
+const MODE_1: u8 = 0b001;
 const MODE_2: u8 = 0b110;
 
 lazy_static! {
@@ -69,4 +71,12 @@ pub fn init_pit() -> KResult<()> {
     enable_irq(0x0);
 
     Ok(())
+}
+
+pub fn disable_pit() {
+    let mut pit = PIT.write();
+
+    unsafe {
+        pit.command.write(SELECT_CHAN2 | ACCESS_LOHI | MODE_1);
+    }
 }

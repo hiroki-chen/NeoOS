@@ -81,6 +81,7 @@
 
 pub mod dispatcher;
 pub mod idt;
+pub mod ipi;
 pub mod pic;
 pub mod syscall;
 pub mod timer;
@@ -123,6 +124,7 @@ pub const TIMER_INTERRUPT: usize = 0x00;
 pub const IRQ_MIN: usize = 0x20;
 pub const IRQ_MAX: usize = 0x3f;
 pub const SYSCALL: usize = 0x100;
+pub const IPI: usize = 0xfc;
 
 pub const SYSCALL_REGS: usize = 0x6;
 
@@ -336,4 +338,9 @@ pub fn eoi(irq: u8) {
             }
         }
     }
+}
+
+pub fn wait() {
+    x86_64::instructions::interrupts::enable_and_hlt();
+    x86_64::instructions::interrupts::disable()
 }

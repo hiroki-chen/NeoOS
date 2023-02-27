@@ -198,12 +198,12 @@ pub fn create_page_tables(frame_allocator: &mut impl FrameAllocator<Size4KiB>) -
     let phys_offset = VirtAddr::new(0);
 
     // copy the currently active level 4 page table, because it might be read-only
-    info!("Switching to new level 4 table");
+    info!("create_page_tables(): Switching to new level 4 table");
     let bootloader_page_table = {
         let old_table = locate_page_table();
         let new_frame = frame_allocator
             .allocate_frame()
-            .expect("Failed to allocate frame for new level 4 table");
+            .expect("create_page_tables(): Failed to allocate frame for new level 4 table");
         let new_table: &mut PageTable = {
             let ptr: *mut PageTable =
                 (phys_offset + new_frame.start_address().as_u64()).as_mut_ptr();
@@ -228,7 +228,7 @@ pub fn create_page_tables(frame_allocator: &mut impl FrameAllocator<Size4KiB>) -
     let (kernel_page_table, kernel_level_4_frame) = {
         // get an unused frame for new level 4 page table
         let frame: PhysFrame = frame_allocator.allocate_frame().expect("no unused frames");
-        log::info!("New page table at: {:#?}", &frame);
+        log::info!("create_page_tables(): New page table at: {:#?}", &frame);
         // get the corresponding virtual address
         let addr = phys_offset + frame.start_address().as_u64();
         // initialize a new page table

@@ -72,7 +72,7 @@ impl dyn INode {
                 return Err(Errno::ENOTDIR);
             }
 
-            let name = match rest_path.find('/') {
+            let name = match memchr::memchr(b'/', rest_path.as_bytes()) {
                 Some(index) => {
                     let name = rest_path[index..].to_string();
                     rest_path = rest_path[index..].to_string();

@@ -6,7 +6,7 @@ use crate::{
     arch::{
         self,
         interrupt::{
-            eoi, timer::handle_timer, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT, IRQ_MAX,
+            eoi, timer::handle_timer, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT, IPI, IRQ_MAX,
             IRQ_MIN, PAGE_FAULT_INTERRUPT, TIMER_INTERRUPT,
         },
         mm::pretty_interpret,
@@ -20,6 +20,12 @@ use super::TrapFrame;
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
 #[no_mangle]
 pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
+    // FIXME: Change log level to `trace`.
+    debug!(
+        "__trap_dispatcher(): trap frame number: {:#x?}",
+        tf.trap_num
+    );
+
     // Dispatch based on tf.trap_num.
     match tf.trap_num {
         BREAKPOINT_INTERRUPT => dump_all(tf),
@@ -44,6 +50,10 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
                     trace!("__trap_dispatcher() IRQ handled.");
                 }
             }
+        }
+
+        IPI => {
+            eoi(tf.trap_num as u8);
         }
 
         _ => panic!(

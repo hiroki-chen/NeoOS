@@ -22,7 +22,10 @@ pub mod drivers;
 pub mod error;
 pub mod fs;
 pub mod irq;
+
+#[macro_use]
 pub mod logging;
+
 pub mod memory;
 pub mod mm;
 pub mod process;
@@ -39,7 +42,6 @@ use log::{error, info};
 use buddy_system_allocator::LockedHeapWithRescue;
 
 use crate::{
-    arch::interrupt::disable,
     debug::{Frame, UNWIND_DEPTH},
     logging::print_banner,
 };
@@ -65,7 +67,10 @@ pub fn kmain() -> ! {
     info!("kmain(): kernel main procedure started.");
     print_banner();
 
-    loop {}
+    loop {
+        // TODO: schdule();
+        crate::arch::interrupt::wait();
+    }
 }
 
 /// The global allocator for the heap memory.

@@ -15,8 +15,8 @@ pub fn writefmt(arg: Arguments) {
     // deadlock, and it never ends.
     without_interrupts(|| {
         SERIAL_DRIVERS
-            .write()
-            .first_mut()
+            .read()
+            .first()
             .unwrap()
             .write(arg.to_string().as_bytes());
     })

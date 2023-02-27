@@ -10,7 +10,7 @@ use log::{info, warn};
 use crate::{
     arch::{
         acpi::init_acpi,
-        cpu::{cpu_id, init_cpu, measure_frequency},
+        cpu::{cpu_id, init_cpu, measure_frequency, print_cpu_topology},
         interrupt::init_interrupt_all,
         mm::paging::{init_kernel_page_table, init_mm},
         pit::init_pit,
@@ -33,6 +33,8 @@ static OK_THIS_CORE: AtomicBool = AtomicBool::new(false);
 /// The entry point of kernel
 #[no_mangle]
 pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
+    // TODO: Fix the initialization of APs by issuing INIT-SIPI-SIPI sequence to all APs.
+
     let cpu_id = cpu_id();
     // Prevent multiple cores.
     if cpu_id != 0 {
@@ -101,6 +103,8 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     }
     info!("_start(): initialized xAPIC.");
 
+    print_cpu_topology();
+
     if let Err(errno) = init_pci() {
         panic!("_start(): failed to initialize PCI. Errno: {:?}", errno);
     }
@@ -130,6 +134,13 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
 
     // Step into the kernel main function.
     OK_THIS_CORE.store(true, Ordering::Relaxed);
+
+    // {
+    //     use apic::LocalApic;
+    //     // Play
+    //     let mut lapic = apic::X2Apic {};
+    //     lapic.send_ipi(0x1, 0xfc);
+    // }
 
     kmain();
 }

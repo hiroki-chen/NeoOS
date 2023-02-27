@@ -14,7 +14,7 @@ use x86_64::{
 };
 
 use crate::{
-    arch::apic::AcpiSupport,
+    arch::{apic::AcpiSupport, pit::RATE},
     error::{Errno, KResult},
 };
 
@@ -85,6 +85,17 @@ pub fn cpu_feature_info() -> KResult<FeatureInfo> {
     }
 }
 
+pub fn print_cpu_topology() {
+    if let Some(info) = cpuid()
+        .get_extended_topology_info_v2()
+        .or(cpuid().get_extended_topology_info())
+    {
+        info.for_each(|topo| {
+            log::info!("print_cpu_topology(): {:?}", topo);
+        });
+    }
+}
+
 /// Initialize the Advanced Programmable Interrupt Controller.
 pub fn init_cpu() -> KResult<()> {
     if !X2Apic::does_cpu_support() {
@@ -110,21 +121,21 @@ pub fn init_cpu() -> KResult<()> {
 
 pub fn measure_frequency() {
     let mut sum = 0;
-    TICK.store(0, Ordering::Release);
-    while !MEASURE_DONE.load(Ordering::Acquire) {
-        unsafe {
-            let mut aux = 0u32;
-            let begin = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
-            let end = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
-            sum += end - begin;
-        }
+    let mut aux = 0u32;
+    TICK.store(0, Ordering::Relaxed);
+
+    unsafe {
+        let begin = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
+        while !MEASURE_DONE.load(Ordering::Acquire) {}
+        let end = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
+        sum += end - begin;
     }
 
     // Measure.
     let flags = unsafe { disable_and_store() };
     let tick = TICK.load(Ordering::Acquire);
-    // PIT => 1 ms. MHz => 1,000,000 counts per second.
-    let estimated_frequency = sum * 100 / tick as u64;
+    // PIT => 10 ms. MHz => 1,000,000 counts per second.
+    let estimated_frequency = (sum * 1000) / (tick as u64 * RATE as u64);
     CPU_FREQUENCY.store(estimated_frequency, Ordering::Relaxed);
     TICK.store(0, Ordering::Release);
     unsafe {
