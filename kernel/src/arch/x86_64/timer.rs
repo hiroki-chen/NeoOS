@@ -9,13 +9,7 @@ use x86::msr::{
 };
 
 use crate::{
-    arch::{
-        apic::disable_irq,
-        interrupt::{
-            disable_and_store, restore,
-            timer::{APIC_UP, TICK},
-        },
-    },
+    arch::{apic::disable_irq, interrupt::timer::APIC_UP, pit::countdown},
     error::{Errno, KResult},
 };
 
@@ -78,7 +72,7 @@ pub fn rdtsc_timer() -> Duration {
     let freq = CPU_FREQUENCY.load(Ordering::Relaxed);
     let rdtsc = unsafe { core::arch::x86_64::_rdtsc() };
 
-    Duration::from_nanos(rdtsc * 1000 / freq)
+    Duration::from_nanos(((rdtsc * 1000) as f64 / freq).round() as u64)
 }
 
 pub fn init_apic_timer() -> KResult<()> {
@@ -91,39 +85,34 @@ pub fn init_apic_timer() -> KResult<()> {
         }
         _ => {
             unsafe {
-                // Tell APIC timer to use divider 16.
-                wrmsr(IA32_X2APIC_DIV_CONF, 0x3);
-                // Set the initial count to -1.
-                wrmsr(IA32_X2APIC_INIT_COUNT, 0xFFFFFFFF);
-
                 // Measure the bus frequency for a fixed time interval.
                 // This time we use PIT temporarrily.
-                // immediately clear the tick.
-                TICK.store(0usize, Ordering::Release);
+                x86_64::instructions::interrupts::without_interrupts(|| {
+                    // Tell APIC timer to use divider 16.
+                    wrmsr(IA32_X2APIC_DIV_CONF, 0x3);
+                    // Set the initial count to -1.
+                    wrmsr(IA32_X2APIC_INIT_COUNT, 0xFFFFFFFF);
 
-                // Try 10 times => 100ms.
-                while TICK.load(Ordering::Acquire) == 0 {}
+                    // wait for 10 ms.
+                    countdown(10000);
 
-                let flags = disable_and_store();
-                TICK.store(0usize, Ordering::Release);
-                APIC_UP.store(true, Ordering::Release);
-                // Stop the timer so that we can read from it.
-                wrmsr(IA32_X2APIC_LVT_TIMER, 0x10000);
-                let apic_timer_current = 0xFFFFFFFF - rdmsr(IA32_X2APIC_CUR_COUNT);
-                // Now we know how often the APIC timer has ticked in 10ms.
+                    APIC_UP.store(true, Ordering::Release);
+                    // Stop the timer so that we can read from it.
+                    wrmsr(IA32_X2APIC_LVT_TIMER, 0x10000);
+                    let apic_timer_current = 0xFFFFFFFF - rdmsr(IA32_X2APIC_CUR_COUNT);
+                    // Now we know how often the APIC timer has ticked in 10ms.
 
-                // Start timer as periodic on IRQ 0, divider 16, with the number of ticks we counted
-                wrmsr(IA32_X2APIC_LVT_TIMER, 0x20 | 0x20000);
-                wrmsr(IA32_X2APIC_DIV_CONF, 0x3);
-                wrmsr(IA32_X2APIC_INIT_COUNT, apic_timer_current);
+                    // Start timer as periodic on IRQ 0, divider 16, with the number of ticks we counted
+                    wrmsr(IA32_X2APIC_LVT_TIMER, 0x20 | 0x20000);
+                    wrmsr(IA32_X2APIC_DIV_CONF, 0x3);
+                    wrmsr(IA32_X2APIC_INIT_COUNT, apic_timer_current);
 
-                info!("init_apic_timer(): successfully initialized APIC timer.");
+                    info!("init_apic_timer(): successfully initialized APIC timer.");
 
-                restore(flags);
-
-                // Disable the old PIT and switches to APIC timer.
-                // This time, IRQ 0 is automatically reigstered for APIC timer.
-                disable_irq(0x0);
+                    // Disable the old PIT and switches to APIC timer.
+                    // This time, IRQ 0 is automatically reigstered for APIC timer.
+                    disable_irq(0x0);
+                });
             }
 
             Ok(())

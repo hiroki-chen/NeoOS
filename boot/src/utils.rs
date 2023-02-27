@@ -55,16 +55,16 @@ pub struct Kernel<'a> {
 impl<'a> Kernel<'a> {
     pub fn new(bs: &BootServices, config: &'a BootLoaderConfig<'a>) -> Self {
         let kernel_path = config.kernel_path;
-        info!("Now loading the kernel image from {}.", kernel_path);
+        info!("Kernel::new(): Now loading the kernel image from {}.", kernel_path);
         let mut kernel = open_file(bs, kernel_path);
         let kernel_content = read_buf(bs, &mut kernel);
         let kernel_elf = ElfFile::new(kernel_content).expect("Not a valid ELF file.");
 
         let ty = kernel_elf.header.pt2.type_().as_type();
         if ty != Type::Executable && ty != Type::SharedObject {
-            panic!("We only support executable or shared object! Got {:?}.", ty);
+            panic!("Kernel::new(): We only support executable or shared object! Got {:?}.", ty);
         }
-        info!("Kernel type: {:?}", kernel_elf.header.pt2.type_().as_type());
+        info!("Kernel::new(): Kernel type: {:?}", kernel_elf.header.pt2.type_().as_type());
 
         Self {
             elf: kernel_elf,
@@ -156,7 +156,7 @@ pub fn open_file(bs: &BootServices, path: &str) -> RegularFile {
         FileType::Regular(f) => f,
         _ => panic!("This file does not exist!"),
     };
-    info!("File {} successfullly opened!", path);
+    info!("open_file(): File {} successfullly opened!", path);
 
     file
 }
@@ -165,7 +165,7 @@ pub fn read_buf(bs: &BootServices, file: &mut RegularFile) -> &'static mut [u8] 
     let mut file_info = [0u8; DEFAULT_FILE_BUF_SIZE];
     let info: &mut FileInfo = file.get_info(&mut file_info).unwrap();
     let size = usize::try_from(info.file_size()).unwrap();
-    info!("File size is {}", size);
+    info!("read_buf(): File size is {}", size);
 
     // Allocate ramdisk pages in the memory.
     let file_mem_ptr = bs

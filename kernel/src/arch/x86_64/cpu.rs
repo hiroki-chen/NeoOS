@@ -1,11 +1,12 @@
 //! Rust port of linux/arch/x86/cpu.c
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::Ordering;
 
 use alloc::{format, string::String};
 
 use apic::{LocalApic, X2Apic};
-use log::{info, warn};
+use atomic_float::AtomicF64;
+use log::{debug, info, warn};
 use raw_cpuid::{CpuId, CpuIdResult, FeatureInfo};
 use x86::random::rdrand64;
 use x86_64::{
@@ -14,14 +15,11 @@ use x86_64::{
 };
 
 use crate::{
-    arch::{apic::AcpiSupport, pit::RATE},
+    arch::{apic::AcpiSupport, pit::countdown},
     error::{Errno, KResult},
 };
 
-use super::interrupt::{disable_and_store, restore, timer::TICK};
-
-pub static CPU_FREQUENCY: AtomicU64 = AtomicU64::new(0u64);
-pub static MEASURE_DONE: AtomicBool = AtomicBool::new(false);
+pub static CPU_FREQUENCY: AtomicF64 = AtomicF64::new(0.0f64);
 
 pub fn cpuid() -> CpuId {
     CpuId::with_cpuid_fn(|a, c| {
@@ -120,29 +118,20 @@ pub fn init_cpu() -> KResult<()> {
 }
 
 pub fn measure_frequency() {
-    let mut sum = 0;
-    let mut aux = 0u32;
-    TICK.store(0, Ordering::Relaxed);
-
-    unsafe {
-        let begin = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
-        while !MEASURE_DONE.load(Ordering::Acquire) {}
-        let end = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
-        sum += end - begin;
-    }
-
     // Measure.
-    let flags = unsafe { disable_and_store() };
-    let tick = TICK.load(Ordering::Acquire);
-    // PIT => 10 ms. MHz => 1,000,000 counts per second.
-    let estimated_frequency = (sum * 1000) / (tick as u64 * RATE as u64);
-    CPU_FREQUENCY.store(estimated_frequency, Ordering::Relaxed);
-    TICK.store(0, Ordering::Release);
-    unsafe {
-        restore(flags);
-    }
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        // PIT => 10ms.
+        unsafe {
+            let mut aux = 0u32;
+            let begin = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
+            countdown(10000);
+            let end = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
 
-    info!("measure_frequency(): estimated frequency is {estimated_frequency}.");
+            let estimated_frequency = (end - begin) as f64 / 1_000_000f64;
+            CPU_FREQUENCY.store(estimated_frequency, Ordering::Relaxed);
+            info!("measure_frequency(): estimated frequency is {estimated_frequency}.");
+        }
+    });
 }
 
 /// Halts the CPU until the next interrupt arrives.
@@ -177,4 +166,39 @@ pub unsafe fn dump_flags() -> u64 {
 
     core::arch::asm!("pushfq; pop {}", out(reg) flags);
     flags
+}
+
+/// This function initializes all *Application Processors* (AP in short).
+///
+/// On any system with more than one logical processor we can categorize them as:
+///
+/// * BSP — bootstrap processor, executes modules that are necessary for booting the system
+/// * AP — application processor, any processor other than the bootstrap processor
+///
+/// Reference: https://wiki.osdev.org/SMP & https://pdos.csail.mit.edu/6.828/2008/readings/ia32/MPspec.pdf
+///
+/// BSP sends AP an INIT IPI
+/// BSP DELAYs (10mSec)
+/// If (APIC_VERSION is not an 82489DX) {
+///     BSP sends AP a STARTUP IPI
+///     BSP DELAYs (200µSEC)
+///     BSP sends AP a STARTUP IPI
+///     BSP DELAYs (200µSEC)
+/// }
+/// BSP verifies synchronization with executing AP
+pub fn wake_up_aps(apic_id: usize) -> KResult<()> {
+    let mut lapic = X2Apic {};
+    // Send init IPI.
+    let mut icr = /*0x8000 |*/ 0x4000 | 0x500;
+    if apic::X2Apic::does_cpu_support() {
+        icr |= (apic_id as u64) << 32;
+    } else {
+        icr |= (apic_id as u64) << 56; // destination apic id
+    }
+
+    debug!("wake_up_aps(): sending init IPI: {:#x}", icr);
+
+    lapic.set_icr(icr);
+
+    Ok(())
 }

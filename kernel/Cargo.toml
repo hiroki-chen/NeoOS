@@ -30,6 +30,7 @@ x86_64 = { version = "0.14.10", features = ["abi_x86_interrupt"] }
 x86 = "0.52.0"
 memchr = { version = "2.5.0", default-features = false }
 libm = "0.2.6"
+atomic_float = "0.1.0"
 
 [build-dependencies]
 cc = "1.0"

@@ -30,13 +30,13 @@ const DEFAULT_FILE_BUF_SIZE: usize = 0x400;
 fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut st).expect("Failed to launch the system table!");
 
-    info!("Initializing the image");
+    info!("_main(): Initializing the image");
     // Load boot configurations.
     let bs = st.boot_services();
     let mut file = utils::open_file(bs, BOOT_CONFIG_PATH);
     let file_content = utils::read_buf(bs, &mut file);
     let config = utils::BootLoaderConfig::parse(file_content);
-    info!("{:#?}", config);
+    info!("_main(): {:#?}", config);
 
     let config_table = st.config_table();
 
@@ -53,22 +53,25 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         .address;
 
     info!(
-        "Probed acpi: {:#x}; smbios: {:#x}.",
+        "_main(): Probed acpi: {:#x}; smbios: {:#x}.",
         acpi_address as u64, smbios_address as u64
     );
-    info!("UEFI bootloader successfullly started. ");
+    info!("_main(): UEFI bootloader successfullly started. ");
 
     // Init framebuffer, although not used.
     let graph_info = get_graph_info(bs);
     info!(
-        "Probed framebuffer: {:#x} with size {:#x}",
+        "_main(): Probed framebuffer: {:#x} with size {:#x}",
         graph_info.framebuffer, graph_info.framebuffer_size
     );
 
     // Load the kernel from the disk.
     let kernel = utils::Kernel::new(bs, &config);
-    info!("Entry: {:#x}", kernel.elf.header.pt2.entry_point());
-    info!("Kernel loaded at {:#x}", kernel.start_address as u64);
+    info!("_main(): Entry: {:#x}", kernel.elf.header.pt2.entry_point());
+    info!(
+        "_main(): Kernel loaded at {:#x}",
+        kernel.start_address as u64
+    );
     // In the context of UEFI (Unified Extensible Firmware Interface),
     // the memory_map_size parameter specifies the size of the memory
     // map that is provided by the UEFI firmware. The memory map is a
@@ -92,9 +95,9 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     // So we need to free them.
     let entry_size = core::mem::size_of::<MemoryDescriptor>();
     let mmap_size = bs.memory_map_size().map_size;
-    info!("Invalidate boot services");
+    info!("_main(): Invalidate boot services");
     info!(
-        "cmdline addr: {:#x}, mmap_storage: {:#x}, mm_size: {:#x}, entry_size: {:#x}",
+        "_main():  cmdline addr: {:#x}, mmap_storage: {:#x}, mm_size: {:#x}, entry_size: {:#x}",
         config.cmdline.as_ptr() as u64,
         mmap_ptr as u64,
         mmap_size,
@@ -103,7 +106,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
 
     let (_system_table, memory_map) = st
         .exit_boot_services(handle, mmap_storage)
-        .expect("Failed to exit boot services");
+        .expect("_main(): Failed to exit boot services");
     let mmap_len = memory_map.len();
 
     // Construct mapping.
@@ -159,12 +162,11 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
 pub fn get_graph_info(bs: &BootServices) -> GraphInfo {
     let gop_handle = bs
         .get_handle_for_protocol::<GraphicsOutput>()
-        .expect("No such service!");
+        .expect("_main(): No such service!");
     let mut gop = bs
         .open_protocol_exclusive::<GraphicsOutput>(gop_handle)
-        .expect("Cannot open GraphicsOutput!");
+        .expect("_main(): Cannot open GraphicsOutput!");
 
-    // TODO: We currently ignore resolutions. Can be added via `boot.cfg`.
     GraphInfo {
         mode: gop.current_mode_info(),
         framebuffer: gop.frame_buffer().as_mut_ptr() as u64,

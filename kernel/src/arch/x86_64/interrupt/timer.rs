@@ -5,10 +5,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use lazy_static::lazy_static;
 
 use crate::{
-    arch::{
-        cpu::{cpu_id, MEASURE_DONE},
-        timer::rdtsc_timer,
-    },
+    arch::{cpu::cpu_id, timer::rdtsc_timer},
     sync::mutex::SpinLockNoInterrupt as Mutex,
     trigger::Trigger,
 };
@@ -25,10 +22,6 @@ lazy_static! {
 pub fn handle_timer() {
     if cpu_id() == 0x0 {
         TICK.fetch_add(0x1, Ordering::Release);
-
-        if !MEASURE_DONE.load(Ordering::Acquire) {
-            MEASURE_DONE.store(true, Ordering::Release);
-        }
     }
     // Do tick.
     TICK_WALL.fetch_add(0x1, Ordering::Relaxed);
@@ -36,9 +29,5 @@ pub fn handle_timer() {
     if APIC_UP.load(Ordering::Relaxed) {
         // FIXME: use apic timer?
         TRIGGER.lock().expire(rdtsc_timer());
-    } else {
-        if cpu_id() == 0x0 {
-            TICK.fetch_add(0x1, Ordering::Release);
-        }
     }
 }

@@ -121,11 +121,6 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     }
     info!("_start(): initialized ACPI.");
 
-    if let Err(errno) = init_pit() {
-        panic!("_start(): failed to initialize the PIT! Errno: {:?}", errno);
-    }
-    info!("_start(): initialized PIT.");
-
     measure_frequency();
 
     if TIMER_SOURCE.load(Ordering::Relaxed) != TimerSource::Hpet {
@@ -134,13 +129,6 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
 
     // Step into the kernel main function.
     OK_THIS_CORE.store(true, Ordering::Relaxed);
-
-    // {
-    //     use apic::LocalApic;
-    //     // Play
-    //     let mut lapic = apic::X2Apic {};
-    //     lapic.send_ipi(0x1, 0xfc);
-    // }
 
     kmain();
 }
