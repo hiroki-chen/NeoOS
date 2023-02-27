@@ -15,7 +15,7 @@ use crate::{
     arch::{
         hpet::init_hpet,
         interrupt::pic::disable_pic,
-        timer::{init_apic_timer, TimerSource, TIMER_SOURCE},
+        timer::{TimerSource, TIMER_SOURCE},
         PHYSICAL_MEMORY_START,
     },
     error::{Errno, KResult},
@@ -23,6 +23,11 @@ use crate::{
 };
 
 use super::interrupt::ISA_TO_GSI;
+
+pub const AP_TRAMPOLINE: usize = 0x8000;
+// The trampoline code assembled by nasm.
+pub const AP_TRAMPOLINE_CODE: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ap_trampoline"));
 
 #[derive(Clone, Copy)]
 struct AcpiHandlerImpl;

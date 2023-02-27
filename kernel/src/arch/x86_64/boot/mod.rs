@@ -28,7 +28,7 @@ use crate::{
     LOG_LEVEL,
 };
 
-static OK_THIS_CORE: AtomicBool = AtomicBool::new(false);
+static AP_CAN_INIT: AtomicBool = AtomicBool::new(false);
 
 /// The entry point of kernel
 #[no_mangle]
@@ -38,7 +38,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     let cpu_id = cpu_id();
     // Prevent multiple cores.
     if cpu_id != 0 {
-        while !OK_THIS_CORE.load(Ordering::Relaxed) {
+        while !AP_CAN_INIT.load(Ordering::Relaxed) {
             spin_loop();
         }
         // Start other cores.
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     }
 
     // Step into the kernel main function.
-    OK_THIS_CORE.store(true, Ordering::Relaxed);
+    AP_CAN_INIT.store(true, Ordering::Relaxed);
 
     kmain();
 }

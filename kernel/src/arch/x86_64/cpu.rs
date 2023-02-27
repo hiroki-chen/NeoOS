@@ -124,12 +124,12 @@ pub fn measure_frequency() {
         unsafe {
             let mut aux = 0u32;
             let begin = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
-            countdown(10000);
+            countdown(1000);
             let end = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
 
             let estimated_frequency = (end - begin) as f64 / 1_000_000f64;
             CPU_FREQUENCY.store(estimated_frequency, Ordering::Relaxed);
-            info!("measure_frequency(): estimated frequency is {estimated_frequency}.");
+            info!("measure_frequency(): estimated frequency is {estimated_frequency} GHz.");
         }
     });
 }
