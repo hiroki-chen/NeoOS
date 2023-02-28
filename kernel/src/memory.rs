@@ -570,3 +570,51 @@ pub unsafe fn kmalloc(size: usize) -> KResult<*mut u8> {
 pub unsafe fn kfree(ptr: *mut u8) {
     unimplemented!()
 }
+
+/// Fast conversion from numerics to PhysAddr.
+#[macro_export]
+macro_rules! virt {
+    ($e:expr) => {
+        x86_64::VirtAddr::new(($e) as u64)
+    };
+    () => {
+        x86_64::VirtAddr::new(0u64)
+    };
+}
+
+/// Fast conversion from numerics to VirtAddr.
+#[macro_export]
+macro_rules! phys {
+    ($e:expr) => {
+        x86_64::PhysAddr::new(($e) as u64)
+    };
+    () => {
+        x86_64::PhysAddr::new(0)
+    };
+}
+
+/// Fast conversion from numerics to Frames.
+#[macro_export]
+macro_rules! frame {
+    ($e:expr) => {
+        x86_64::structures::paging::frame::PhysFrame::
+            <x86_64::structures::paging::page::Size4KiB>::containing_address(phys!($e))
+    };
+    () => {
+        x86_64::structures::paging::frame::PhysFrame::
+            <x86_64::structures::paging::page::Size4KiB>::containing_address(phys!())
+    }
+}
+
+/// Fast conversion from numerics to pages.
+#[macro_export]
+macro_rules! page {
+    ($e:expr) => {
+        x86_64::structures::paging::page::Page::
+            <x86_64::structures::paging::page::Size4KiB>::containing_address(virt!($e))
+    };
+    () => {
+        x86_64::structures::paging::page::Page::
+            <x86_64::structures::paging::page::Size4KiB>::containing_address(virt!())
+    }
+}

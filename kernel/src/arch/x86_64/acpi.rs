@@ -5,14 +5,15 @@
 use core::{ptr::NonNull, sync::atomic::Ordering};
 
 use acpi::{
-    platform::interrupt::Apic, AcpiHandler, AcpiTables, HpetInfo, InterruptModel, PhysicalMapping,
-    PlatformInfo,
+    madt::Madt, platform::interrupt::Apic, sdt::Signature, AcpiHandler, AcpiTables, HpetInfo,
+    InterruptModel, PhysicalMapping, PlatformInfo,
 };
 use boot_header::Header;
 use log::{debug, error, info};
 
 use crate::{
     arch::{
+        apic::init_aps,
         hpet::init_hpet,
         interrupt::pic::disable_pic,
         timer::{TimerSource, TIMER_SOURCE},
@@ -24,7 +25,7 @@ use crate::{
 
 use super::interrupt::ISA_TO_GSI;
 
-pub const AP_TRAMPOLINE: usize = 0x8000;
+pub const AP_TRAMPOLINE: u64 = 0x8000;
 // The trampoline code assembled by nasm.
 pub const AP_TRAMPOLINE_CODE: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ap_trampoline"));
@@ -99,7 +100,17 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
         }
     }
 
-    Ok(())
+    if cfg!(feature = "multiprocessor") {
+        unsafe {
+            let madt = table
+                .get_sdt::<Madt>(Signature::MADT)
+                .map_err(|_| Errno::ENOSPC)?
+                .ok_or(Errno::EEXIST)?;
+            init_aps(&madt)
+        }
+    } else {
+        Ok(())
+    }
 }
 
 fn collect_irq_mapping(apic_information: &Apic) {

@@ -108,6 +108,8 @@ pub trait EntryBehaviors {
     fn set_execute(&mut self, value: bool);
     fn mmio(&self) -> u8;
     fn set_mmio(&mut self, value: u8);
+
+    fn flags(&self) -> PageTableFlags;
 }
 
 pub trait PageTableBehaviors {
@@ -279,6 +281,10 @@ impl EntryBehaviors for PageEntryWrapper {
         let flags = self.0.flags();
         self.0.set_addr(target, flags);
     }
+
+    fn flags(&self) -> PageTableFlags {
+        self.0.flags()
+    }
 }
 
 /// A wrapper struct that contains the reference to the kernel page table and its frame.
@@ -293,7 +299,7 @@ pub struct KernelPageTable {
 impl KernelPageTable {
     /// Get the active page table for the kernel.
     pub fn active() -> ManuallyDrop<Self> {
-        let page_table_addr = Cr3::read_raw().0.start_address().as_u64();
+        let page_table_addr = Cr3::read().0;
 
         unsafe { Self::new(page_table_addr) }
     }
@@ -302,8 +308,7 @@ impl KernelPageTable {
     ///
     /// # Safety
     /// This function is unsafe because the page table address `addr` must be valid.
-    pub unsafe fn new(addr: u64) -> ManuallyDrop<Self> {
-        let page_table_frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(addr));
+    pub unsafe fn new(page_table_frame: PhysFrame) -> ManuallyDrop<Self> {
         let page_table = unsafe { &mut *frame_to_page_table(page_table_frame) };
 
         ManuallyDrop::new(Self {
@@ -393,16 +398,22 @@ impl PageTableBehaviors for KernelPageTable {
             .flush();
     }
 
+    // FIXME: Buggy. This function always returns empty entry.
     fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors> {
-        let page_table = frame_to_page_table(self.page_table_frame);
+        debug!(
+            "get_entry(): getting entry for {:#x} with current page table located at {:#x}",
+            addr.as_u64(),
+            self.page_table_frame.start_address().as_u64()
+        );
 
-        for page_table_level in 1..=4 {
+        let page_table = frame_to_page_table(self.page_table_frame);
+        for page_table_level in 0..4 {
             // Get the index for level at `page_table_level`.
             let index = index_at_level(page_table_level, addr.as_u64());
             let entry = unsafe { &mut (&mut *page_table)[index as usize] };
 
             // If this is not page table entry (PTE), continue walking.
-            if page_table_level == 4 {
+            if page_table_level == 3 {
                 let page = Page::<Size4KiB>::containing_address(addr);
                 self.page_table_entry = Some(PageEntryWrapper(entry, page, self.page_table_frame));
                 return Ok(self.page_table_entry.as_mut().unwrap());
@@ -553,5 +564,5 @@ pub fn set_page_table(page_table_addr: u64) {
 /// Extract the page entry index for `level`.
 #[inline]
 pub fn index_at_level(level: usize, addr: u64) -> u64 {
-    (addr >> (12 + (4 - level) * 9)) & 0o777
+    (addr >> (12 + (3 - level) * 9)) & 0o777
 }

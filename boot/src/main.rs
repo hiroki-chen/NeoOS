@@ -139,6 +139,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         mem_start: config.physical_mem,
         mmap: mmap_ptr as u64,
         mmap_len: mmap_len as u64,
+        kernel_entry,
     };
     page_table::map_gdt(&kernel, &mut allocator, &mut pt);
 

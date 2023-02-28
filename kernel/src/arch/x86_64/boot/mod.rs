@@ -3,7 +3,7 @@
 use boot_header::Header;
 use core::{
     hint::spin_loop,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 use log::{info, warn};
 
@@ -13,14 +13,10 @@ use crate::{
         cpu::{cpu_id, init_cpu, measure_frequency, print_cpu_topology},
         interrupt::init_interrupt_all,
         mm::paging::{init_kernel_page_table, init_mm},
-        pit::init_pit,
         timer::{init_apic_timer, TimerSource, TIMER_SOURCE},
     },
     drivers::{
-        keyboard::init_keyboard,
-        pci_bus::init_pci,
-        rtc::{init_rtc, read_clock},
-        serial::init_all_serial_ports,
+        keyboard::init_keyboard, pci_bus::init_pci, rtc::init_rtc, serial::init_all_serial_ports,
     },
     kmain,
     logging::init_env_logger,
@@ -28,15 +24,22 @@ use crate::{
     LOG_LEVEL,
 };
 
-static AP_CAN_INIT: AtomicBool = AtomicBool::new(false);
-
+// A global atomic kernel entry used to be accessed by other CPU cores.
+pub static KERNEL_ENTRY: AtomicU64 = AtomicU64::new(0u64);
+pub static CPU_COUNT: AtomicUsize = AtomicUsize::new(0usize);
+// Indicates whether the bootstrap processor has initialized.
+pub static AP_CAN_INIT: AtomicBool = AtomicBool::new(false);
 /// The entry point of kernel
 #[no_mangle]
 pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     // TODO: Fix the initialization of APs by issuing INIT-SIPI-SIPI sequence to all APs.
 
+    // Tell other APs the entry of the kernel.
+    KERNEL_ENTRY.store(header.kernel_entry, Ordering::Relaxed);
+
     let cpu_id = cpu_id();
     // Prevent multiple cores.
+    // TODO: Split another `_start` for APs?
     if cpu_id != 0 {
         while !AP_CAN_INIT.load(Ordering::Relaxed) {
             spin_loop();
@@ -54,11 +57,16 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
 
     // Initialize the heap.
     let heap = init_heap();
+
+    // Initialize RTC for read.
+    init_rtc();
+
     // Initialize logging on the fly.
     // This operation is safe as long as the macro is not called.
     init_env_logger().unwrap();
     // Initialize the serial port for logging.
     init_all_serial_ports();
+
     warn!("_start(): logger started!");
     info!("_start(): logging level is {}", *LOG_LEVEL);
     info!("_start(): heap starts at {:#x}", heap);
@@ -70,13 +78,6 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
         );
     }
     info!("_start(): initialized kernel page tables");
-
-    // Initialize RTC for read.
-    init_rtc();
-    info!(
-        "_start(): initialized RTC. Current time: {:?}",
-        read_clock().unwrap()
-    );
 
     // Print boot header.
     info!("_start(): boot header:\n{:#x?}", header);
@@ -124,7 +125,12 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     measure_frequency();
 
     if TIMER_SOURCE.load(Ordering::Relaxed) != TimerSource::Hpet {
-        init_apic_timer();
+        if let Err(errno) = init_apic_timer() {
+            panic!(
+                "_start(): failed to initialize the APIC timer due to {:?}",
+                errno
+            );
+        }
     }
 
     // Step into the kernel main function.

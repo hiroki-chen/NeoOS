@@ -26,8 +26,9 @@ pub mod irq;
 
 #[macro_use]
 pub mod logging;
-
+#[macro_use]
 pub mod memory;
+
 pub mod mm;
 pub mod process;
 pub mod signal;

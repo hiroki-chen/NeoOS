@@ -39,6 +39,8 @@ pub struct Header {
     pub mmap: u64,
     /// The length of the mmap descriptors.
     pub mmap_len: u64,
+    /// The kernel entry.
+    pub kernel_entry: u64,
 }
 
 /// Graphic informations for printing to the console.

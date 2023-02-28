@@ -35,14 +35,14 @@ impl Provider for AhciProvider {
     const PAGE_SIZE: usize = 0x1000;
 
     fn alloc_dma(size: usize) -> (usize, usize) {
-        debug!("alloc_dma(): need {:#x}", size);
-
         let page_num = size / Self::PAGE_SIZE;
         let phys_addr = match allocate_frame_contiguous(page_num, 0) {
             Ok(addr) => addr,
             Err(errno) => panic!("alloc_dma(): cannot allocate dma. Errno: {:?}", errno),
         }
         .as_u64();
+
+        debug!("alloc_dma(): need {:#x}; addr = {:#x}", size, phys_addr);
 
         (phys_to_virt(phys_addr) as usize, phys_addr as usize)
     }
