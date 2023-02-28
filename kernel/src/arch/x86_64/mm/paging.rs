@@ -525,7 +525,7 @@ pub fn init_mm(header: &'static Header) -> KResult<()> {
     };
 
     for descriptor in mmap.iter() {
-        log::debug!("init_mm(): {:?}", descriptor);
+        log::debug!("init_mm(): {:x?}", descriptor);
 
         if descriptor.ty == MemoryType::CONVENTIONAL
             || descriptor.ty == MemoryType::BOOT_SERVICES_CODE

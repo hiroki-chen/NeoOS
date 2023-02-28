@@ -111,3 +111,8 @@ pub fn alloc_error(layout: alloc::alloc::Layout) -> ! {
     error!("allocator: allocation failed in {:?}", layout);
     arch::cpu::die();
 }
+
+/// Panics when stack smash is detected (to prevent ROPs)
+pub extern "C" fn __stack_chk_fail() -> ! {
+    panic!("__stack_chk_fail(): Stack smashing detected!");
+}
