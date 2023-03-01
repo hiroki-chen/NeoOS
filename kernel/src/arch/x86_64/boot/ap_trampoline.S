@@ -7,7 +7,7 @@
 ;
 ; This file is assembled by `nasm`. Make sure you have it installed.
 
-org 0x8000
+org 0x10000
 section .text
 use16
 
@@ -29,7 +29,6 @@ __ap_startup:
     mov ds, ax
     mov es, ax
     mov ss, ax
-
     mov sp, 0 ; clear stack pointer.
     mov edi, [__ap_trampoline.page_table]
     mov cr3, edi
@@ -62,7 +61,8 @@ __ap_startup:
     mov eax, 0xc0000080
     rdmsr
     or eax, 1 << 11 | 1 << 8
-    wrmsr
+    hlt
+    wrmsr ; FIXME: wrmsr will cause qemu to crash.
 
     mov eax, cr0
     or eax, 1 << 31 | 1 << 16 | 1 << 0

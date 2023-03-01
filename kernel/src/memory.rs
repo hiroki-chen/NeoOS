@@ -29,7 +29,7 @@
 //! ==================|============|==================|=========|================================
 
 use bit_field::BitField;
-use core::{fmt::Debug, ops::Range};
+use core::{ffi::c_void, fmt::Debug, ops::Range};
 use num_traits::AsPrimitive;
 
 use crate::{
@@ -45,7 +45,7 @@ use alloc::{
 };
 
 use buddy_system_allocator::Heap;
-use log::info;
+use log::{info, warn};
 use x86_64::PhysAddr;
 
 pub const USER_STACK_SIZE: usize = 0x0040_0000;
@@ -571,8 +571,40 @@ pub unsafe fn kfree(ptr: *mut u8) {
     unimplemented!()
 }
 
+/// Dangerous operation: Read something typed `T` from a given raw pointer at `offset`. This function does not
+/// create any copy of the raw pointer and just reads the untouched memory region, which is different from the
+/// pointer read operation [`core::ptr::read`].
+/// 
+/// One may find this function helpful in case when there is need to access some C/C++/Rust struct but in raw
+/// formats like u8 array.
+///
+/// Just note that the pointer `ptr` does not require to be aligned.
+///
+/// # Safety
+/// This function requires that:
+/// * The pointer itself points to a valid address
+/// * The offset must not exceed the length of the object `ptr` represents
+/// * The type `T` is statically sized; in other words, you must ensure there is *no* fat pointer.
+///   For example, [`u64`] is statically sized, and so is function pointer, but things like `dyn Trait`
+///   are not since they must be stored within a [`alloc::boxed::Box`] due to heap allocations.
+#[cfg(target_pointer_width = "64")]
+pub unsafe fn read_at<T>(ptr: *const c_void, offset: usize) -> &'static T
+where
+    T: 'static + Sized,
+{
+    if ptr as usize % core::mem::size_of::<u64>() != 0 {
+        warn!(
+            "read_at(): trying to read pointer address at {:#x} because it is not aligned; this may cause unwanted results.",
+            ptr as u64
+        );
+    }
+
+    &*(ptr.add(offset) as *const T)
+}
+
 /// Fast conversion from numerics to PhysAddr.
 #[macro_export]
+#[cfg(target_pointer_width = "64")]
 macro_rules! virt {
     ($e:expr) => {
         x86_64::VirtAddr::new(($e) as u64)
@@ -584,6 +616,7 @@ macro_rules! virt {
 
 /// Fast conversion from numerics to VirtAddr.
 #[macro_export]
+#[cfg(target_pointer_width = "64")]
 macro_rules! phys {
     ($e:expr) => {
         x86_64::PhysAddr::new(($e) as u64)
@@ -595,6 +628,7 @@ macro_rules! phys {
 
 /// Fast conversion from numerics to Frames.
 #[macro_export]
+#[cfg(target_pointer_width = "64")]
 macro_rules! frame {
     ($e:expr) => {
         x86_64::structures::paging::frame::PhysFrame::
@@ -608,6 +642,7 @@ macro_rules! frame {
 
 /// Fast conversion from numerics to pages.
 #[macro_export]
+#[cfg(target_pointer_width = "64")]
 macro_rules! page {
     ($e:expr) => {
         x86_64::structures::paging::page::Page::

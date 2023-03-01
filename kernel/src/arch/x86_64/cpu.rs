@@ -1,6 +1,6 @@
 //! Rust port of linux/arch/x86/cpu.c
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::{format, string::String};
 
@@ -20,6 +20,38 @@ use crate::{
 };
 
 pub static CPU_FREQUENCY: AtomicF64 = AtomicF64::new(0.0f64);
+
+#[cfg(feature = "multiprocessor")]
+/// How many cores are available after AP initialization.
+pub static CPU_COUNT: AtomicUsize = AtomicUsize::new(0usize);
+
+/// The Rust-like representation of the header stored in `ap_trampoline.S`.
+///
+/// This struct serializes the memory bytes into a human-readable struct that is easy for us to work with, and
+/// since we need to check if an AP has been correctly initialized, this struct (written by AP trampoline code)
+/// can provide us with rich information.
+///
+/// # The Raw Header in Nasm
+/// ```asm
+/// .page_table: dq 0
+/// .cpu_id: dq 0
+/// .ready: dq 0
+/// .stack_top: dq 0
+/// .stack_bottom: dq 0
+/// .trampoline_code: dq 0
+/// ```
+/// This header can be read at `AP_TRAMPOLINE + core::mem::size_of::<u64>() as u64`. For simplicity, we avoid
+/// padding by enforcing all types to be [`u64`].
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct ApHeader {
+    pub page_table: u64,
+    pub cpu_id: u64,
+    pub ready: u64,
+    pub stack_top: u64,
+    pub stack_bottom: u64,
+    pub trampoline_code: u64,
+}
 
 pub fn cpuid() -> CpuId {
     CpuId::with_cpuid_fn(|a, c| {

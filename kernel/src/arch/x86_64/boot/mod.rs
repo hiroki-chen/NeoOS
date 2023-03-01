@@ -3,7 +3,7 @@
 use boot_header::Header;
 use core::{
     hint::spin_loop,
-    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use log::{info, warn};
 
@@ -26,7 +26,6 @@ use crate::{
 
 // A global atomic kernel entry used to be accessed by other CPU cores.
 pub static KERNEL_ENTRY: AtomicU64 = AtomicU64::new(0u64);
-pub static CPU_COUNT: AtomicUsize = AtomicUsize::new(0usize);
 // Indicates whether the bootstrap processor has initialized.
 pub static AP_CAN_INIT: AtomicBool = AtomicBool::new(false);
 /// The entry point of kernel
@@ -137,4 +136,8 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     AP_CAN_INIT.store(true, Ordering::Relaxed);
 
     kmain();
+}
+
+pub extern "C" fn _start_ap() -> ! {
+    todo!("Add AP arguments and implement the function body")
 }

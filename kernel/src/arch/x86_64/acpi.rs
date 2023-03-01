@@ -23,9 +23,10 @@ use crate::{
     irq::{IrqType, IRQ_TYPE},
 };
 
-use super::interrupt::ISA_TO_GSI;
+use super::{interrupt::ISA_TO_GSI, PAGE_SIZE};
 
-pub const AP_TRAMPOLINE: u64 = 0x8000;
+pub const AP_STARTUP: u64 = 0x10000;
+pub const AP_TRAMPOLINE: u64 = AP_STARTUP - PAGE_SIZE as u64;
 // The trampoline code assembled by nasm.
 pub const AP_TRAMPOLINE_CODE: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ap_trampoline"));
@@ -82,7 +83,9 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
         );
 
         if let InterruptModel::Apic(apic_information) = platform_info.interrupt_model {
-            disable_pic();
+            if apic_information.also_has_legacy_pics {
+                disable_pic();
+            }
             IRQ_TYPE.store(IrqType::Apic, Ordering::Release);
 
             // Collect mapping.

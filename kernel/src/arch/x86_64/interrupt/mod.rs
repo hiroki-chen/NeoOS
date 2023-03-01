@@ -81,10 +81,12 @@
 
 pub mod dispatcher;
 pub mod idt;
-pub mod ipi;
 pub mod pic;
 pub mod syscall;
 pub mod timer;
+
+#[cfg(feature = "multiprocessor")]
+pub mod ipi;
 
 use core::{
     arch::{asm, global_asm},
