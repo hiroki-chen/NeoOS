@@ -17,7 +17,7 @@ use x86_64::{
 };
 
 use crate::{
-    arch::{KERNEL_PM4, PAGE_SIZE, PHYSICAL_MEMORY_PM4, PHYSICAL_MEMORY_START},
+    arch::{KERNEL_PM4, PAGE_SIZE, PHYSICAL_MEMORY_PM4},
     error::{Errno, KResult},
     memory::{allocate_frame, deallocate_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
     process::thread::current,
@@ -518,8 +518,7 @@ pub fn init_mm(header: &'static Header) -> KResult<()> {
     // Reinterpret the memory region.
     let mmap = unsafe {
         core::slice::from_raw_parts(
-            (header.mmap as *const u8).add(PHYSICAL_MEMORY_START as usize)
-                as *const MemoryDescriptor,
+            phys_to_virt(header.mmap) as *const MemoryDescriptor,
             header.mmap_len as usize,
         )
     };

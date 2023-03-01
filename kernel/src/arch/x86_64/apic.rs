@@ -69,7 +69,7 @@ where
 
     use crate::{
         arch::{
-            acpi::{AP_STARTUP, AP_TRAMPOLINE_CODE},
+            acpi::{AP_STARTUP, AP_TRAMPOLINE, AP_TRAMPOLINE_CODE},
             boot::_start_ap,
             cpu::{ApHeader, CPU_COUNT},
             interrupt::ipi::{send_init_ipi, send_startup_ipi},
@@ -92,6 +92,9 @@ where
         //
         // Therefore, we put the `AP_STARTUP` code at the address 0x10000 to avoid messing up with some unknown but
         // important MMIOs. Note that the `AP_TRAMPOLINE` is one page below `AP_STARTUP`.
+        //
+        // The trick is, although we cannot access addresses below 0x10000, we can put the code to 0x10000 and make
+        // AP believe that it is running in real mode (i.e., 0x0000 - 0xffff).
         let ap_trampoline_addr = phys_to_virt(AP_STARTUP);
 
         AP_TRAMPOLINE_CODE.iter().enumerate().for_each(|(idx, d)| {
@@ -114,8 +117,10 @@ where
                     info!("init_aps(): it is BSP; skip.");
                 } else {
                     // Initialize the AP.
-                    let ap_header_addr = ap_trampoline_addr + core::mem::size_of::<u64>() as u64;
+                    let ap_header_addr =
+                        phys_to_virt(AP_TRAMPOLINE) + core::mem::size_of::<u64>() as u64;
                     let ap_header = &mut *(ap_header_addr as *mut u8 as *mut ApHeader);
+                    debug!("init_aps(): read header {:#x?}", ap_header);
                     // Allocate stack frames for the AP.
                     let ap_stack_frame = allocate_frame_contiguous(0x40, 0)?;
                     let stack_bottom = phys_to_virt(ap_stack_frame.as_u64());

@@ -7,7 +7,7 @@
 ;
 ; This file is assembled by `nasm`. Make sure you have it installed.
 
-org 0x10000
+org 0xf000
 section .text
 use16
 
@@ -15,13 +15,17 @@ __ap_trampoline:
     jmp short __ap_startup
     times 8 - ($ - __ap_trampoline) nop
     ; Metadata for the trampoline code.
-    .page_table: dq 0
-    .cpu_id: dq 0
-    .ready: dq 0
-    .stack_top: dq 0
-    .stack_bottom: dq 0
-    .trampoline_code: dq 0
+    .page_table: dw 0
+    .cpu_id: dw 0
+    .ready: dw 0
+    .stack_top: dw 0
+    .stack_bottom: dw 0
+    .trampoline_code: dw 0
 
+__panic:
+    mov ecx, 0
+    wrmsr
+    jmp __panic
 
 __ap_startup:
     cli
@@ -58,120 +62,40 @@ __ap_startup:
     ; Bit 13	Long Mode Segment Limit Enable (LMSLE)
     ; Bit 14	fast FXSAVE/FXSTOR (FFXSR)
     ; Bit 15	Translation Cache Extension (TCE)
-    mov eax, 0xc0000080
+    mov ecx, 0xc0000080
     rdmsr
     or eax, 1 << 11 | 1 << 8
-    hlt
-    wrmsr ; FIXME: wrmsr will cause qemu to crash.
+    wrmsr
 
     mov eax, cr0
-    or eax, 1 << 31 | 1 << 16 | 1 << 0
+    or eax, 1
     mov cr0, eax
 
-    jmp gdt.kernel_code:__ap_startup_long
+    hlt
 
-use64
-__ap_startup_long:
-    mov rax, gdt.kernel_data
-    mov ds, rax
-    mov es, rax
-    mov fs, rax
-    mov gs, rax
-    mov ss, rax
-
-    mov rcx, [__ap_trampoline.stack_bottom]
-    lea rsp, [rcx - 256]
-
-    mov rdi, __ap_trampoline.cpu_id
-
-    mov rax, [__ap_trampoline.trampoline_code]
-    mov qword [__ap_trampoline.ready], 1
-    jmp rax
-
-
-struc GDTEntry
-    .limitl resw 1
-    .basel resw 1
-    .basem resb 1
-    .attribute resb 1
-    .flags__limith resb 1
-    .baseh resb 1
-endstruc
-
-attrib:
-    .present              equ 1 << 7
-    .ring1                equ 1 << 5
-    .ring2                equ 1 << 6
-    .ring3                equ 1 << 5 | 1 << 6
-    .user                 equ 1 << 4
-;user
-    .code                 equ 1 << 3
-;   code
-    .conforming           equ 1 << 2
-    .readable             equ 1 << 1
-;   data
-    .expand_down          equ 1 << 2
-    .writable             equ 1 << 1
-    .accessed             equ 1 << 0
-;system
-;   legacy
-    .tssAvailabe16        equ 0x1
-    .ldt                  equ 0x2
-    .tssBusy16            equ 0x3
-    .call16               equ 0x4
-    .task                 equ 0x5
-    .interrupt16          equ 0x6
-    .trap16               equ 0x7
-    .tssAvailabe32        equ 0x9
-    .tssBusy32            equ 0xB
-    .call32               equ 0xC
-    .interrupt32          equ 0xE
-    .trap32               equ 0xF
-;   long mode
-    .ldt32                equ 0x2
-    .tssAvailabe64        equ 0x9
-    .tssBusy64            equ 0xB
-    .call64               equ 0xC
-    .interrupt64          equ 0xE
-    .trap64               equ 0xF
-
-flags:
-    .granularity equ 1 << 7
-    .available equ 1 << 4
-;user
-    .default_operand_size equ 1 << 6
-;   code
-    .long_mode equ 1 << 5
-;   data
-    .reserved equ 1 << 5
-
-gdtr:
-    dw gdt.end + 1  ; size
-    dq gdt          ; offset
 
 gdt:
-.null equ $ - gdt
-    dq 0
+   dw 0x00000000
+   dw 0x00000000
 
-.kernel_code equ $ - gdt
-istruc GDTEntry
-    at GDTEntry.limitl, dw 0
-    at GDTEntry.basel, dw 0
-    at GDTEntry.basem, db 0
-    at GDTEntry.attribute, db attrib.present | attrib.user | attrib.code
-    at GDTEntry.flags__limith, db flags.long_mode
-    at GDTEntry.baseh, db 0
-iend
+   ; Descriptor (0x9a, RW, Execute) (Code32)
+   dw 0x0000ffff
+   dw 0x00CF9A00
 
-.kernel_data equ $ - gdt
-istruc GDTEntry
-    at GDTEntry.limitl, dw 0
-    at GDTEntry.basel, dw 0
-    at GDTEntry.basem, db 0
-; AMD System Programming Manual states that the writeable bit is ignored in long mode, but ss can not be set to this descriptor without it
-    at GDTEntry.attribute, db attrib.present | attrib.user | attrib.writable
-    at GDTEntry.flags__limith, db 0
-    at GDTEntry.baseh, db 0
-iend
+   ; Descriptor  (0x92, RW)  (Data32)
+   dw 0x0000ffff
+   dw 0x00cf9200
 
-.end equ $ - gdt
+   ; Code16
+   dw 0x0000ffff
+   dw 0x000f9a00
+
+   ; Data16
+   dw 0x0000ffff
+   dw 0x000f9200
+
+gdt_end:
+
+gdtr:
+    dw gdt_end - gdt - 1
+    dd gdt
