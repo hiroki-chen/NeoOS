@@ -56,9 +56,10 @@ const GDT_ENTRIES: &[u64; 5] = &[
     USER_CODE_64B,
 ];
 
-pub const AP_TRAMPOLINE_GDT: &[u32; 10] = &[
-    0x00000000, 0x00000000, 0x0000ffff, 0x00CF9A00, 0x0000ffff, 0x00cf9200, 0x0000ffff, 0x000f9a00,
-    0x0000ffff, 0x000f9200,
+pub const AP_TRAMPOLINE_GDT: &[u16; 12] = &[
+    0x0000, 0x0000, 0x0000, 0x0000, // Null
+    0xffff, 0x0000, 0x9a00, 0x00cf, // Code32
+    0xffff, 0x0000, 0x9200, 0x00cf, // Data32
 ];
 
 /// Initializes the GDP entries for the AP trampoline code so that it is able to jump to long mode.
@@ -70,14 +71,17 @@ pub const AP_TRAMPOLINE_GDT: &[u32; 10] = &[
 /// there as the actual GDT entries reside at `0x10000 + gdt_offset`.
 ///
 /// Only the BSP can access 0x10000 and help AP trampoline set up the necessary data structures.
+/// 
+/// HACK: We can assume 0xf000 is safe to use so that we do not need to care about the offset :)
 pub unsafe fn init_ap_gdt(gdt_addr: u64) {
-    let u32_len = core::mem::size_of::<u32>();
-    let gdt_size = AP_TRAMPOLINE_GDT.len() * u32_len;
+    let u16_len = core::mem::size_of::<u16>();
+    let gdt_size = AP_TRAMPOLINE_GDT.len() * u16_len;
     // Fill the data for `gdtr`.
     let gdtr_addr = gdt_addr + gdt_size as u64;
     log::info!("gdtr addr = {:#x}", gdtr_addr);
     log::info!("gdt addr = {:#x}", gdt_addr);
-    core::intrinsics::atomic_store_seqcst(gdtr_addr as *mut u32, gdt_size as u32);
+    log::info!("gdt size = {:#x}", gdt_size);
+    core::intrinsics::atomic_store_seqcst(gdtr_addr as *mut u32, gdt_size as u32 - 1);
     core::intrinsics::atomic_store_seqcst(
         (gdtr_addr as *mut u32).add(1) as *mut u16,
         virt_to_phys(gdt_addr) as u16,
@@ -85,7 +89,7 @@ pub unsafe fn init_ap_gdt(gdt_addr: u64) {
 
     // Copy the GDT entries.
     AP_TRAMPOLINE_GDT.iter().enumerate().for_each(|(idx, d)| {
-        core::intrinsics::atomic_store_seqcst((gdt_addr as *mut u32).add(idx), *d);
+        core::intrinsics::atomic_store_seqcst((gdt_addr as *mut u16).add(idx), *d);
     });
 }
 

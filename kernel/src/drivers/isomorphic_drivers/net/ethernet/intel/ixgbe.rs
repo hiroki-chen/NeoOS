@@ -34,7 +34,7 @@ pub struct IXGBE<P: Provider> {
     size: usize,
     mac: EthernetAddress,
     registers: &'static mut [Volatile<u32>],
-    send_queues: [&'static mut [IXGBESendDesc]; IXGBE_SEND_QUEUE_NUM],
+    send_queues: [MaybeUninit<&'static mut [IXGBESendDesc]>; IXGBE_SEND_QUEUE_NUM],
     send_buffers: [[usize; IXGBE_SEND_DESC_NUM]; IXGBE_SEND_QUEUE_NUM],
     recv_queue: &'static mut [IXGBERecvDesc],
     recv_buffers: [usize; IXGBE_RECV_DESC_NUM],
@@ -250,7 +250,7 @@ impl<P: Provider> IXGBE<P> {
         for queue in 0..IXGBE_SEND_QUEUE_NUM {
             let tdt = ixgbe[IXGBE_TDT + IXGBE_TDT_GAP * queue].read();
             let index = (tdt as usize) % IXGBE_SEND_DESC_NUM;
-            let send_desc = &mut self.send_queues[queue][index];
+            let send_desc = unsafe { &mut self.send_queues[queue].assume_init_read()[index] };
             if self.first_trans[queue] || send_desc.status.get_bit(0) {
                 return true;
             }
@@ -272,7 +272,7 @@ impl<P: Provider> IXGBE<P> {
 
             while data_index < data.len() {
                 let index = (tdt as usize) % IXGBE_SEND_DESC_NUM;
-                let send_desc = &mut send_queue[index];
+                let send_desc = unsafe { &mut send_queue.assume_init_read()[index] };
 
                 if !(self.first_trans[queue] || send_desc.status.get_bit(0)) {
                     break;
@@ -383,28 +383,28 @@ impl<P: Provider> IXGBE<P> {
         debug!("mac {:x?}", mac);
 
         // Unicast Table Array (PFUTA).
-        for i in IXGBE_PFUTA..IXGBE_PFUTA_END {
-            ixgbe[i].write(0);
+        for item in ixgbe.iter_mut().take(IXGBE_PFUTA_END).skip(IXGBE_PFUTA) {
+            item.write(0);
         }
         // VLAN Filter Table Array (VFTA[n]).
-        for i in IXGBE_VFTA..IXGBE_VFTA_END {
-            ixgbe[i].write(0);
+        for item in ixgbe.iter_mut().take(IXGBE_VFTA_END).skip(IXGBE_VFTA) {
+            item.write(0);
         }
         // VLAN Pool Filter (PFVLVF[n]).
-        for i in IXGBE_PFVLVF..IXGBE_PFVLVF_END {
-            ixgbe[i].write(0);
+        for item in ixgbe.iter_mut().take(IXGBE_PFVLVF_END).skip(IXGBE_PFVLVF) {
+            item.write(0);
         }
         // MAC Pool Select Array (MPSAR[n]).
-        for i in IXGBE_MPSAR..IXGBE_MPSAR_END {
-            ixgbe[i].write(0);
+        for item in ixgbe.iter_mut().take(IXGBE_MPSAR_END).skip(IXGBE_MPSAR) {
+            item.write(0);
         }
         // VLAN Pool Filter Bitmap (PFVLVFB[n]).
-        for i in IXGBE_PFVLVFB..IXGBE_PFVLVFB_END {
-            ixgbe[i].write(0);
+        for item in ixgbe.iter_mut().take(IXGBE_PFVLVFB_END).skip(IXGBE_PFVLVFB) {
+            item.write(0);
         }
         // Set up the Multicast Table Array (MTA) registers. This entire table should be zeroed and only the desired multicast addresses should be permitted (by writing 0x1 to the corresponding bit location).
-        for i in IXGBE_MTA..IXGBE_MTA_END {
-            ixgbe[i].write(0);
+        for item in ixgbe.iter_mut().take(IXGBE_MTA_END).skip(IXGBE_MTA) {
+            item.write(0);
         }
 
         // Program the different Rx filters and Rx offloads via registers FCTRL, VLNCTRL, MCSTCTRL, RXCSUM, RQTC, RFCTL, MPSAR, RSSRK, RETA, SAQF, DAQF, SDPQF, FTQF, SYNQF, ETQF, ETQS, RDRXCTL, RSCDBU.
@@ -497,7 +497,7 @@ impl<P: Provider> IXGBE<P> {
         ixgbe[IXGBE_MAXFRS].write((IXGBE_MTU as u32) << 16);
 
         // The following steps should be done once per transmit queue:
-        let mut send_queues: [&'static mut [IXGBESendDesc]; IXGBE_SEND_QUEUE_NUM] =
+        let send_queues: [MaybeUninit<&'static mut [IXGBESendDesc]>; IXGBE_SEND_QUEUE_NUM] =
             unsafe { MaybeUninit::uninit().assume_init() };
         let mut send_buffers = [[0; IXGBE_SEND_DESC_NUM]; IXGBE_SEND_QUEUE_NUM];
         for queue in 0..IXGBE_SEND_QUEUE_NUM {
@@ -506,9 +506,9 @@ impl<P: Provider> IXGBE<P> {
                 slice::from_raw_parts_mut(send_queue_va as *mut IXGBESendDesc, IXGBE_SEND_DESC_NUM)
             };
             // 1. Allocate a region of memory for the transmit descriptor list.
-            for i in 0..IXGBE_SEND_DESC_NUM {
+            for (i, item) in send_queue.iter_mut().enumerate().take(IXGBE_SEND_DESC_NUM) {
                 let (buffer_page_va, buffer_page_pa) = P::alloc_dma(IXGBE_BUFFER_SIZE);
-                send_queue[i].addr = buffer_page_pa as u64;
+                item.addr = buffer_page_pa as u64;
                 send_buffers[queue][i] = buffer_page_va;
             }
 
@@ -543,7 +543,7 @@ impl<P: Provider> IXGBE<P> {
         // 4.6.6 Interrupt Initialization
         // The software driver associates between Tx and Rx interrupt causes and the EICR register by setting the IVAR[n] registers.
         // map Rx0 to interrupt 0
-        ixgbe[IXGBE_IVAR].write(0b00000000_00000000_00000000_10000000);
+        ixgbe[IXGBE_IVAR].write(0b0000_0000_0000_0000_0000_0000_1000_0000);
         // Set the interrupt throttling in EITR[n] and GPIE according to the preferred mode of operation.
         // Throttle interrupts
         // Seems having good effect on tx bandwidth

@@ -408,7 +408,7 @@ impl f64 {
     #[must_use = "method returns a new number and does not mutate the original value"]
     #[inline]
     pub fn ln(self) -> f64 {
-        self.log_wrapper(|n| libm::log(n))
+        self.log_wrapper(libm::log)
     }
 
     /// Returns the logarithm of the number with respect to an arbitrary base.
@@ -474,7 +474,7 @@ impl f64 {
     #[must_use = "method returns a new number and does not mutate the original value"]
     #[inline]
     pub fn log10(self) -> f64 {
-        self.log_wrapper(|n| libm::log10(n))
+        self.log_wrapper(libm::log10)
     }
 
     /// The positive difference of two numbers.

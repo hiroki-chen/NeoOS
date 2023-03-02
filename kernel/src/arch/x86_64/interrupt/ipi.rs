@@ -11,7 +11,7 @@
 use apic::{LocalApic, X2Apic};
 use log::debug;
 
-use crate::arch::acpi::{AP_STARTUP, AP_TRAMPOLINE};
+use crate::arch::acpi::AP_STARTUP;
 
 /// This function deals with sending the initial IPI to the corresponding APs to indicate that they should be awaken.
 ///

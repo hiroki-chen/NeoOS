@@ -23,10 +23,9 @@ use crate::{
     irq::{IrqType, IRQ_TYPE},
 };
 
-use super::{interrupt::ISA_TO_GSI, PAGE_SIZE};
+use super::{interrupt::ISA_TO_GSI};
 
-pub const AP_STARTUP: u64 = 0x10000;
-pub const AP_TRAMPOLINE: u64 = AP_STARTUP - PAGE_SIZE as u64;
+pub const AP_STARTUP: u64 = 0xf000;
 // The trampoline code assembled by nasm.
 pub const AP_TRAMPOLINE_CODE: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ap_trampoline"));

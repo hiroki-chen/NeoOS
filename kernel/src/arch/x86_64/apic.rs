@@ -46,8 +46,8 @@ pub fn enable_irq(irq: u64) {
 
     let mut ioapic = unsafe { IoApic::new(phys_to_virt(IOAPIC_ADDR as u64) as usize) };
     let apic_pin = get_gsi(irq);
-    ioapic.set_irq_vector(apic_pin as u8, (IRQ_MIN + irq as usize) as u8);
-    ioapic.enable(apic_pin as u8, 0);
+    ioapic.set_irq_vector(apic_pin, (IRQ_MIN + irq as usize) as u8);
+    ioapic.enable(apic_pin, 0);
 }
 
 pub fn disable_irq(irq: u64) {
@@ -69,10 +69,9 @@ where
 
     use crate::{
         arch::{
-            acpi::{AP_STARTUP, AP_TRAMPOLINE, AP_TRAMPOLINE_CODE},
+            acpi::{AP_STARTUP, AP_TRAMPOLINE_CODE},
             boot::_start_ap,
             cpu::{ApHeader, CPU_COUNT},
-            gdt::init_ap_gdt,
             interrupt::ipi::{send_init_ipi, send_startup_ipi},
             mm::paging::KernelPageTable,
             PAGE_SIZE,
@@ -84,17 +83,6 @@ where
 
     // Fill data into that address.
     unsafe {
-        // It is important not to write to ANY memory addresses below 0x10000 if we use x2APIC.
-        //
-        // The reason remains unclear but the address for legacy long mode code (0x8000) is definitely *unusable*
-        // due to some weird memory mapped I/O interfaces. If we try to write something to that address (at most 27
-        // bytes on qemu-system-x86_64 emulated machine), a segmentation fault will be captured by the CPU (rather
-        // than simply panicking!).
-        //
-        // Therefore, we put the `AP_STARTUP` code at the address 0x10000 to avoid messing up with some unknown but
-        // important MMIOs. Note that the `AP_TRAMPOLINE` is one page below `AP_STARTUP`.
-        //
-        // The trick is, although we cannot access addresses below 0x10000, we can put the code to 0x10000 and make
         // AP believe that it is running in real mode (i.e., 0x0000 - 0xffff).
         let ap_trampoline_addr = phys_to_virt(AP_STARTUP);
 
@@ -103,7 +91,7 @@ where
         });
 
         // From now on, the ap trampoline code is at 0x10000.
-        for item in madt.entries().into_iter() {
+        for item in madt.entries() {
             // First check if the APIC id is 0 (self).
             if let MadtEntry::LocalApic(lapic) = item {
                 // LocalX2ApicEntry contains all private field and we want to break this constraint.
@@ -119,7 +107,7 @@ where
                 } else {
                     // Initialize the AP.
                     let ap_header_addr =
-                        phys_to_virt(AP_TRAMPOLINE) + core::mem::size_of::<u64>() as u64;
+                        phys_to_virt(AP_STARTUP) + core::mem::size_of::<u64>() as u64;
                     let ap_header = &mut *(ap_header_addr as *mut u8 as *mut ApHeader);
                     debug!("init_aps(): read header {:#x?}", ap_header);
                     // Allocate stack frames for the AP.
@@ -156,8 +144,6 @@ where
 
                     debug!("init_aps(): filled {:#x?}", ap_header);
 
-                    // Set up the GDT entries for AP.
-                    init_ap_gdt(ap_header_addr + core::mem::size_of::<ApHeader>() as u64);
                     // Send init IPI.
                     send_init_ipi(*apic_id as _);
                     // Send startup IPI.

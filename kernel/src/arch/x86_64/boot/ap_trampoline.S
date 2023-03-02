@@ -23,78 +23,59 @@ __ap_trampoline:
     .trampoline_code: dq 0
     times 56 - ($ - __ap_trampoline) nop
 
-; This field is filled by the BSP because it loads the code snippet at `0x10000`; so that
-; the code here (in real mode) cannot access the GDT entries; as such, we need to 
-gdt:
-    dw 0
-    dw 0 
+__gdt:
+    dq 0x0000000000000000
 
-    ; Descriptor (0x9a, RW, Execute) (Code32)
+    dw 0xFFFF
     dw 0
-    dw 0
+    db 0
+    db 10011010b
+    db 11001111b
+    db 0
 
-    ; Descriptor  (0x92, RW)  (Data32)
+    dw 0xFFFF
     dw 0
-    dw 0
+    db 0
+    db 10010010b
+    db 11001111b
+    db 0
 
-    ; Code16
-    dw 0
-    dw 0
-
-    ; Data16
-    dw 0
-    dw 0
-    ; Padding: do not elide zeros!
-    times 40 - ($ - gdt) nop
-gdtr:
-    dw 0
-    times 4 - ($ - gdtr) nop
-    dd 0
+__gdtr:
+    dw __gdtr - __gdt - 1
+    dd __gdt
 
 __ap_startup:
     cli
+    cld
+
     xor ax, ax
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov sp, 0 ; clear stack pointer.
-    mov edi, [__ap_trampoline.page_table]
-    mov cr3, edi
 
-    ; enable FP.
-    mov eax, cr0
-    and al, 11110011b
-    or al, 00100010b
-    mov cr0, eax
+    lgdt [__gdtr]
 
-    mov eax, cr4
-    or eax, 1 << 9 | 1 << 7 | 1 << 5 | 1 << 4
-    mov cr4, eax
-
-    fninit
-
-    lgdt [gdtr]
-
-    ; Jump to long mode.
-    ; Bit 0	System Call Extensions (SCE)
-    ; Bits 1-7	Reserved
-    ; Bit 8	Long Mode Enable (LME)
-    ; Bit 9	Reserved
-    ; Bit 10	Long Mode Active (LMA)
-    ; Bit 11	No-Execute Enable (NXE)
-    ; Bit 12	Secure Virtual Machine Enable (SVME)
-    ; Bit 13	Long Mode Segment Limit Enable (LMSLE)
-    ; Bit 14	fast FXSAVE/FXSTOR (FFXSR)
-    ; Bit 15	Translation Cache Extension (TCE)
-    mov ecx, 0xc0000080
-    rdmsr
-    or eax, 1 << 11 | 1 << 8
-    wrmsr
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
 
     mov eax, cr0
     or eax, 1
     mov cr0, eax
 
-    ; Now it works in long mode.
-    ; Fresh CS by a long jump.
+    jmp 0x8:__ap_start_32
 
+bits 32
+__ap_start_32:
+    mov ax, 0x8
+    mov ds, ax
+    mov es, ax
+    mov ax, 0x0
+    mov fs, ax
+    mov gs, ax
+
+    ; Set up initial page table.
+    ; We cannot use kernel's page table because we are still in low-bit mode.
+    hlt

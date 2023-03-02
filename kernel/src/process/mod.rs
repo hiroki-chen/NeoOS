@@ -38,7 +38,7 @@ pub struct Process {
     pub process_group_id: u64,
     /// The thread lists.
     pub threads: Vec<u64>,
-    /// struct mm_struct		*mm; shared with threads.
+    /// struct mm_struct *mm; shared with threads.
     pub vm: Arc<Mutex<MemoryManager<KernelPageTable>>>,
     /// Current exeuction path.
     pub exec_path: String,

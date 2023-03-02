@@ -81,7 +81,7 @@ pub fn init_apic_timer() -> KResult<()> {
     match timer_source {
         TimerSource::Hpet => {
             error!("init_apic_timer(): The timer source is at higher priority!");
-            return Err(Errno::EINVAL);
+            Err(Errno::EINVAL)
         }
         _ => {
             unsafe {
