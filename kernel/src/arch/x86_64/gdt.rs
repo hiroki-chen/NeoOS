@@ -25,6 +25,7 @@ use x86_64::{
 use crate::{
     arch::PAGE_SIZE,
     error::{Errno, KResult},
+    memory::virt_to_phys,
 };
 
 // The layout of GDT entry is given as follows (x86_64).
@@ -54,6 +55,39 @@ const GDT_ENTRIES: &[u64; 5] = &[
     USER_DATA_32B,
     USER_CODE_64B,
 ];
+
+pub const AP_TRAMPOLINE_GDT: &[u32; 10] = &[
+    0x00000000, 0x00000000, 0x0000ffff, 0x00CF9A00, 0x0000ffff, 0x00cf9200, 0x0000ffff, 0x000f9a00,
+    0x0000ffff, 0x000f9200,
+];
+
+/// Initializes the GDP entries for the AP trampoline code so that it is able to jump to long mode.
+///
+/// Why cannot AP trampoline itself sets up the GDP entries? This is because we put the code at 0x10000,
+/// an address that real mode fails to access, but we tell the trampoline code that 'it runs at 0xf000'.
+/// Thus there is a 0x1000 offset! If we hard-code GDT entries in the assembly code and let AP trampoline
+/// code access the address `0xf000 + gdt_offset`, it will read the wrong physical address and nothing is
+/// there as the actual GDT entries reside at `0x10000 + gdt_offset`.
+///
+/// Only the BSP can access 0x10000 and help AP trampoline set up the necessary data structures.
+pub unsafe fn init_ap_gdt(gdt_addr: u64) {
+    let u32_len = core::mem::size_of::<u32>();
+    let gdt_size = AP_TRAMPOLINE_GDT.len() * u32_len;
+    // Fill the data for `gdtr`.
+    let gdtr_addr = gdt_addr + gdt_size as u64;
+    log::info!("gdtr addr = {:#x}", gdtr_addr);
+    log::info!("gdt addr = {:#x}", gdt_addr);
+    core::intrinsics::atomic_store_seqcst(gdtr_addr as *mut u32, gdt_size as u32);
+    core::intrinsics::atomic_store_seqcst(
+        (gdtr_addr as *mut u32).add(1) as *mut u16,
+        virt_to_phys(gdt_addr) as u16,
+    );
+
+    // Copy the GDT entries.
+    AP_TRAMPOLINE_GDT.iter().enumerate().for_each(|(idx, d)| {
+        core::intrinsics::atomic_store_seqcst((gdt_addr as *mut u32).add(idx), *d);
+    });
+}
 
 /// Initializes the global descriptor table. When the operating system kernel starts,
 /// it typically initializes the Global Descriptor Table (GDT) by performing the following

@@ -15,17 +15,41 @@ __ap_trampoline:
     jmp short __ap_startup
     times 8 - ($ - __ap_trampoline) nop
     ; Metadata for the trampoline code.
-    .page_table: dw 0
-    .cpu_id: dw 0
-    .ready: dw 0
-    .stack_top: dw 0
-    .stack_bottom: dw 0
-    .trampoline_code: dw 0
+    .page_table: dq 0
+    .cpu_id: dq 0
+    .ready: dq 0
+    .stack_top: dq 0
+    .stack_bottom: dq 0
+    .trampoline_code: dq 0
+    times 56 - ($ - __ap_trampoline) nop
 
-__panic:
-    mov ecx, 0
-    wrmsr
-    jmp __panic
+; This field is filled by the BSP because it loads the code snippet at `0x10000`; so that
+; the code here (in real mode) cannot access the GDT entries; as such, we need to 
+gdt:
+    dw 0
+    dw 0 
+
+    ; Descriptor (0x9a, RW, Execute) (Code32)
+    dw 0
+    dw 0
+
+    ; Descriptor  (0x92, RW)  (Data32)
+    dw 0
+    dw 0
+
+    ; Code16
+    dw 0
+    dw 0
+
+    ; Data16
+    dw 0
+    dw 0
+    ; Padding: do not elide zeros!
+    times 40 - ($ - gdt) nop
+gdtr:
+    dw 0
+    times 4 - ($ - gdtr) nop
+    dd 0
 
 __ap_startup:
     cli
@@ -71,31 +95,6 @@ __ap_startup:
     or eax, 1
     mov cr0, eax
 
-    hlt
+    ; Now it works in long mode.
+    ; Fresh CS by a long jump.
 
-
-gdt:
-   dw 0x00000000
-   dw 0x00000000
-
-   ; Descriptor (0x9a, RW, Execute) (Code32)
-   dw 0x0000ffff
-   dw 0x00CF9A00
-
-   ; Descriptor  (0x92, RW)  (Data32)
-   dw 0x0000ffff
-   dw 0x00cf9200
-
-   ; Code16
-   dw 0x0000ffff
-   dw 0x000f9a00
-
-   ; Data16
-   dw 0x0000ffff
-   dw 0x000f9200
-
-gdt_end:
-
-gdtr:
-    dw gdt_end - gdt - 1
-    dd gdt

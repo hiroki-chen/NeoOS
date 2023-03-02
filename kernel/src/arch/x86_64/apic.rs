@@ -72,6 +72,7 @@ where
             acpi::{AP_STARTUP, AP_TRAMPOLINE, AP_TRAMPOLINE_CODE},
             boot::_start_ap,
             cpu::{ApHeader, CPU_COUNT},
+            gdt::init_ap_gdt,
             interrupt::ipi::{send_init_ipi, send_startup_ipi},
             mm::paging::KernelPageTable,
             PAGE_SIZE,
@@ -155,6 +156,8 @@ where
 
                     debug!("init_aps(): filled {:#x?}", ap_header);
 
+                    // Set up the GDT entries for AP.
+                    init_ap_gdt(ap_header_addr + core::mem::size_of::<ApHeader>() as u64);
                     // Send init IPI.
                     send_init_ipi(*apic_id as _);
                     // Send startup IPI.
