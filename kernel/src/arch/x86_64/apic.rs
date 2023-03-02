@@ -73,7 +73,7 @@ where
             boot::_start_ap,
             cpu::{ApHeader, CPU_COUNT},
             interrupt::ipi::{send_init_ipi, send_startup_ipi},
-            mm::paging::KernelPageTable,
+            mm::paging::{KernelPageTable, PageTableBehaviors},
             PAGE_SIZE,
         },
         memory::{allocate_frame_contiguous, read_at},
@@ -89,6 +89,11 @@ where
         AP_TRAMPOLINE_CODE.iter().enumerate().for_each(|(idx, d)| {
             core::intrinsics::atomic_store_seqcst((ap_trampoline_addr as *mut u8).add(idx), *d);
         });
+
+        // Map the trampoline page.
+        let ap_trampoline_frame = phys!(AP_STARTUP);
+        let ap_trampoline_page = virt!(AP_STARTUP);
+        KernelPageTable::active().map(ap_trampoline_page, ap_trampoline_frame);
 
         // From now on, the ap trampoline code is at 0x10000.
         for item in madt.entries() {
@@ -148,6 +153,12 @@ where
                     send_init_ipi(*apic_id as _);
                     // Send startup IPI.
                     send_startup_ipi(*apic_id as _);
+                    // Wait.
+                    while core::intrinsics::atomic_load_seqcst(&mut ap_header.ready as *mut u64)
+                        == 0
+                    {
+                        core::hint::spin_loop();
+                    }
                 }
             }
         }

@@ -36,7 +36,7 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     let mut file = utils::open_file(bs, BOOT_CONFIG_PATH);
     let file_content = utils::read_buf(bs, &mut file);
     let config = utils::BootLoaderConfig::parse(file_content);
-    info!("_main(): {:#?}", config);
+    info!("_main(): {:#x?}", config);
 
     let config_table = st.config_table();
 

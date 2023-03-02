@@ -138,6 +138,6 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     kmain();
 }
 
-pub extern "C" fn _start_ap() -> ! {
-    todo!("Add AP arguments and implement the function body")
+pub unsafe extern "C" fn _start_ap() -> ! {
+    loop {}
 }

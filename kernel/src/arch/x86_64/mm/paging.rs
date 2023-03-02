@@ -371,7 +371,7 @@ impl PageTableBehaviors for KernelPageTable {
     }
 
     fn map(&mut self, addr: VirtAddr, target: PhysAddr) -> &mut dyn EntryBehaviors {
-        let flags = PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE | PageTableFlags::PRESENT;
+        let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT;
         unsafe {
             self.page_table
                 .map_to(
@@ -526,10 +526,7 @@ pub fn init_mm(header: &'static Header) -> KResult<()> {
     for descriptor in mmap.iter() {
         log::debug!("init_mm(): {:x?}", descriptor);
 
-        if descriptor.ty == MemoryType::CONVENTIONAL
-            || descriptor.ty == MemoryType::BOOT_SERVICES_CODE
-            || descriptor.ty == MemoryType::BOOT_SERVICES_DATA
-        {
+        if descriptor.ty == MemoryType::CONVENTIONAL {
             let start_frame = descriptor.phys_start as usize / PAGE_SIZE;
             let end_frame = start_frame + descriptor.page_count as usize;
             allocator.insert(start_frame..end_frame)?;
