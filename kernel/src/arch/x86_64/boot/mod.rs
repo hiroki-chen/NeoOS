@@ -11,6 +11,7 @@ use crate::{
     arch::{
         acpi::init_acpi,
         cpu::{cpu_id, init_cpu, measure_frequency, print_cpu_topology},
+        gdt::init_gdt,
         interrupt::init_interrupt_all,
         mm::paging::{init_kernel_page_table, init_mm},
         timer::{init_apic_timer, TimerSource, TIMER_SOURCE},
@@ -23,6 +24,8 @@ use crate::{
     memory::init_heap,
     LOG_LEVEL,
 };
+
+use super::cpu::ApHeader;
 
 // A global atomic kernel entry used to be accessed by other CPU cores.
 pub static KERNEL_ENTRY: AtomicU64 = AtomicU64::new(0u64);
@@ -140,7 +143,20 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
 
 /// The entry function for the application processors. If the `ap_trampoline.S` file is written correctly,
 /// then the AP should be able to call `_start_ap` (which is loaded into rax).
-pub unsafe extern "C" fn _start_ap() -> ! {
-    // todo
+pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
+    let header = ApHeader::from_raw(ap_header);
+    info!("_start_ap(): reading header: {:#x?}", header);
+
+    // Setup interrupt and related data structures.
+    if let Err(errno) = init_interrupt_all() {
+        panic!(
+            "init_interrupt_all(): failed to initialize the interrupt! Errno: {:?}",
+            errno
+        );
+    }
+    info!("_start(): initialized traps, syscalls and interrupts.");
+
+    // TODO: Initialize interrupt here.
+    // TODO: Clear the header immediately.
     loop {}
 }

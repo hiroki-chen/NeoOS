@@ -29,7 +29,7 @@
 //! ==================|============|==================|=========|================================
 
 use bit_field::BitField;
-use core::{ffi::c_void, fmt::Debug, ops::Range};
+use core::{ffi::c_void, fmt::Debug, ops::Range, sync::atomic::Ordering};
 use num_traits::AsPrimitive;
 
 use crate::{
@@ -574,7 +574,7 @@ pub unsafe fn kfree(ptr: *mut u8) {
 /// Dangerous operation: Read something typed `T` from a given raw pointer at `offset`. This function does not
 /// create any copy of the raw pointer and just reads the untouched memory region, which is different from the
 /// pointer read operation [`core::ptr::read`].
-/// 
+///
 /// One may find this function helpful in case when there is need to access some C/C++/Rust struct but in raw
 /// formats like u8 array.
 ///
@@ -600,6 +600,44 @@ where
     }
 
     &*(ptr.add(offset) as *const T)
+}
+
+/// A C/C++ like `memset` function with the constraint that this operation is memory-ordered according to `ordering`.
+///
+/// For ordering, only three orderings are sane:
+/// * [`Ordering::Relaxed`]
+/// * [`Ordering::Release`]
+/// * [`Ordering::SeqCst`]
+/// 
+/// Why do we need this function instead of using [`core::ptr::write_bytes`]? This is because the memset-like function
+/// [`core::ptr::write_bytes`] provided by the core library does not give us the guarantee that the memory is ordered.
+/// Although unordered memory read/write does not affect the result of single-threaded programs. There would be, however,
+/// synchronization problems with multiple cores.
+///
+/// Any other orderings are ignored and converted to `unordered`.
+///
+/// # Safety
+/// This function is unsafe because we have no guarantee that `ptr` points to a valid memory region; it is the caller's
+/// responsibility to check this address is valid.
+pub unsafe fn atomic_memset<T>(ptr: *const c_void, val: u8, ordering: Ordering)
+where
+    T: 'static + Sized,
+{
+    let len = core::mem::size_of::<T>();
+    (0..len).for_each(|idx| match ordering {
+        Ordering::Relaxed => {
+            core::intrinsics::atomic_store_relaxed((ptr as *mut u8).add(idx), val);
+        }
+        Ordering::Release => {
+            core::intrinsics::atomic_store_release((ptr as *mut u8).add(idx), val);
+        }
+        Ordering::SeqCst => {
+            core::intrinsics::atomic_store_seqcst((ptr as *mut u8).add(idx), val);
+        }
+        _ => {
+            core::intrinsics::atomic_store_unordered((ptr as *mut u8).add(idx), val);
+        }
+    });
 }
 
 /// Fast conversion from numerics to VirtAddr.

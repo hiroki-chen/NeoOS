@@ -118,7 +118,7 @@ __ap_start_prot_mode:
 
     ; Enter the kernel.
     mov rax, [__ap_trampoline.trampoline_code]
-    ; push 0x0
+    mov rdi, __ap_trampoline.page_table
     call rax
 
 ; Should never enter `__loop`.
@@ -137,7 +137,8 @@ ACCESSED       equ 1 << 0
 GRAN_4K       equ 1 << 7
 SZ_32         equ 1 << 6
 LONG_MODE     equ 1 << 5
- 
+
+align 8 ; Prevent `init_gdt` from reading unaligned memories => panic!
 __gdt64:
     .null: equ $ - __gdt64
         dq 0

@@ -10,6 +10,7 @@
 #![allow(unused_variables)]
 #![allow(unreachable_code)]
 #![allow(dead_code)]
+#![feature(atomic_from_mut)]
 #![feature(allocator_api)]
 #![feature(core_intrinsics)]
 #![feature(rustc_attrs)]
@@ -41,6 +42,8 @@ pub mod trigger;
 
 #[cfg(target_arch = "x86_64")]
 pub mod f64;
+#[cfg(target_arch = "x86_64")]
+pub mod f32;
 
 use alloc::string::String;
 use core::panic::PanicInfo;

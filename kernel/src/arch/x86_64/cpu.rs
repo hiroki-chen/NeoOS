@@ -42,7 +42,7 @@ pub static CPU_COUNT: AtomicUsize = AtomicUsize::new(0usize);
 /// ```
 /// This header can be read at `AP_TRAMPOLINE + core::mem::size_of::<u64>() as u64`. For simplicity, we avoid
 /// padding by enforcing all types to be [`u64`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[repr(C)]
 pub struct ApHeader {
     pub page_table: u64,
@@ -63,6 +63,14 @@ impl ApHeader {
             && self.stack_top == 0
             && self.stack_bottom == 0
             && self.trampoline_code == 0
+    }
+
+    /// Make a copy from a raw pointer.
+    pub fn from_raw(mut raw: *mut Self) -> Self {
+        unsafe {
+            let ptr = core::sync::atomic::AtomicPtr::from_mut(&mut raw);
+            (*(ptr.load(core::sync::atomic::Ordering::SeqCst))).clone()
+        }
     }
 }
 

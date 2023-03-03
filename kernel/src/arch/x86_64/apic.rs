@@ -76,7 +76,7 @@ where
             mm::paging::{KernelPageTable, PageTableBehaviors},
             PAGE_SIZE,
         },
-        memory::{allocate_frame_contiguous, read_at},
+        memory::{allocate_frame_contiguous, atomic_memset, read_at},
     };
 
     info!("init_aps(): initializing APs.");
@@ -115,7 +115,9 @@ where
                     // Initialize the AP.
                     let ap_header_addr =
                         phys_to_virt(AP_STARTUP) + core::mem::size_of::<u64>() as u64;
+                    // Make sure the header is cleared. This is done by writing zeros to that address.
                     let ap_header = &mut *(ap_header_addr as *mut u8 as *mut ApHeader);
+                    atomic_memset::<ApHeader>(ap_header_addr as *mut _, 0u8, Ordering::SeqCst);
 
                     // Check header.
                     if !ap_header.sanity_check() {
