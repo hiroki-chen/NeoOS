@@ -1,6 +1,6 @@
 //! This module implements x86_64 page table algorithms and some utility functions.
 
-use core::mem::ManuallyDrop;
+use core::{fmt::Debug, mem::ManuallyDrop};
 
 use boot_header::{Header, MemoryDescriptor, MemoryType};
 
@@ -9,9 +9,10 @@ use x86_64::{
     instructions::tlb::flush,
     registers::control::{Cr2, Cr3, Cr3Flags},
     structures::paging::{
-        mapper::PageTableFrameMapping, page_table::PageTableEntry, FrameAllocator,
-        FrameDeallocator, MappedPageTable, Mapper, Page, PageTable, PageTableFlags, PhysFrame,
-        Size4KiB,
+        mapper::PageTableFrameMapping,
+        page_table::{PageTableEntry, PageTableLevel},
+        FrameAllocator, FrameDeallocator, MappedPageTable, Mapper, Page, PageTable, PageTableFlags,
+        PhysFrame, Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
@@ -66,7 +67,7 @@ pub fn handle_page_fault(addr: u64) -> bool {
     vm.handle_page_fault(addr)
 }
 
-pub trait EntryBehaviors {
+pub trait EntryBehaviors: Debug {
     /// Make all changes take effect.
     ///
     /// IMPORTANT!
@@ -181,9 +182,23 @@ unsafe impl PageTableFrameMapping for PageTableMapper {
     }
 }
 
-/// A wrapper for page table entry that contains its page and physical frame.
+/// A wrapper for page table entry that contains its page and (current page table's) physical frame.
 /// Built atop x86_64 page entry.
 pub struct PageEntryWrapper(&'static mut PageTableEntry, Page, PhysFrame);
+
+impl Debug for PageEntryWrapper {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Page Table Entry")
+            .field(
+                "index",
+                &u64::from(self.1.page_table_index(PageTableLevel::Four)),
+            )
+            .field("vaddr: ", &self.1.start_address().as_u64())
+            .field("paddr: ", &self.0.addr().as_u64())
+            .field("flags: ", &self.0.flags())
+            .finish()
+    }
+}
 
 impl EntryBehaviors for PageEntryWrapper {
     fn update(&mut self) {
@@ -398,7 +413,6 @@ impl PageTableBehaviors for KernelPageTable {
             .flush();
     }
 
-    // FIXME: Buggy. This function always returns empty entry.
     fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors> {
         debug!(
             "get_entry(): getting entry for {:#x} with current page table located at {:#x}",
@@ -406,7 +420,7 @@ impl PageTableBehaviors for KernelPageTable {
             self.page_table_frame.start_address().as_u64()
         );
 
-        let page_table = frame_to_page_table(self.page_table_frame);
+        let mut page_table = frame_to_page_table(self.page_table_frame);
         for page_table_level in 0..4 {
             // Get the index for level at `page_table_level`.
             let index = index_at_level(page_table_level, addr.as_u64());
@@ -414,7 +428,7 @@ impl PageTableBehaviors for KernelPageTable {
 
             // If this is not page table entry (PTE), continue walking.
             if page_table_level == 3 {
-                let page = Page::<Size4KiB>::containing_address(addr);
+                let page = page!(addr.as_u64());
                 self.page_table_entry = Some(PageEntryWrapper(entry, page, self.page_table_frame));
                 return Ok(self.page_table_entry.as_mut().unwrap());
             }
@@ -422,16 +436,16 @@ impl PageTableBehaviors for KernelPageTable {
             if !entry.flags().contains(PageTableFlags::PRESENT) {
                 return Err(Errno::EEXIST);
             }
+
+            // Retrive page table at the current level.
+            page_table = frame_to_page_table(entry.frame().unwrap());
         }
 
         Err(Errno::EEXIST)
     }
 
     fn get_page_slice_mut<'a>(&mut self, addr: VirtAddr) -> KResult<&'a mut [u8]> {
-        if let Ok(frame) = self
-            .page_table
-            .translate_page(Page::<Size4KiB>::containing_address(addr))
-        {
+        if let Ok(frame) = self.page_table.translate_page(page!(addr.as_u64())) {
             let virt_addr = phys_to_virt(frame.start_address().as_u64());
             let slice = unsafe { core::slice::from_raw_parts_mut(virt_addr as *mut u8, PAGE_SIZE) };
 
@@ -470,7 +484,7 @@ impl PageTableBehaviors for KernelPageTable {
 impl PageTableMoreBehaviors for KernelPageTable {
     fn empty() -> Self {
         let phys_addr = allocate_frame().expect("empty(): failed to allocate frame");
-        let page_table_frame = PhysFrame::<Size4KiB>::containing_address(phys_addr);
+        let page_table_frame = frame!(phys_addr.as_u64());
         let table = unsafe { &mut *frame_to_page_table(page_table_frame) };
 
         // Clear it.
@@ -550,15 +564,12 @@ pub fn get_pf_addr() -> u64 {
 /// the kernel will crash.
 pub fn set_page_table(page_table_addr: u64) {
     unsafe {
-        Cr3::write(
-            PhysFrame::containing_address(PhysAddr::new(page_table_addr)),
-            Cr3Flags::empty(),
-        );
+        Cr3::write(frame!(page_table_addr), Cr3Flags::empty());
     }
 }
 
 /// Extract the page entry index for `level`.
-#[inline]
+#[inline(always)]
 pub fn index_at_level(level: usize, addr: u64) -> u64 {
     (addr >> (12 + (3 - level) * 9)) & 0o777
 }
