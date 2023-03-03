@@ -8,7 +8,7 @@ use log::info;
 use uefi::table::boot::{MemoryDescriptor, MemoryType};
 use x86_64::{
     registers::{
-        control::{Cr0, Cr0Flags, Cr3, Cr3Flags},
+        control::{Cr0, Cr0Flags, Cr3, Cr3Flags, Cr4, Cr4Flags},
         model_specific::{Efer, EferFlags},
     },
     structures::paging::{
@@ -182,6 +182,12 @@ pub fn enable_write_protect() {
     }
 }
 
+pub fn enable_global() {
+    unsafe {
+        Cr4::update(|f| f.insert(Cr4Flags::PAGE_GLOBAL));
+    }
+}
+
 /// Gets the starting address of the top-level page table from the cr3 register.
 pub fn locate_page_table() -> &'static PageTable {
     // Get the start address of the top-level page table.
@@ -316,7 +322,7 @@ pub fn map_physical(
     for frame in PhysFrame::range_inclusive(start_frame, end_frame) {
         let virt_addr = VirtAddr::new(frame.start_address().as_u64() + phys_start);
         let page = Page::<Size4KiB>::containing_address(virt_addr);
-        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::GLOBAL;
 
         unsafe {
             page_tables
@@ -338,7 +344,7 @@ pub fn map_stack(
     // this page for us.
     let stack_addr = kernel.config.kernel_stack_address;
     let stack_size = kernel.config.kernel_stack_size;
-    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::GLOBAL;
 
     map_addr(
         frame_allocator,

@@ -602,7 +602,7 @@ where
     &*(ptr.add(offset) as *const T)
 }
 
-/// Fast conversion from numerics to PhysAddr.
+/// Fast conversion from numerics to VirtAddr.
 #[macro_export]
 #[cfg(target_pointer_width = "64")]
 macro_rules! virt {
@@ -614,7 +614,7 @@ macro_rules! virt {
     };
 }
 
-/// Fast conversion from numerics to VirtAddr.
+/// Fast conversion from numerics to PhysAddr.
 #[macro_export]
 #[cfg(target_pointer_width = "64")]
 macro_rules! phys {

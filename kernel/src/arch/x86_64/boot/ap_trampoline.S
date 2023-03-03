@@ -11,8 +11,8 @@
 
 org 0xf000
 section .text
-use16
 
+bits 16
 __ap_trampoline:
     jmp short __ap_startup
     times 8 - ($ - __ap_trampoline) nop
@@ -55,11 +55,6 @@ __ap_startup:
     mov es, ax
     mov ss, ax
 
-    mov edx, [__ap_trampoline.stack_top]
-    lea eax, [edx]
-    mov ecx, 0
-    wrmsr
-
     ; Load the address of the page table in advance.
     mov edi, [__ap_trampoline.page_table]
     mov cr3, edi
@@ -95,7 +90,7 @@ __ap_start_32:
     ; Enable long mode.
     mov ecx, 0xc0000080
     rdmsr
-    or eax, 0x00000100
+    or eax, 1 << 11 | 1 << 8
     wrmsr
 
     ; Set up paging.
@@ -103,21 +98,17 @@ __ap_start_32:
     or eax, 1 << 31 | 1 << 16 | 1
     mov cr0, eax
 
+    ; Now that we're in long mode, there's one issue left: we are in the 32-bit compatibility submode and we actually
+    ; wanted to enter 64-bit long mode. This isn't a hard thing to do. We should load just load a GDT with the 64-bit
+    ; flags set in the code and data selectors.
+    lgdt [__gdt64.pointer]
+
     ; Perform another long jump
-    jmp 0x8:__ap_start_prot_mode
+    jmp __gdt64.code:__ap_start_prot_mode
 
 bits 64
 __ap_start_prot_mode:
-    ; Flush segment registers with code segment.
-    mov rax, 0x10
-    mov ds, rax
-    mov es, rax
-    mov fs, rax
-    mov gs, rax
-    mov ss, rax
-
     ; Set up the stack frames allocated by the BSP.
-    ; FIXME: moving rsp causes segfault.
     mov rbx, [__ap_trampoline.stack_top]
     xor rbp, rbp
     lea rsp, [rbx - 256]
@@ -127,4 +118,41 @@ __ap_start_prot_mode:
 
     ; Enter the kernel.
     mov rax, [__ap_trampoline.trampoline_code]
-    jmp rax
+    ; push 0x0
+    call rax
+
+; Should never enter `__loop`.
+__loop:
+    jmp __loop
+
+; Access bits
+PRESENT        equ 1 << 7
+NOT_SYS        equ 1 << 4
+EXEC           equ 1 << 3
+DC             equ 1 << 2
+RW             equ 1 << 1
+ACCESSED       equ 1 << 0
+ 
+; Flags bits
+GRAN_4K       equ 1 << 7
+SZ_32         equ 1 << 6
+LONG_MODE     equ 1 << 5
+ 
+__gdt64:
+    .null: equ $ - __gdt64
+        dq 0
+    .code: equ $ - __gdt64
+        dd 0xFFFF                                   ; Limit & Base (low, bits 0-15)
+        db 0                                        ; Base (mid, bits 16-23)
+        db PRESENT | NOT_SYS | EXEC | RW            ; Access
+        db GRAN_4K | LONG_MODE | 0xF                ; Flags & Limit (high, bits 16-19)
+        db 0                                        ; Base (high, bits 24-31)
+    .data: equ $ - __gdt64
+        dd 0xFFFF                                   ; Limit & Base (low, bits 0-15)
+        db 0                                        ; Base (mid, bits 16-23)
+        db PRESENT | NOT_SYS | RW                   ; Access
+        db GRAN_4K | SZ_32 | 0xF                    ; Flags & Limit (high, bits 16-19)
+        db 0                                        ; Base (high, bits 24-31)
+    .pointer:
+        dw $ - __gdt64 - 1
+        dq __gdt64

@@ -138,6 +138,9 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     kmain();
 }
 
+/// The entry function for the application processors. If the `ap_trampoline.S` file is written correctly,
+/// then the AP should be able to call `_start_ap` (which is loaded into rax).
 pub unsafe extern "C" fn _start_ap() -> ! {
+    // todo
     loop {}
 }

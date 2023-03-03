@@ -7,8 +7,14 @@
 //! parsed, for example, and expose the functionality of multiple backend
 //! implementations. This is because we have no backend.
 
+use alloc::format;
 use core::arch::asm;
 use lazy_static::lazy_static;
+use log::debug;
+use x86_64::registers::{
+    control::{Cr0, Cr2, Cr3, Cr4},
+    model_specific::Efer,
+};
 
 use crate::{__guard_bottom, __guard_top, memory::check_within_stack};
 
@@ -141,3 +147,24 @@ impl Frame {
 // should be `Send` as well.
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
+
+/// Dumps all the control registers.
+///
+/// # Note
+/// Only works if the log level is set to `DEBUG` or lower.
+pub fn dump_cr_regs() {
+    let cr0 = Cr0::read();
+    let cr2 = Cr2::read();
+    let cr3 = Cr3::read();
+    let cr4 = Cr4::read();
+
+    let efer = Efer::read();
+
+    debug!(
+        "{}",
+        format!(
+            "Control Registers:\n\tCr0: {:?}\n\tCr2: {:?}\n\tCr3: {:?}\n\tCr4: {:?}\n\tEfer: {:?}",
+            cr0, cr2, cr3, cr4, efer
+        )
+    );
+}

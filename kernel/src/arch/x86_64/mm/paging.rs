@@ -437,6 +437,8 @@ impl PageTableBehaviors for KernelPageTable {
                 return Err(Errno::EEXIST);
             }
 
+            debug!("get_entry(): visiting {:#x?}", entry);
+
             // Retrive page table at the current level.
             page_table = frame_to_page_table(entry.frame().unwrap());
         }

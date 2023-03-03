@@ -53,6 +53,19 @@ pub struct ApHeader {
     pub trampoline_code: u64,
 }
 
+impl ApHeader {
+    /// Checks whether the memory representation is zeros; otherwise, we may access the wrong memory region.
+    #[inline(always)]
+    pub fn sanity_check(&self) -> bool {
+        self.page_table == 0
+            && self.cpu_id == 0
+            && self.ready == 0
+            && self.stack_top == 0
+            && self.stack_bottom == 0
+            && self.trampoline_code == 0
+    }
+}
+
 pub fn cpuid() -> CpuId {
     CpuId::with_cpuid_fn(|a, c| {
         let result = unsafe { core::arch::x86_64::__cpuid_count(a, c) };

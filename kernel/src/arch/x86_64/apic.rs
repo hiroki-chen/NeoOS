@@ -65,7 +65,7 @@ where
     use core::{ffi::c_void, sync::atomic::Ordering};
 
     use acpi::madt::{EntryHeader, LocalApicEntry, MadtEntry};
-    use log::debug;
+    use log::{debug, error};
 
     use crate::{
         arch::{
@@ -93,7 +93,9 @@ where
         // Map the trampoline page.
         let ap_trampoline_frame = phys!(AP_STARTUP);
         let ap_trampoline_page = virt!(AP_STARTUP);
-        KernelPageTable::active().map(ap_trampoline_page, ap_trampoline_frame);
+        KernelPageTable::active()
+            .map(ap_trampoline_page, ap_trampoline_frame)
+            .update();
 
         // From now on, the ap trampoline code is at 0x10000.
         for item in madt.entries() {
@@ -114,7 +116,13 @@ where
                     let ap_header_addr =
                         phys_to_virt(AP_STARTUP) + core::mem::size_of::<u64>() as u64;
                     let ap_header = &mut *(ap_header_addr as *mut u8 as *mut ApHeader);
-                    debug!("init_aps(): read header {:#x?}", ap_header);
+
+                    // Check header.
+                    if !ap_header.sanity_check() {
+                        error!("init_aps(): AP {:#x} contains corrupted header!", *apic_id);
+                        continue;
+                    }
+
                     // Allocate stack frames for the AP.
                     let ap_stack_frame = allocate_frame_contiguous(0x40, 0)?;
                     let stack_bottom = phys_to_virt(ap_stack_frame.as_u64());
