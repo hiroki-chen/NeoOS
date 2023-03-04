@@ -1,14 +1,15 @@
 //! This module implementes the interrupt handlers.
 
 use log::{debug, error, info, trace};
+use x86_64::instructions::tlb::flush_all;
 
 use crate::{
     arch::{
         self,
         cpu::AbstractCpu,
         interrupt::{
-            eoi, timer::handle_timer, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT, IPI, IRQ_MAX,
-            IRQ_MIN, PAGE_FAULT_INTERRUPT, TIMER_INTERRUPT,
+            eoi, ipi::IpiType, timer::handle_timer, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT,
+            IRQ_MAX, IRQ_MIN, PAGE_FAULT_INTERRUPT, TIMER_INTERRUPT,
         },
         mm::pretty_interpret,
     },
@@ -52,14 +53,23 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
             }
         }
 
-        IPI => {
-            AbstractCpu::current().unwrap().pop_event();
-        }
+        ipi => {
+            if (IpiType::TlbFlush as u8..=IpiType::Others as u8).contains(&(ipi as u8)) {
+                eoi((ipi - IRQ_MIN) as u8);
 
-        _ => panic!(
-            "__trap_dispatcher(): unrecognized type {:#x?}!",
-            tf.trap_num
-        ),
+                match unsafe { core::mem::transmute::<u8, IpiType>(ipi as _) } {
+                    IpiType::TlbFlush => flush_all(),
+                    // Does nothing.
+                    IpiType::WakeUp => (),
+                    IpiType::Others => AbstractCpu::current().unwrap().pop_event(),
+                }
+            } else {
+                panic!(
+                    "__trap_dispatcher(): unrecognized type {:#x?}!",
+                    tf.trap_num
+                )
+            }
+        }
     }
 }
 

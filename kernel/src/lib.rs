@@ -53,6 +53,7 @@ use log::{error, info};
 use buddy_system_allocator::LockedHeapWithRescue;
 
 use crate::{
+    arch::cpu::{cpu_id, BSP_ID},
     debug::{Frame, UNWIND_DEPTH},
     logging::print_banner,
 };
@@ -75,13 +76,20 @@ extern "C" {
 
 /// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
 pub fn kmain() -> ! {
-    info!("kmain(): kernel main procedure started.");
-    print_banner();
+    if cpu_id() == *BSP_ID.get().unwrap() as usize {
+        info!("kmain(): kernel main procedure started.");
+        print_banner();
+    }
 
-    // TEST IPI.
-    crate::arch::interrupt::ipi::send_ipi(|| {
-        info!("are you ok????");
-    }, Some(0x1), true);
+    // Test IPI.
+    crate::arch::interrupt::ipi::send_ipi(
+        || {
+            info!("Hello from the other side ^^");
+        },
+        None,
+        true,
+        crate::arch::interrupt::ipi::IpiType::Others,
+    );
 
     loop {
         // TODO: schdule();

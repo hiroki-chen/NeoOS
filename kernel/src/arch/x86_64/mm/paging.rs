@@ -575,3 +575,19 @@ pub fn set_page_table(page_table_addr: u64) {
 pub fn index_at_level(level: usize, addr: u64) -> u64 {
     (addr >> (12 + (3 - level) * 9)) & 0o777
 }
+
+/// This function broadcasts the change of the page table to all the cores to allow for a synchronized
+/// page table among them. This process *may be* slow; so it is recommended that one use single flush
+/// rather than reloading the whole page table via [`Cr3`].
+///
+/// If the argument `addr` is [`None`], then we flush all.
+#[cfg(feature = "multiprocessor")]
+#[inline(always)]
+pub fn tlb_broadcast(target: Option<u8>, addr: Option<VirtAddr>) {
+    use crate::arch::interrupt::ipi::{send_ipi, IpiType};
+
+    match addr {
+        Some(_) => unimplemented!(),
+        None => send_ipi(|| (), target, true, IpiType::TlbFlush),
+    }
+}

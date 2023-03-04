@@ -108,7 +108,10 @@ use crate::{
     irq::{IrqType, IRQ_TYPE},
 };
 
-use self::pic::{MASTER_PIC, SLAVE_PIC};
+use self::{
+    ipi::IpiType,
+    pic::{MASTER_PIC, SLAVE_PIC},
+};
 
 // Defines a enumeration over CPU auto-generated interrupts.
 pub const DIVIDE_BY_ZERO_INTERRUPT: usize = 0x00;
@@ -126,7 +129,6 @@ pub const TIMER_INTERRUPT: usize = 0x00;
 pub const IRQ_MIN: usize = 0x20;
 pub const IRQ_MAX: usize = 0x3f;
 pub const SYSCALL: usize = 0x100;
-pub const IPI: usize = 0xfc;
 
 pub const SYSCALL_REGS: usize = 0x6;
 

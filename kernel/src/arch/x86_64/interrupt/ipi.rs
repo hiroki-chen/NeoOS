@@ -18,7 +18,16 @@ use crate::arch::{
     cpu::{CPUS, CPU_NUM},
 };
 
-use super::IPI;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
+#[repr(u8)]
+pub enum IpiType {
+    /// Indicates that the target CPU(s) should flush the TLB (Translation Looka-side Buffer).
+    TlbFlush = 0x40,
+    /// Indicates that the target CPU(s) should be woken up.
+    WakeUp = 0x41,
+    /// Other Ipi types. This carries a callback for te target CPU to be exeucted.
+    Others = 0x42,
+}
 
 /// This function deals with sending the initial IPI to the corresponding APs to indicate that they should be awaken.
 ///
@@ -61,8 +70,9 @@ pub fn send_startup_ipi(dst: u64) {
 /// # Note
 ///
 /// The function/closure must implement [`core::marker::Send`] and [`core::marker::Sync`] so that is can be safely shared
-/// across different threads. Rust automatically implements these two traits for closures.
-pub fn send_ipi<T>(cb: T, target: Option<u8>, sync: bool)
+/// across different threads. Rust automatically implements these two traits for closures. One should also note that the
+/// function [`apic::LocalApic::send_ipi`] for [`apic::X2Apic`] is wrong.
+pub fn send_ipi<T>(cb: T, target: Option<u8>, sync: bool, ipi_type: IpiType)
 where
     T: Fn() + Send + Sync + 'static,
 {
@@ -80,15 +90,21 @@ where
             log::info!("send_ipi(): sending IPI to target {:#x}", target);
             let cb_cloned = cb.clone();
             let finished_cloned = finished.clone();
-            CPUS.get(target as usize)
-                .unwrap()
-                .get()
-                .unwrap()
-                .push_event(Box::new(move || {
-                    cb_cloned();
-                    finished_cloned.fetch_add(0x1, Ordering::Relaxed);
-                }));
-            lapic.send_ipi(target, IPI as _);
+
+            if ipi_type == IpiType::Others {
+                CPUS.get(target as usize)
+                    .unwrap()
+                    .get()
+                    .unwrap()
+                    .push_event(Box::new(move || {
+                        cb_cloned();
+                        finished_cloned.fetch_add(0x1, Ordering::Relaxed);
+                    }));
+            }
+
+            // Send IPI via icr. Note that the offset for X2Apic is 32.
+            let icr = 0x4000 | ipi_type as u64 | (target as u64) << 32;
+            lapic.set_icr(icr);
         },
         None => {
             // Invoke all!
@@ -96,11 +112,16 @@ where
                 let cpu = cpu.get().unwrap();
                 let cb_cloned = cb.clone();
                 let finished_cloned = finished.clone();
-                cpu.push_event(Box::new(move || {
-                    cb_cloned();
-                    finished_cloned.fetch_add(0x1, Ordering::Relaxed);
-                }));
-                lapic.send_ipi(cpu.cpu_id as _, IPI as _);
+
+                if ipi_type == IpiType::Others {
+                    cpu.push_event(Box::new(move || {
+                        cb_cloned();
+                        finished_cloned.fetch_add(0x1, Ordering::Relaxed);
+                    }));
+                }
+
+                let icr = 0x4000 | ipi_type as u64 | (cpu.cpu_id as u64) << 32;
+                lapic.set_icr(icr);
             }
         }
     }

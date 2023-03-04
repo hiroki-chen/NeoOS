@@ -27,7 +27,10 @@ num-traits = { version = "0.2", default-features = false }
 pci = { git = "https://github.com/hiroki-chen/pci-rs.git" }
 pc-keyboard = "0.6.1"
 raw-cpuid = "10.6.0"
-spin = { version = "0.9.5", default-features = false, features = ['rwlock', 'once'] }
+spin = { version = "0.9.5", default-features = false, features = [
+  'rwlock',
+  'once',
+] }
 uart_16550 = "0.2.18"
 volatile = "0.3"
 x86_64 = { version = "0.14.10", features = ["abi_x86_interrupt"] }
@@ -35,6 +38,7 @@ x86 = "0.52.0"
 memchr = { version = "2.5.0", default-features = false }
 libm = "0.2.6"
 atomic_float = "0.1.0"
+
 
 [build-dependencies]
 cc = "1.0"

@@ -55,16 +55,25 @@ pub struct Kernel<'a> {
 impl<'a> Kernel<'a> {
     pub fn new(bs: &BootServices, config: &'a BootLoaderConfig<'a>) -> Self {
         let kernel_path = config.kernel_path;
-        info!("Kernel::new(): Now loading the kernel image from {}.", kernel_path);
+        info!(
+            "Kernel::new(): Now loading the kernel image from {}.",
+            kernel_path
+        );
         let mut kernel = open_file(bs, kernel_path);
         let kernel_content = read_buf(bs, &mut kernel);
         let kernel_elf = ElfFile::new(kernel_content).expect("Not a valid ELF file.");
 
         let ty = kernel_elf.header.pt2.type_().as_type();
         if ty != Type::Executable && ty != Type::SharedObject {
-            panic!("Kernel::new(): We only support executable or shared object! Got {:?}.", ty);
+            panic!(
+                "Kernel::new(): We only support executable or shared object! Got {:?}.",
+                ty
+            );
         }
-        info!("Kernel::new(): Kernel type: {:?}", kernel_elf.header.pt2.type_().as_type());
+        info!(
+            "Kernel::new(): Kernel type: {:?}",
+            kernel_elf.header.pt2.type_().as_type()
+        );
 
         Self {
             elf: kernel_elf,

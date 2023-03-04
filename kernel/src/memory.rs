@@ -608,7 +608,7 @@ where
 /// * [`Ordering::Relaxed`]
 /// * [`Ordering::Release`]
 /// * [`Ordering::SeqCst`]
-/// 
+///
 /// Why do we need this function instead of using [`core::ptr::write_bytes`]? This is because the memset-like function
 /// [`core::ptr::write_bytes`] provided by the core library does not give us the guarantee that the memory is ordered.
 /// Although unordered memory read/write does not affect the result of single-threaded programs. There would be, however,
