@@ -3,15 +3,14 @@
 use boot_header::Header;
 use core::{
     hint::spin_loop,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, Ordering},
 };
 use log::{info, warn};
 
 use crate::{
     arch::{
         acpi::init_acpi,
-        cpu::{cpu_id, init_cpu, measure_frequency, print_cpu_topology},
-        gdt::init_gdt,
+        cpu::{cpu_id, init_cpu, measure_frequency, print_cpu_topology, AP_UP_NUM, CPU_NUM},
         interrupt::init_interrupt_all,
         mm::paging::{init_kernel_page_table, init_mm},
         timer::{init_apic_timer, TimerSource, TIMER_SOURCE},
@@ -27,36 +26,11 @@ use crate::{
 
 use super::cpu::ApHeader;
 
-// A global atomic kernel entry used to be accessed by other CPU cores.
-pub static KERNEL_ENTRY: AtomicU64 = AtomicU64::new(0u64);
 // Indicates whether the bootstrap processor has initialized.
 pub static AP_CAN_INIT: AtomicBool = AtomicBool::new(false);
 /// The entry point of kernel
 #[no_mangle]
 pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
-    // TODO: Fix the initialization of APs by issuing INIT-SIPI-SIPI sequence to all APs.
-
-    // Tell other APs the entry of the kernel.
-    KERNEL_ENTRY.store(header.kernel_entry, Ordering::Relaxed);
-
-    let cpu_id = cpu_id();
-    // Prevent multiple cores.
-    // TODO: Split another `_start` for APs?
-    if cpu_id != 0 {
-        while !AP_CAN_INIT.load(Ordering::Relaxed) {
-            spin_loop();
-        }
-        // Start other cores.
-        if let Err(errno) = init_cpu() {
-            panic!(
-                "init_cpu(): failed to initialize CPU #{:#x}. Errno: {:?}",
-                cpu_id, errno
-            );
-        }
-
-        info!("init_cpu(): successfullly initialized CPU #{}", cpu_id);
-    }
-
     // Initialize the heap.
     let heap = init_heap();
 
@@ -104,7 +78,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     if let Err(errno) = init_cpu() {
         panic!("_start(): failed to initialize CPU #0. Errno: {:?}", errno);
     }
-    info!("_start(): initialized xAPIC.");
+    info!("_start(): initialized x2APIC.");
 
     print_cpu_topology();
 
@@ -138,12 +112,22 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     // Step into the kernel main function.
     AP_CAN_INIT.store(true, Ordering::Relaxed);
 
+    // Wait for all APs.
+    while AP_UP_NUM.load(Ordering::Relaxed) != *CPU_NUM.get().unwrap() - 1 {
+        spin_loop();
+    }
     kmain();
 }
 
 /// The entry function for the application processors. If the `ap_trampoline.S` file is written correctly,
 /// then the AP should be able to call `_start_ap` (which is loaded into rax).
+#[no_mangle]
 pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
+    // Wait for BSP.
+    while !AP_CAN_INIT.load(Ordering::Relaxed) {
+        spin_loop();
+    }
+
     let header = ApHeader::from_raw(ap_header);
     info!("_start_ap(): reading header: {:#x?}", header);
 
@@ -156,7 +140,18 @@ pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
     }
     info!("_start(): initialized traps, syscalls and interrupts.");
 
+    if let Err(errno) = init_cpu() {
+        let cpu_id = cpu_id();
+        panic!(
+            "init_cpu(): failed to initialize CPU #{:#x}. Errno: {:?}",
+            cpu_id, errno
+        );
+    }
+
     // TODO: Initialize interrupt here.
-    // TODO: Clear the header immediately.
+    // TODO: Configure cpus; initialize IRQs by LAPIC.
+
+
+    AP_UP_NUM.fetch_add(0x1, Ordering::Relaxed);
     loop {}
 }

@@ -5,6 +5,7 @@ use log::{debug, error, info, trace};
 use crate::{
     arch::{
         self,
+        cpu::AbstractCpu,
         interrupt::{
             eoi, timer::handle_timer, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT, IPI, IRQ_MAX,
             IRQ_MIN, PAGE_FAULT_INTERRUPT, TIMER_INTERRUPT,
@@ -20,8 +21,7 @@ use super::TrapFrame;
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
 #[no_mangle]
 pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
-    // FIXME: Change log level to `trace`.
-    debug!(
+    trace!(
         "__trap_dispatcher(): trap frame number: {:#x?}",
         tf.trap_num
     );
@@ -53,7 +53,7 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
         }
 
         IPI => {
-            eoi(tf.trap_num as u8);
+            AbstractCpu::current().unwrap().pop_event();
         }
 
         _ => panic!(

@@ -2,7 +2,7 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use alloc::{format, string::String};
+use alloc::{boxed::Box, format, string::String, vec::Vec};
 
 use apic::{LocalApic, X2Apic};
 use atomic_float::AtomicF64;
@@ -10,20 +10,39 @@ use log::{debug, info, warn};
 use raw_cpuid::{CpuId, CpuIdResult, FeatureInfo};
 use x86::random::rdrand64;
 use x86_64::{
-    instructions,
     registers::control::{Cr0, Cr0Flags, Cr4, Cr4Flags},
+    structures::tss::TaskStateSegment,
 };
 
 use crate::{
     arch::{apic::AcpiSupport, pit::countdown},
     error::{Errno, KResult},
+    sync::mutex::SpinLock as Mutex,
 };
+
+pub const CPU_STACK_SIZE: usize = 0x200;
+pub const MAX_CPU_NUM: usize = 0x100;
 
 pub static CPU_FREQUENCY: AtomicF64 = AtomicF64::new(0.0f64);
 
-#[cfg(feature = "multiprocessor")]
 /// How many cores are available after AP initialization.
-pub static CPU_COUNT: AtomicUsize = AtomicUsize::new(0usize);
+#[cfg(feature = "multiprocessor")]
+pub static AP_UP_NUM: AtomicUsize = AtomicUsize::new(0usize);
+
+/// How many cores in total
+#[cfg(feature = "multiprocessor")]
+pub static CPU_NUM: spin::Once<usize> = spin::Once::new();
+
+/// The BSP CPU ID.
+#[cfg(feature = "multiprocessor")]
+pub static BSP_ID: spin::Once<u32> = spin::Once::new();
+
+/// Although this static mutable array is safe as long as each core does not access other's data structure.
+#[cfg(feature = "multiprocessor")]
+pub static mut CPUS: [spin::Once<AbstractCpu>; MAX_CPU_NUM] = {
+    const CPU: spin::Once<AbstractCpu> = spin::Once::new();
+    [CPU; MAX_CPU_NUM]
+};
 
 /// The Rust-like representation of the header stored in `ap_trampoline.S`.
 ///
@@ -74,6 +93,83 @@ impl ApHeader {
     }
 }
 
+/// This struct represents an *abstract* CPU core that is easy for us to get around with.
+///
+/// For each core, it has independent gdt, idt, tss and other kernel components, so it is essential for us
+/// to seperate each core and deal with them correctly.
+pub struct AbstractCpu {
+    /// The local APIC id of the current CPU.
+    pub cpu_id: usize,
+    /// The global descriptor table (GDT).
+    gdt_addr: u64,
+    /// The task state segment (TSS) is a structure on x86-based computers which holds information about a task.
+    /// It is used by the operating system kernel for task management. Specifically, the following information is
+    /// stored in the TSS:
+    /// * Processor register state
+    /// * I/O port permissions
+    /// * Inner-level stack pointers
+    /// * Previous TSS link
+    tss: &'static TaskStateSegment,
+    /// The Inter-Processor Interrupt event queue (callbacks)
+    ipi_queue: Mutex<Vec<Box<dyn Fn() + Send + 'static>>>,
+    /// In Long Mode, the TSS does not store information on a task's execution state, instead it is used to store the
+    /// Interrupt Stack Table.
+    ///
+    /// In addition to the per thread stacks, there are specialized stacks associated with each CPU.  These stacks
+    /// are only used while the kernel is in control on that CPU; when a CPU returns to user space the specialized
+    /// stacks contain no useful data.  The main CPU stacks are:
+    /// * Interrupt stack.
+    /// * Double-fault stack.
+    stack_addr: u64,
+}
+
+impl AbstractCpu {
+    pub fn new(gdt_addr: u64, tss: &'static TaskStateSegment, stack_addr: u64) -> Self {
+        Self {
+            cpu_id: cpu_id(),
+            gdt_addr,
+            tss,
+            stack_addr,
+            ipi_queue: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn current() -> KResult<&'static mut Self> {
+        unsafe {
+            CPUS.get_mut(cpu_id())
+                .ok_or(Errno::EEXIST)?
+                .get_mut()
+                .ok_or(Errno::EINVAL)
+        }
+    }
+
+    pub fn push_event(&self, cb: Box<dyn Fn() + Send + 'static>) {
+        self.ipi_queue.lock().push(cb);
+    }
+
+    pub fn pop_event(&self) {
+        let cbs = {
+            let mut lock = self.ipi_queue.lock();
+            core::mem::replace(lock.as_mut(), Vec::new())
+        };
+        cbs.iter().for_each(|cb| cb());
+    }
+}
+
+/// This sets up the current CPU by [`cpu_id()`].
+pub fn init_current_cpu(
+    gdt_addr: u64,
+    tss: &'static TaskStateSegment,
+    stack_addr: u64,
+) -> KResult<()> {
+    unsafe {
+        let current = CPUS.get_mut(cpu_id()).ok_or(Errno::EEXIST)?;
+        current.call_once(|| AbstractCpu::new(gdt_addr, tss, stack_addr));
+    }
+
+    Ok(())
+}
+
 pub fn cpuid() -> CpuId {
     CpuId::with_cpuid_fn(|a, c| {
         let result = unsafe { core::arch::x86_64::__cpuid_count(a, c) };
@@ -88,7 +184,7 @@ pub fn cpuid() -> CpuId {
 
 pub fn cpu_name(level: i64) -> String {
     match level {
-        64 => String::from(cpuid().get_vendor_info().unwrap().as_str()),
+        64 => cpuid().get_vendor_info().unwrap().as_str().into(),
         0..14 => format!("i{}86", level),
         _ => String::from("i686"),
     }
@@ -158,7 +254,7 @@ pub fn init_cpu() -> KResult<()> {
     apic.cpu_init();
 
     log::info!(
-        "init_cpu(): xAPIC info:\n version: {:#x?}; id: {:#x?}, icr: {:#x?}",
+        "init_cpu(): x2APIC info:\n version: {:#x?}; id: {:#x?}, icr: {:#x?}",
         apic.version(),
         apic.id(),
         apic.icr()
@@ -185,11 +281,6 @@ pub fn measure_frequency() {
             info!("measure_frequency(): estimated frequency is {estimated_frequency} GHz.");
         }
     });
-}
-
-/// Halts the CPU until the next interrupt arrives.
-pub fn cpu_halt() {
-    instructions::hlt()
 }
 
 unsafe fn enable_float_processing_unit() {

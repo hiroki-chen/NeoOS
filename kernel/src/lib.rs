@@ -41,9 +41,9 @@ pub mod time;
 pub mod trigger;
 
 #[cfg(target_arch = "x86_64")]
-pub mod f64;
-#[cfg(target_arch = "x86_64")]
 pub mod f32;
+#[cfg(target_arch = "x86_64")]
+pub mod f64;
 
 use alloc::string::String;
 use core::panic::PanicInfo;
@@ -77,6 +77,11 @@ extern "C" {
 pub fn kmain() -> ! {
     info!("kmain(): kernel main procedure started.");
     print_banner();
+
+    // TEST IPI.
+    crate::arch::interrupt::ipi::send_ipi(|| {
+        info!("are you ok????");
+    }, Some(0x1), true);
 
     loop {
         // TODO: schdule();

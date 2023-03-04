@@ -8,10 +8,17 @@
 //! * Notify a processor of work that cannot be done on all processors due to, e.g.,
 //! * asymmetric access to I/O channels[1] special features on some processors
 
+use alloc::{boxed::Box, sync::Arc};
 use apic::{LocalApic, X2Apic};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use log::debug;
 
-use crate::arch::acpi::AP_STARTUP;
+use crate::arch::{
+    acpi::AP_STARTUP,
+    cpu::{CPUS, CPU_NUM},
+};
+
+use super::IPI;
 
 /// This function deals with sending the initial IPI to the corresponding APs to indicate that they should be awaken.
 ///
@@ -45,4 +52,60 @@ pub fn send_startup_ipi(dst: u64) {
     // By default, we use x2APIC.
     let mut lapic = X2Apic {};
     lapic.set_icr(icr);
+}
+
+/// This function sends the callback `cb` to `target` if `target` is not [`None`]; otherwise, all cores will receive an
+/// IPI. Also, `sync` denotes whether we should wait all cores to finish their IPI jobs. If so, we give a hint
+/// [`core::hint::spin_loop`] to the invoker and put it to wait state.
+///
+/// # Note
+///
+/// The function/closure must implement [`core::marker::Send`] and [`core::marker::Sync`] so that is can be safely shared
+/// across different threads. Rust automatically implements these two traits for closures.
+pub fn send_ipi<T>(cb: T, target: Option<u8>, sync: bool)
+where
+    T: Fn() + Send + Sync + 'static,
+{
+    let mut lapic = X2Apic {};
+    let cb = Arc::new(cb);
+    let finished = Arc::new(AtomicUsize::new(0x0));
+
+    let cpu_num = match target {
+        Some(_) => 0x1,
+        None => *CPU_NUM.get().unwrap(),
+    };
+
+    match target {
+        Some(target) => unsafe {
+            log::info!("send_ipi(): sending IPI to target {:#x}", target);
+            let cb_cloned = cb.clone();
+            let finished_cloned = finished.clone();
+            CPUS.get(target as usize)
+                .unwrap()
+                .get()
+                .unwrap()
+                .push_event(Box::new(move || {
+                    cb_cloned();
+                    finished_cloned.fetch_add(0x1, Ordering::Relaxed);
+                }));
+            lapic.send_ipi(target, IPI as _);
+        },
+        None => {
+            // Invoke all!
+            for cpu in unsafe { CPUS.iter().filter(|cpu| cpu.get().is_some()) } {
+                let cpu = cpu.get().unwrap();
+                let cb_cloned = cb.clone();
+                let finished_cloned = finished.clone();
+                cpu.push_event(Box::new(move || {
+                    cb_cloned();
+                    finished_cloned.fetch_add(0x1, Ordering::Relaxed);
+                }));
+                lapic.send_ipi(cpu.cpu_id as _, IPI as _);
+            }
+        }
+    }
+
+    while sync && finished.load(Ordering::Relaxed) != cpu_num {
+        core::hint::spin_loop();
+    }
 }

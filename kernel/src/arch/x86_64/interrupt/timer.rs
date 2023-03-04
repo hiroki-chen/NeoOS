@@ -5,7 +5,10 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use lazy_static::lazy_static;
 
 use crate::{
-    arch::{cpu::cpu_id, timer::rdtsc_timer},
+    arch::{
+        cpu::{cpu_id, BSP_ID},
+        timer::rdtsc_timer,
+    },
     sync::mutex::SpinLockNoInterrupt as Mutex,
     trigger::Trigger,
 };
@@ -20,7 +23,7 @@ lazy_static! {
 }
 
 pub fn handle_timer() {
-    if cpu_id() == 0x0 {
+    if cpu_id() == *BSP_ID.get().unwrap() as usize {
         TICK.fetch_add(0x1, Ordering::Release);
     }
     // Do tick.

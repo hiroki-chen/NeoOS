@@ -8,22 +8,25 @@ use acpi::{
     madt::Madt, platform::interrupt::Apic, sdt::Signature, AcpiHandler, AcpiTables, HpetInfo,
     InterruptModel, PhysicalMapping, PlatformInfo,
 };
+
 use boot_header::Header;
 use log::{debug, error, info};
+use x86_64::instructions::port::Port;
 
 use crate::{
     arch::{
         apic::init_aps,
+        cpu::BSP_ID,
         hpet::init_hpet,
         interrupt::pic::disable_pic,
         timer::{TimerSource, TIMER_SOURCE},
         PHYSICAL_MEMORY_START,
     },
-    error::{Errno, KResult},
+    error::{error_to_int, Errno, KResult},
     irq::{IrqType, IRQ_TYPE},
 };
 
-use super::{interrupt::ISA_TO_GSI};
+use super::interrupt::ISA_TO_GSI;
 
 pub const AP_STARTUP: u64 = 0xf000;
 // The trampoline code assembled by nasm.
@@ -76,10 +79,15 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
     if let Ok(platform_info) = PlatformInfo::new(&table) {
         info!("init_acpi(): showing platform information!");
         info!("Interrupt model: {:#x?}", platform_info.interrupt_model);
-        info!(
-            "Processor information: {:#x?}",
-            platform_info.processor_info.unwrap().boot_processor
-        );
+
+        // Set the BSP.
+        BSP_ID.call_once(|| {
+            platform_info
+                .processor_info
+                .unwrap()
+                .boot_processor
+                .local_apic_id
+        });
 
         if let InterruptModel::Apic(apic_information) = platform_info.interrupt_model {
             if apic_information.also_has_legacy_pics {
@@ -124,4 +132,31 @@ fn collect_irq_mapping(apic_information: &Apic) {
         .for_each(|iso| {
             mapping.insert(iso.isa_source, iso.global_system_interrupt);
         });
+}
+
+/// In modern versions of qemu, in order to terminate the VM from inside, we have to run qemu with
+/// `-device isa-debug-exit` and write a message (0x31) to a port (0x501). Port I/O is a weird kernel-y
+/// thing, but just realize that:
+/// * ioperm gives us permission to write to port 0x501
+/// * outb writes a byte (0x31) to that port
+///
+/// The byte we pass is doubled and incremented to build an exit code.
+///
+/// # Safety
+///
+/// This function is marked as `unsafe` because writing to arbitrary port is dangerous.
+pub unsafe fn shutdown<T>(res: KResult<T>) -> ! {
+    info!("shuwdown(): The system is about to shutdown...");
+    match res {
+        Ok(_) => {
+            Port::new(0xb004).write(0x0u8);
+        }
+        Err(errno) => {
+            // Qemu's exit code is double the value plus one.
+            let num = error_to_int(&res) * 2 + 1;
+            Port::new(0x501).write(num as u8);
+        }
+    }
+
+    loop {}
 }

@@ -71,7 +71,7 @@ where
         arch::{
             acpi::{AP_STARTUP, AP_TRAMPOLINE_CODE},
             boot::_start_ap,
-            cpu::{ApHeader, CPU_COUNT},
+            cpu::{ApHeader, CPU_NUM},
             interrupt::ipi::{send_init_ipi, send_startup_ipi},
             mm::paging::{KernelPageTable, PageTableBehaviors},
             PAGE_SIZE,
@@ -97,7 +97,13 @@ where
             .map(ap_trampoline_page, ap_trampoline_frame)
             .update();
 
-        // From now on, the ap trampoline code is at 0x10000.
+        // Get CPU numbers.
+        CPU_NUM.call_once(|| {
+            madt.entries()
+                .filter(|entry| matches!(entry, MadtEntry::LocalApic(_)))
+                .count()
+        });
+
         for item in madt.entries() {
             // First check if the APIC id is 0 (self).
             if let MadtEntry::LocalApic(lapic) = item {
@@ -134,7 +140,6 @@ where
                         .start_address()
                         .as_u64();
 
-                    CPU_COUNT.fetch_add(0x1, Ordering::SeqCst);
                     core::intrinsics::atomic_store_seqcst(&mut ap_header.ready as *mut _, 0u64);
                     core::intrinsics::atomic_store_seqcst(
                         &mut ap_header.cpu_id as *mut _,

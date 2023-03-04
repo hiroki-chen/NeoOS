@@ -23,7 +23,7 @@ use x86_64::{
 };
 
 use crate::{
-    arch::PAGE_SIZE,
+    arch::{cpu::init_current_cpu, PAGE_SIZE},
     error::{Errno, KResult},
     memory::virt_to_phys,
 };
@@ -43,12 +43,12 @@ use crate::{
 // are simply *ignored*.
 
 // Constants for cs and ds.
-const KERN_CODE_64B: u64 = 0x0020_9800_0000_0000; // EXECUTABLE | USER_SEGMENT | PRESENT | LONG_MODE
-const KERN_DATA_64B: u64 = 0x0000_9200_0000_0000; // DATA_WRITABLE | USER_SEGMENT | PRESENT
-const USER_CODE_64B: u64 = 0x0020_F800_0000_0000; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT | LONG_MODE
-const USER_CODE_32B: u64 = 0x00cf_fa00_0000_ffff; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT
-const USER_DATA_32B: u64 = 0x00cf_f200_0000_ffff; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT
-const GDT_ENTRIES: &[u64; 5] = &[
+pub const KERN_CODE_64B: u64 = 0x0020_9800_0000_0000; // EXECUTABLE | USER_SEGMENT | PRESENT | LONG_MODE
+pub const KERN_DATA_64B: u64 = 0x0000_9200_0000_0000; // DATA_WRITABLE | USER_SEGMENT | PRESENT
+pub const USER_CODE_64B: u64 = 0x0020_F800_0000_0000; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT | LONG_MODE
+pub const USER_CODE_32B: u64 = 0x00cf_fa00_0000_ffff; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT
+pub const USER_DATA_32B: u64 = 0x00cf_f200_0000_ffff; // EXECUTABLE | USER_SEGMENT | USER_MODE | PRESENT
+pub const GDT_ENTRIES: &[u64; 5] = &[
     KERN_CODE_64B,
     KERN_DATA_64B,
     USER_CODE_32B,
@@ -71,7 +71,7 @@ pub const AP_TRAMPOLINE_GDT: &[u16; 12] = &[
 /// there as the actual GDT entries reside at `0x10000 + gdt_offset`.
 ///
 /// Only the BSP can access 0x10000 and help AP trampoline set up the necessary data structures.
-/// 
+///
 /// HACK: We can assume 0xf000 is safe to use so that we do not need to care about the offset :)
 pub unsafe fn init_ap_gdt(gdt_addr: u64) {
     let u16_len = core::mem::size_of::<u16>();
@@ -134,12 +134,12 @@ pub unsafe fn init_gdt() -> KResult<()> {
     gdt.extend_from_slice(&[tss0, tss1]);
     gdt.extend_from_slice(GDT_ENTRIES);
     // Do not drop this!
-    let gdt = gdt.leak();
+    let gdt_slice = gdt.leak();
 
     // Step 4: Finally, we load it into the processor.
     let gdt = DescriptorTablePointer {
-        base: VirtAddr::new(gdt.as_ptr() as u64),
-        limit: gdt.len() as u16 * 8 - 1,
+        base: VirtAddr::new(gdt_slice.as_ptr() as u64),
+        limit: gdt_slice.len() as u16 * 8 - 1,
     };
     let tr = SegmentSelector::new(gdt_len as u16, PrivilegeLevel::Ring0);
     lgdt(&gdt);
@@ -154,7 +154,9 @@ pub unsafe fn init_gdt() -> KResult<()> {
         SegmentSelector::new(gdt_len as u16 + 4, PrivilegeLevel::Ring3).0,
         SegmentSelector::new(gdt_len as u16 + 2, PrivilegeLevel::Ring0).0,
     );
-    Ok(())
+
+    // Initialize the CPU.
+    init_current_cpu(gdt_slice.as_ptr() as u64, tss, trap_stack_top)
 }
 
 /// `sgdt` is a machine instruction in the x86-64 instruction set that is used to store the
