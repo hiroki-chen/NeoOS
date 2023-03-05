@@ -1,12 +1,12 @@
 //! Rust port of linux/arch/x86/cpu.c
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::AtomicUsize;
 
 use alloc::{boxed::Box, format, string::String, vec::Vec};
 
-use atomic_float::AtomicF64;
-use log::{info, warn};
+use log::info;
 use raw_cpuid::{CpuId, CpuIdResult, FeatureInfo};
+use spin::Once;
 use x86::random::rdrand64;
 use x86_64::{
     registers::control::{Cr0, Cr0Flags, Cr4, Cr4Flags},
@@ -25,7 +25,7 @@ use crate::{
 pub const CPU_STACK_SIZE: usize = 0x200;
 pub const MAX_CPU_NUM: usize = 0x100;
 
-pub static CPU_FREQUENCY: AtomicF64 = AtomicF64::new(0.0f64);
+pub static CPU_FREQUENCY: Once<f64> = Once::new();
 
 /// How many cores are available after AP initialization.
 #[cfg(feature = "multiprocessor")]
@@ -111,7 +111,7 @@ pub struct AbstractCpu {
     /// * I/O port permissions
     /// * Inner-level stack pointers
     /// * Previous TSS link
-    tss: &'static TaskStateSegment,
+    tss_addr: u64,
     /// The Inter-Processor Interrupt event queue (callbacks)
     ipi_queue: Mutex<Vec<Box<dyn Fn() + Send + 'static>>>,
     /// In Long Mode, the TSS does not store information on a task's execution state, instead it is used to store the
@@ -130,7 +130,7 @@ impl AbstractCpu {
         Self {
             cpu_id: cpu_id(),
             gdt_addr,
-            tss,
+            tss_addr: tss as *const _ as u64,
             stack_addr,
             ipi_queue: Mutex::new(Vec::new()),
         }
@@ -155,6 +155,17 @@ impl AbstractCpu {
             core::mem::replace(lock.as_mut(), Vec::new())
         };
         cbs.iter().for_each(|cb| cb());
+    }
+
+    pub fn restore_stack(&self, rsp: u64) {
+        // A trick that bypasses the Rust borrowing checker.
+        let tss = unsafe { &mut *(self.tss_addr as *mut TaskStateSegment) };
+        // When an interrupt occurs, the processor saves the current execution context onto the current stack and
+        // switches to the corresponding IST stack. This allows the processor to handle the interrupt in a safe and
+        // efficient manner, without the risk of overwriting important data on the current stack.
+        //
+        // When it finishes, we need to restore the previous stack pointer.
+        tss.interrupt_stack_table[0] = virt!(rsp);
     }
 }
 
@@ -218,10 +229,7 @@ pub fn cpu_frequency() -> u16 {
     };
 
     if freq == 0 {
-        warn!("cpu_frequency(): cpuid returns 0. Trying to fetch MSRs. ");
-        // Get frequency by MSR?
-
-        CPU_FREQUENCY.load(Ordering::Relaxed) as u16
+        *CPU_FREQUENCY.get().unwrap() as _
     } else {
         freq
     }
@@ -274,7 +282,7 @@ pub fn measure_frequency() {
             let end = core::arch::x86_64::__rdtscp(&mut aux as *mut _);
 
             let estimated_frequency = (end - begin) as f64 / 10_000_000f64;
-            CPU_FREQUENCY.store(estimated_frequency, Ordering::Relaxed);
+            CPU_FREQUENCY.call_once(|| estimated_frequency);
             info!("measure_frequency(): estimated frequency is {estimated_frequency} GHz.");
         }
     });

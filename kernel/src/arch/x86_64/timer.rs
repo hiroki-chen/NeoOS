@@ -69,7 +69,7 @@ pub enum TimerSource {
 /// however it can only be used if it is stable.
 pub fn rdtsc_timer() -> Duration {
     // Get the frequency of the CPU.
-    let freq = CPU_FREQUENCY.load(Ordering::Relaxed);
+    let freq = *CPU_FREQUENCY.get().unwrap();
     let rdtsc = unsafe { core::arch::x86_64::_rdtsc() };
 
     Duration::from_nanos(((rdtsc * 1000) as f64 / freq).round() as u64)

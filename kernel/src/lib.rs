@@ -49,6 +49,7 @@ use alloc::string::String;
 use core::panic::PanicInfo;
 use lazy_static::lazy_static;
 use log::{error, info};
+use process::scheduler;
 // We do not want OOM to cause kernel crash.
 use buddy_system_allocator::LockedHeapWithRescue;
 
@@ -76,11 +77,6 @@ extern "C" {
 
 /// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
 pub fn kmain() -> ! {
-    if cpu_id() == *BSP_ID.get().unwrap() as usize {
-        info!("kmain(): kernel main procedure started.");
-        print_banner();
-    }
-
     // Test IPI.
     crate::arch::interrupt::ipi::send_ipi(
         || {
@@ -91,8 +87,13 @@ pub fn kmain() -> ! {
         crate::arch::interrupt::ipi::IpiType::Others,
     );
 
+    if cpu_id() == *BSP_ID.get().unwrap() as usize {
+        info!("kmain(): kernel main procedure started.");
+        print_banner();
+    }
+
     loop {
-        // TODO: schdule();
+        scheduler::FIFO_SCHEDULER.start_schedule();
         crate::arch::interrupt::wait();
     }
 }

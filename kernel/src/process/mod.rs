@@ -22,6 +22,7 @@ use self::thread::THREAD_TABLE;
 
 pub mod event;
 pub mod ld;
+pub mod scheduler;
 pub mod thread;
 
 lazy_static! {

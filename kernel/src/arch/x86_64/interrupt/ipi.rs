@@ -103,8 +103,7 @@ where
             }
 
             // Send IPI via icr. Note that the offset for X2Apic is 32.
-            let icr = 0x4000 | ipi_type as u64 | (target as u64) << 32;
-            lapic.set_icr(icr);
+            lapic.send_ipi(target, ipi_type as _);
         },
         None => {
             // Invoke all!
@@ -119,9 +118,7 @@ where
                         finished_cloned.fetch_add(0x1, Ordering::Relaxed);
                     }));
                 }
-
-                let icr = 0x4000 | ipi_type as u64 | (cpu.cpu_id as u64) << 32;
-                lapic.set_icr(icr);
+                lapic.send_ipi(cpu.cpu_id as _, ipi_type as _);
             }
         }
     }

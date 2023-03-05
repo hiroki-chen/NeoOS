@@ -1,29 +1,26 @@
 use acpi::{madt::Madt, AcpiHandler, PhysicalMapping};
-use log::info;
+use core::{ffi::c_void, sync::atomic::Ordering};
 
-use crate::{error::KResult, memory::phys_to_virt};
+use acpi::madt::{EntryHeader, LocalApicEntry, MadtEntry};
+use log::{debug, error, info};
+
+use crate::{
+    arch::{
+        acpi::{AP_STARTUP, AP_TRAMPOLINE_CODE},
+        boot::_start_ap,
+        cpu::{ApHeader, CPU_NUM},
+        interrupt::ipi::{send_init_ipi, send_startup_ipi},
+        mm::paging::{KernelPageTable, PageTableBehaviors},
+        PAGE_SIZE,
+    },
+    error::KResult,
+    memory::{allocate_frame_contiguous, atomic_memset, phys_to_virt, read_at},
+};
 
 pub fn init_aps<H>(madt: &PhysicalMapping<H, Madt>) -> KResult<()>
 where
     H: AcpiHandler,
 {
-    use core::{ffi::c_void, sync::atomic::Ordering};
-
-    use acpi::madt::{EntryHeader, LocalApicEntry, MadtEntry};
-    use log::{debug, error};
-
-    use crate::{
-        arch::{
-            acpi::{AP_STARTUP, AP_TRAMPOLINE_CODE},
-            boot::_start_ap,
-            cpu::{ApHeader, CPU_NUM},
-            interrupt::ipi::{send_init_ipi, send_startup_ipi},
-            mm::paging::{KernelPageTable, PageTableBehaviors},
-            PAGE_SIZE,
-        },
-        memory::{allocate_frame_contiguous, atomic_memset, read_at},
-    };
-
     info!("init_aps(): initializing APs.");
 
     // Fill data into that address.
