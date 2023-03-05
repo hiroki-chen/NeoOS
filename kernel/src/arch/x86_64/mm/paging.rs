@@ -587,7 +587,14 @@ pub fn tlb_broadcast(target: Option<u8>, addr: Option<VirtAddr>) {
     use crate::arch::interrupt::ipi::{send_ipi, IpiType};
 
     match addr {
-        Some(_) => unimplemented!(),
+        Some(addr) => send_ipi(
+            move || {
+                flush(addr);
+            },
+            target,
+            true,
+            IpiType::TlbFlush,
+        ),
         None => send_ipi(|| (), target, true, IpiType::TlbFlush),
     }
 }

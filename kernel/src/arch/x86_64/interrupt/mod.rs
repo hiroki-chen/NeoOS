@@ -94,7 +94,6 @@ use core::{
 };
 
 use alloc::collections::BTreeMap;
-use apic::{LocalApic, X2Apic};
 use lazy_static::lazy_static;
 use log::info;
 use spin::RwLock;
@@ -108,10 +107,9 @@ use crate::{
     irq::{IrqType, IRQ_TYPE},
 };
 
-use self::{
-    ipi::IpiType,
-    pic::{MASTER_PIC, SLAVE_PIC},
-};
+use self::pic::{MASTER_PIC, SLAVE_PIC};
+
+use super::apic::X2Apic;
 
 // Defines a enumeration over CPU auto-generated interrupts.
 pub const DIVIDE_BY_ZERO_INTERRUPT: usize = 0x00;
@@ -332,7 +330,7 @@ pub unsafe fn disable() {
 pub fn eoi(irq: u8) {
     match IRQ_TYPE.load(Ordering::Acquire) {
         IrqType::Apic => {
-            let mut lapic = X2Apic {};
+            let lapic = X2Apic;
             lapic.eoi();
         }
         IrqType::Pic => {

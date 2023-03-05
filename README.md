@@ -39,7 +39,6 @@ target remote :1234
 
 * Implement keyboard drivers. (QEMU --> serial --> ? some sort of tty)
 * Implement the file system.
-* Implement the IPI and multi-processing (i.e., bring up all APs).
 * Implement more device drivers.
 
 ## Advanced Programmable Interrupt Controller (APIC)

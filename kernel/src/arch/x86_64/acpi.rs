@@ -15,7 +15,7 @@ use x86_64::instructions::port::Port;
 
 use crate::{
     arch::{
-        apic::init_aps,
+        apic::ap::init_aps,
         cpu::BSP_ID,
         hpet::init_hpet,
         interrupt::pic::disable_pic,

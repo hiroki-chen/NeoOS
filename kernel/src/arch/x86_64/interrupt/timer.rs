@@ -30,7 +30,6 @@ pub fn handle_timer() {
     TICK_WALL.fetch_add(0x1, Ordering::Relaxed);
 
     if APIC_UP.load(Ordering::Relaxed) {
-        // FIXME: use apic timer?
         TRIGGER.lock().expire(rdtsc_timer());
     }
 }

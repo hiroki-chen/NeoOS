@@ -4,7 +4,7 @@ use crate::{
     fs::file::FileObject,
     mm::MemoryManager,
     process::event::Event,
-    sync::{futex::Futex, mutex::SpinLockNoInterrupt as Mutex},
+    sync::{futex::SimpleFutex, mutex::SpinLockNoInterrupt as Mutex},
 };
 use alloc::{
     collections::BTreeMap,
@@ -50,7 +50,7 @@ pub struct Process {
     pub exit_code: u64,
     /// Events like exiting
     pub event_bus: Arc<Mutex<EventBus>>,
-    pub futexes: BTreeMap<u64, Arc<Futex>>,
+    pub futexes: BTreeMap<u64, Arc<SimpleFutex>>,
     /// Avoid deadlock, put pid out
     /// can be self-referenced.
     pub parent: (u64, Weak<Mutex<Process>>),

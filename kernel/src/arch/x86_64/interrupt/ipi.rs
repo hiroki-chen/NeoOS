@@ -9,12 +9,12 @@
 //! * asymmetric access to I/O channels[1] special features on some processors
 
 use alloc::{boxed::Box, sync::Arc};
-use apic::{LocalApic, X2Apic};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use log::debug;
 
 use crate::arch::{
     acpi::AP_STARTUP,
+    apic::X2Apic,
     cpu::{CPUS, CPU_NUM},
 };
 
@@ -42,7 +42,7 @@ pub fn send_init_ipi(dst: u64) {
     // Select IPI.
     let icr = 0x4500 | dst << 32;
     // By default, we use x2APIC.
-    let mut lapic = X2Apic {};
+    let lapic = X2Apic;
     lapic.set_icr(icr);
 }
 
@@ -59,7 +59,7 @@ pub fn send_startup_ipi(dst: u64) {
     let ap_segment = (AP_STARTUP >> 12) & 0xff;
     let icr = 0x4600 | dst << 32 | ap_segment;
     // By default, we use x2APIC.
-    let mut lapic = X2Apic {};
+    let lapic = X2Apic;
     lapic.set_icr(icr);
 }
 
@@ -76,7 +76,7 @@ pub fn send_ipi<T>(cb: T, target: Option<u8>, sync: bool, ipi_type: IpiType)
 where
     T: Fn() + Send + Sync + 'static,
 {
-    let mut lapic = X2Apic {};
+    let lapic = X2Apic;
     let cb = Arc::new(cb);
     let finished = Arc::new(AtomicUsize::new(0x0));
 

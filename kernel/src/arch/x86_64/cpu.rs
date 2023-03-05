@@ -4,9 +4,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::{boxed::Box, format, string::String, vec::Vec};
 
-use apic::{LocalApic, X2Apic};
 use atomic_float::AtomicF64;
-use log::{debug, info, warn};
+use log::{info, warn};
 use raw_cpuid::{CpuId, CpuIdResult, FeatureInfo};
 use x86::random::rdrand64;
 use x86_64::{
@@ -15,7 +14,10 @@ use x86_64::{
 };
 
 use crate::{
-    arch::{apic::AcpiSupport, pit::countdown},
+    arch::{
+        apic::{AcpiSupport, X2Apic},
+        pit::countdown,
+    },
     error::{Errno, KResult},
     sync::mutex::SpinLock as Mutex,
 };
@@ -250,15 +252,10 @@ pub fn init_cpu() -> KResult<()> {
         return Err(Errno::EINVAL);
     }
 
-    let mut apic = X2Apic {};
-    apic.cpu_init();
+    let lapic = X2Apic {};
+    lapic.init();
+    log::info!("init_cpu(): {:#x?}", lapic.get_info());
 
-    log::info!(
-        "init_cpu(): x2APIC info:\n version: {:#x?}; id: {:#x?}, icr: {:#x?}",
-        apic.version(),
-        apic.id(),
-        apic.icr()
-    );
     unsafe {
         enable_float_processing_unit();
     }
@@ -310,39 +307,4 @@ pub unsafe fn dump_flags() -> u64 {
 
     core::arch::asm!("pushfq; pop {}", out(reg) flags);
     flags
-}
-
-/// This function initializes all *Application Processors* (AP in short).
-///
-/// On any system with more than one logical processor we can categorize them as:
-///
-/// * BSP — bootstrap processor, executes modules that are necessary for booting the system
-/// * AP — application processor, any processor other than the bootstrap processor
-///
-/// Reference: https://wiki.osdev.org/SMP & https://pdos.csail.mit.edu/6.828/2008/readings/ia32/MPspec.pdf
-///
-/// BSP sends AP an INIT IPI
-/// BSP DELAYs (10mSec)
-/// If (APIC_VERSION is not an 82489DX) {
-///     BSP sends AP a STARTUP IPI
-///     BSP DELAYs (200µSEC)
-///     BSP sends AP a STARTUP IPI
-///     BSP DELAYs (200µSEC)
-/// }
-/// BSP verifies synchronization with executing AP
-pub fn wake_up_aps(apic_id: usize) -> KResult<()> {
-    let mut lapic = X2Apic {};
-    // Send init IPI.
-    let mut icr = /*0x8000 |*/ 0x4000 | 0x500;
-    if apic::X2Apic::does_cpu_support() {
-        icr |= (apic_id as u64) << 32;
-    } else {
-        icr |= (apic_id as u64) << 56; // destination apic id
-    }
-
-    debug!("wake_up_aps(): sending init IPI: {:#x}", icr);
-
-    lapic.set_icr(icr);
-
-    Ok(())
 }
