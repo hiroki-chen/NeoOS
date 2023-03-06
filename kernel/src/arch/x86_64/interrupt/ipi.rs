@@ -88,7 +88,6 @@ where
     match target {
         Some(target) => unsafe {
             log::info!("send_ipi(): sending IPI to target {:#x}", target);
-            let cb_cloned = cb.clone();
             let finished_cloned = finished.clone();
 
             if ipi_type == IpiType::Others {
@@ -97,7 +96,7 @@ where
                     .get()
                     .unwrap()
                     .push_event(Box::new(move || {
-                        cb_cloned();
+                        cb.clone()();
                         finished_cloned.fetch_add(0x1, Ordering::Relaxed);
                     }));
             }

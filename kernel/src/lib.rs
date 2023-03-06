@@ -7,6 +7,7 @@
 #![allow(clippy::empty_loop)]
 #![allow(clippy::identity_op)]
 #![allow(clippy::upper_case_acronyms)]
+#![allow(clippy::declare_interior_mutable_const)]
 #![allow(unused_variables)]
 #![allow(unreachable_code)]
 #![allow(dead_code)]
@@ -91,6 +92,8 @@ pub fn kmain() -> ! {
         info!("kmain(): kernel main procedure started.");
         print_banner();
     }
+
+    crate::process::thread::debug_threading();
 
     loop {
         scheduler::FIFO_SCHEDULER.start_schedule();

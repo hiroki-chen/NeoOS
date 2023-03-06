@@ -7,22 +7,22 @@
 
 pub mod callback;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use bitflags::bitflags;
-use core::ops::Range;
+use core::{future::Future, ops::Range, pin::Pin};
 use log::{debug, error};
-use x86_64::{
-    structures::paging::{Page, Size4KiB},
-    VirtAddr,
-};
+use x86_64::{structures::paging::Page, VirtAddr};
 
 use crate::{
     arch::{
-        mm::paging::{EntryBehaviors, PageTableBehaviors, PageTableMoreBehaviors},
+        cpu::cpu_id,
+        mm::paging::{set_page_table, EntryBehaviors, PageTableBehaviors, PageTableMoreBehaviors},
         PAGE_SIZE,
     },
     error::{Errno, KResult},
     memory::{is_page_aligned, page_frame_number, page_mask},
+    process::thread::{Thread, CURRENT_THREAD_PER_CPU},
+    sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
 use callback::ArenaCallback;
@@ -33,6 +33,51 @@ pub struct ArenaFlags {
     pub user_accessible: bool,
     pub non_executable: bool,
     pub mmio: u8,
+}
+
+/// A wrapper struct for a future that requires a specific page table (CR3 value) to run. This enables page table switching
+/// between the kernel and the user space.
+///
+/// This struct contains the future itself, a `Mutex` to allow for synchronization, the CR3 value of
+/// the required page table, and an `Arc` reference to the thread that will run the future.
+pub struct FutureWithPageTable {
+    future: Mutex<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    cr3: u64,
+    thread: Arc<Thread>,
+}
+
+impl FutureWithPageTable {
+    pub fn new(
+        future: Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
+        cr3: u64,
+        thread: Arc<Thread>,
+    ) -> Self {
+        Self {
+            future: Mutex::new(future),
+            cr3,
+            thread,
+        }
+    }
+}
+
+impl Future for FutureWithPageTable {
+    type Output = ();
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        let old = unsafe { CURRENT_THREAD_PER_CPU[cpu_id()].replace(self.thread.clone()) };
+
+        set_page_table(self.cr3);
+        let poll_res = self.future.lock().as_mut().poll(cx);
+
+        if old.is_some() {
+            drop(old.unwrap());
+        }
+
+        poll_res
+    }
 }
 
 bitflags! {
@@ -107,7 +152,7 @@ impl Arena {
         }
 
         for mem in self.range.clone().step_by(PAGE_SIZE) {
-            let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mem));
+            let page = page!(mem);
             // Invoke callback and let it do something for us.
             self.callback
                 .map(page_table, page.start_address(), &self.flags);
@@ -128,7 +173,7 @@ impl Arena {
         }
 
         for mem in self.range.clone().step_by(PAGE_SIZE) {
-            let page = Page::<Size4KiB>::containing_address(VirtAddr::new(mem));
+            let page = page!(mem);
             // Invoke callback and let it do something for us.
             self.callback.unmap(page_table, page.start_address());
         }
@@ -138,18 +183,10 @@ impl Arena {
 
     /// Returns true if this arena overlaps with [start, end].
     pub fn overlap_with(&self, range: &Range<u64>) -> bool {
-        let self_start = Page::<Size4KiB>::containing_address(VirtAddr::new(self.range.start))
-            .start_address()
-            .as_u64();
-        let self_end = Page::<Size4KiB>::containing_address(VirtAddr::new(self.range.end))
-            .start_address()
-            .as_u64();
-        let other_start = Page::<Size4KiB>::containing_address(VirtAddr::new(range.start))
-            .start_address()
-            .as_u64();
-        let other_end = Page::<Size4KiB>::containing_address(VirtAddr::new(range.end))
-            .start_address()
-            .as_u64();
+        let self_start = page!(self.range.start).start_address().as_u64();
+        let self_end = page!(self.range.end).start_address().as_u64();
+        let other_start = page!(range.start).start_address().as_u64();
+        let other_end = page!(range.end).start_address().as_u64();
 
         !(self_end <= other_start || self_start >= other_end)
     }
@@ -164,13 +201,9 @@ impl Arena {
         let arena_end = self.range.end;
 
         // Get page start and end regions.
-        let min = (ptr as u64).max(
-            Page::<Size4KiB>::containing_address(VirtAddr::new(arena_start))
-                .start_address()
-                .as_u64(),
-        );
+        let min = (ptr as u64).max(page!(arena_start).start_address().as_u64());
         let max = ((ptr as u64) + size as u64).min(
-            Page::<Size4KiB>::containing_address(VirtAddr::new(arena_end + PAGE_SIZE as u64 - 1))
+            page!(arena_end + PAGE_SIZE as u64 - 1)
                 .start_address()
                 .as_u64(),
         );
@@ -265,8 +298,8 @@ where
         } = self;
 
         for item in self.arena.iter() {
-            let page_start = Page::<Size4KiB>::containing_address(VirtAddr::new(item.range.start));
-            let page_end = Page::<Size4KiB>::containing_address(VirtAddr::new(item.range.end));
+            let page_start = page!(item.range.start);
+            let page_end = page!(item.range.end);
 
             for page in Page::range_inclusive(page_start, page_end) {
                 item.callback.clone_and_map(
@@ -298,7 +331,7 @@ where
             .map(|addr| page_mask(addr + PAGE_SIZE as u64 - 1))
             .find(|addr| self.is_free(*addr, size))
             .ok_or(Errno::ENOMEM)
-            .map(VirtAddr::new)
+            .map(|addr| virt!(addr))
     }
 
     /// Returns true if `self.arena` has some memory regions overlapping with `other`.

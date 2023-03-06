@@ -88,7 +88,7 @@ impl IoApic {
     pub fn set_irq_vector(&self, irq: u8, irq_vec: u8) {
         let mut old = self.read(ioapic_rediration_table(irq));
         let old_vec = old.get_bits(0..8);
-        if old_vec < 0x20 || old_vec > 0xfe {
+        if !(0x20..=0xfe).contains(&old_vec) {
             old |= REDIR_DISABLED;
         }
 

@@ -8,8 +8,7 @@ cfg_if::cfg_if! {
         pub mod x2apic;
         pub use x2apic::*;
     } else {
-        pub mod xapic;
-        pub use xapic::*;
+        compile_error!("x2APIC is currently unimplemented.");
     }
 }
 

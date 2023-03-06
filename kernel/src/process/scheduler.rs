@@ -8,7 +8,7 @@ use core::{future::Future, pin::Pin, task::Context};
 
 use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
 use lazy_static::lazy_static;
-use log::warn;
+use log::{info, warn};
 use woke::{waker_ref, Woke};
 
 use crate::sync::mutex::SpinLock as Mutex;
@@ -194,10 +194,15 @@ impl Scheduler {
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        info!(
+            "spawn(): the scheduler {:?} is spawning new thread!",
+            self.algorithm.ty()
+        );
+
         self.add_task(
             Task {
                 future: Mutex::new(Box::pin(future)),
-                state: Mutex::new(ThreadState::RUNNING),
+                state: Mutex::new(ThreadState::WAITING),
             },
             task_info,
         );
@@ -214,7 +219,7 @@ impl Scheduler {
 
             // Make an explicit poll.
             let waker = waker_ref(&task);
-            let mut ctx = Context::from_waker(&*waker);
+            let mut ctx = Context::from_waker(&waker);
             let poll_state = task.future.lock().as_mut().poll(&mut ctx);
         }
     }

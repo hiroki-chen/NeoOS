@@ -255,7 +255,7 @@ impl EntryBehaviors for PageEntryWrapper {
     }
 
     fn set_mmio(&mut self, value: u8) {
-        error!("Do no set MMIO for entries!");
+        return;
     }
 
     fn set_present(&mut self, value: bool) {
@@ -370,8 +370,11 @@ impl Drop for KernelPageTable {
 
 impl PageTableBehaviors for KernelPageTable {
     fn remap_kernel(&mut self) {
+        debug!("remap_kernel(): remapping the kernel...");
+
         let page_table = get_page_table();
 
+        // FIXME: Page fault here.
         let kernel_space = page_table[KERNEL_PM4 as usize].clone();
         let physical_space = page_table[PHYSICAL_MEMORY_PM4 as usize].clone();
         let new_table = unsafe { &mut *frame_to_page_table(self.page_table_frame) };
@@ -383,6 +386,8 @@ impl PageTableBehaviors for KernelPageTable {
             physical_space.addr(),
             physical_space.flags() | PageTableFlags::GLOBAL,
         );
+
+        debug!("remap_kernel(): finished.");
     }
 
     fn map(&mut self, addr: VirtAddr, target: PhysAddr) -> &mut dyn EntryBehaviors {

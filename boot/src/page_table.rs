@@ -182,6 +182,7 @@ pub fn enable_write_protect() {
     }
 }
 
+#[allow(unused)]
 pub fn enable_global() {
     unsafe {
         Cr4::update(|f| f.insert(Cr4Flags::PAGE_GLOBAL));

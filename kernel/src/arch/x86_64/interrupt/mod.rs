@@ -107,7 +107,10 @@ use crate::{
     irq::{IrqType, IRQ_TYPE},
 };
 
-use self::pic::{MASTER_PIC, SLAVE_PIC};
+use self::{
+    pic::{MASTER_PIC, SLAVE_PIC},
+    syscall::__sysreturn,
+};
 
 use super::apic::X2Apic;
 
@@ -277,6 +280,13 @@ impl Context {
     /// This structure is stored in `FSBASE`.
     pub fn tls(&self) -> u64 {
         self.regs.fs
+    }
+
+    /// Execute this user context.
+    pub fn start(&mut self) {
+        unsafe {
+            __sysreturn(self);
+        }
     }
 }
 

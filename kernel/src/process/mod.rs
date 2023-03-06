@@ -110,8 +110,8 @@ pub fn register(process: Arc<Mutex<Process>>, id: u64) {
 }
 
 pub fn search_by_id(id: u64) -> KResult<Arc<Mutex<Process>>> {
-    let table = KERNEL_PROCESS_LIST.read();
-    table
+    KERNEL_PROCESS_LIST
+        .read()
         .iter()
         .find(|item| item.1.lock().process_id == id)
         .map(|(_, item)| item.clone())
@@ -119,8 +119,8 @@ pub fn search_by_id(id: u64) -> KResult<Arc<Mutex<Process>>> {
 }
 
 pub fn search_by_group_id(id: u64) -> Vec<Arc<Mutex<Process>>> {
-    let table = KERNEL_PROCESS_LIST.read();
-    table
+    KERNEL_PROCESS_LIST
+        .read()
         .iter()
         .filter(|item| item.1.lock().process_group_id == id)
         .map(|(_, item)| item.clone())
@@ -128,8 +128,8 @@ pub fn search_by_group_id(id: u64) -> Vec<Arc<Mutex<Process>>> {
 }
 
 pub fn search_by_thread(id: u64) -> KResult<Arc<Mutex<Process>>> {
-    let mut table = KERNEL_PROCESS_LIST.read();
-    table
+    KERNEL_PROCESS_LIST
+        .read()
         .iter()
         .find(|(_, item)| item.lock().threads.contains(&id))
         .map(|(_, item)| item.clone())

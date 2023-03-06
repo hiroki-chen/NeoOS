@@ -1,6 +1,9 @@
 //! Rust port of linux/arch/x86/cpu.c
 
-use core::sync::atomic::AtomicUsize;
+use core::{
+    arch::x86_64::{_fxrstor64, _fxsave64},
+    sync::atomic::AtomicUsize,
+};
 
 use alloc::{boxed::Box, format, string::String, vec::Vec};
 
@@ -45,6 +48,71 @@ pub static mut CPUS: [spin::Once<AbstractCpu>; MAX_CPU_NUM] = {
     const CPU: spin::Once<AbstractCpu> = spin::Once::new();
     [CPU; MAX_CPU_NUM]
 };
+
+/// The Floating-Point (FP) unit is a specialized hardware component that performs floating-point arithmetic operations,
+/// such as addition, subtraction, multiplication, and division, on real numbers. The FP unit is designed to handle
+/// operations involving floating-point numbers with higher precision than the regular integer arithmetic units in the
+/// processor.
+#[derive(Debug, Copy, Clone, Default)]
+#[repr(C, align(8))]
+pub struct FpState {
+    /// x87 FPU Control Word (16 bits). See Figure 8-6 in the Intel® 64 and IA-32 Architectures Software Developer’s Manual
+    /// Volume 1, for the layout of the x87 FPU control word.
+    pub fcw: u16,
+    /// x87 FPU Status Word (16 bits).
+    pub fsw: u16,
+    /// x87 FPU Tag Word (8 bits) + reserved (8 bits).
+    pub ftw: u16,
+    /// x87 FPU Opcode (16 bits).
+    pub fop: u16,
+    /// x87 FPU Instruction Pointer Offset ([31:0]). The contents of this field differ depending on the current addressing
+    /// mode (32-bit, 16-bit, or 64-bit) of the processor when the FXSAVE instruction was executed: 32-bit mode — 32-bit IP
+    /// offset. 16-bit mode — low 16 bits are IP offset; high 16 bits are reserved. 64-bit mode with REX.W — 64-bit IP
+    /// offset. 64-bit mode without REX.W — 32-bit IP offset.
+    pub fip: u32,
+    /// x87 FPU Instruction Pointer Selector (16 bits) + reserved (16 bits).
+    pub fcs: u32,
+    /// x87 FPU Instruction Operand (Data) Pointer Offset ([31:0]). The contents of this field differ depending on the
+    /// current addressing mode (32-bit, 16-bit, or 64-bit) of the processor when the FXSAVE instruction was executed:
+    /// 32-bit mode — 32-bit DP offset. 16-bit mode — low 16 bits are DP offset; high 16 bits are reserved. 64-bit mode
+    /// with REX.W — 64-bit DP offset. 64-bit mode without REX.W — 32-bit DP offset.
+    pub fdp: u32,
+    /// x87 FPU Instruction Operand (Data) Pointer Selector (16 bits) + reserved.
+    pub fds: u32,
+    /// MXCSR Register State (32 bits).
+    pub mxcsr: u32,
+    /// This mask can be used to adjust values written to the MXCSR register, ensuring that reserved bits are set to 0. Set
+    /// the mask bits and flags in MXCSR to the mode of operation desired for SSE and SSE2 SIMD floating-point instructions.
+    pub mxcsr_mask: u32,
+    /// x87 FPU or MMX technology registers. Layout: [12 .. 9 | 9 ... 0] LHS = reserved; RHS = mm.
+    pub mm: [u128; 8],
+    /// XMM registers (128 bits per field).
+    pub xmm: [u128; 16],
+}
+
+impl FpState {
+    pub fn new() -> Self {
+        Self {
+            // RESET_VALUE = 0x1f80
+            mxcsr: 0x1f80,
+            // Initial value for fctrl register.
+            mxcsr_mask: 0x037f,
+            ..Default::default()
+        }
+    }
+
+    pub fn fxsave(&mut self) {
+        unsafe {
+            _fxsave64(self as *mut Self as *mut u8);
+        }
+    }
+
+    pub fn fxrstor(&self) {
+        unsafe {
+            _fxrstor64(self as *const Self as *const u8);
+        }
+    }
+}
 
 /// The Rust-like representation of the header stored in `ap_trampoline.S`.
 ///
@@ -152,20 +220,28 @@ impl AbstractCpu {
     pub fn pop_event(&self) {
         let cbs = {
             let mut lock = self.ipi_queue.lock();
-            core::mem::replace(lock.as_mut(), Vec::new())
+            core::mem::take::<Vec<_>>(lock.as_mut())
         };
         cbs.iter().for_each(|cb| cb());
     }
 
     pub fn restore_stack(&self, rsp: u64) {
-        // A trick that bypasses the Rust borrowing checker.
+        assert!(
+            !(self.tss_addr as *const u8).is_null(),
+            "restore_stack(): internal error due to invalid tss address."
+        );
+
+        // A trick that bypasses the Rust borrow checker.
         let tss = unsafe { &mut *(self.tss_addr as *mut TaskStateSegment) };
-        // When an interrupt occurs, the processor saves the current execution context onto the current stack and
-        // switches to the corresponding IST stack. This allows the processor to handle the interrupt in a safe and
-        // efficient manner, without the risk of overwriting important data on the current stack.
+        // The Privilege Stack Table (PST) is another feature of the x86 architecture that is related to the Interrupt
+        // Stack Table (IST). The PST is used to switch between different privilege levels during system calls or
+        // interrupts.
         //
-        // When it finishes, we need to restore the previous stack pointer.
-        tss.interrupt_stack_table[0] = virt!(rsp);
+        // When a user-level program makes a system call or an interrupt occurs, the processor switches from user mode
+        // to kernel mode. This involves changing the privilege level of the processor from user-level privilege (Ring 3)
+        // to kernel-level privilege (Ring 0). The PST provides a separate stack for each privilege level, allowing the
+        // processor to switch between them as needed.
+        tss.privilege_stack_table[0] = virt!(rsp);
     }
 }
 
