@@ -148,9 +148,6 @@ pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
         );
     }
 
-    // TODO: Initialize interrupt here.
-    // TODO: Configure cpus; initialize IRQs by LAPIC.
-
     AP_UP_NUM.fetch_add(0x1, Ordering::Relaxed);
     loop {}
 }

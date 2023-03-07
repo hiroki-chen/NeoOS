@@ -111,6 +111,7 @@ pub trait EntryBehaviors: Debug {
     fn set_mmio(&mut self, value: u8);
 
     fn flags(&self) -> PageTableFlags;
+    fn phys_addr(&self) -> PhysAddr;
 }
 
 pub trait PageTableBehaviors {
@@ -201,6 +202,10 @@ impl Debug for PageEntryWrapper {
 }
 
 impl EntryBehaviors for PageEntryWrapper {
+    fn phys_addr(&self) -> PhysAddr {
+        self.0.addr()
+    }
+
     fn update(&mut self) {
         let addr = self.1.start_address();
         flush(addr);
@@ -374,9 +379,11 @@ impl PageTableBehaviors for KernelPageTable {
 
         let page_table = get_page_table();
 
-        // FIXME: Page fault here.
-        let kernel_space = page_table[KERNEL_PM4 as usize].clone();
-        let physical_space = page_table[PHYSICAL_MEMORY_PM4 as usize].clone();
+        let kernel_sapce_addr = phys_to_virt(&page_table[KERNEL_PM4 as usize] as *const _ as u64);
+        let physical_space_addr =
+            phys_to_virt(&page_table[PHYSICAL_MEMORY_PM4 as usize] as *const _ as u64);
+        let kernel_space = unsafe { &*(kernel_sapce_addr as *const PageTableEntry) };
+        let physical_space = unsafe { &*(physical_space_addr as *const PageTableEntry) };
         let new_table = unsafe { &mut *frame_to_page_table(self.page_table_frame) };
         new_table[KERNEL_PM4 as usize].set_addr(
             kernel_space.addr(),
@@ -419,7 +426,7 @@ impl PageTableBehaviors for KernelPageTable {
     }
 
     fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors> {
-        debug!(
+        trace!(
             "get_entry(): getting entry for {:#x} with current page table located at {:#x}",
             addr.as_u64(),
             self.page_table_frame.start_address().as_u64()
@@ -442,7 +449,7 @@ impl PageTableBehaviors for KernelPageTable {
                 return Err(Errno::EEXIST);
             }
 
-            debug!("get_entry(): visiting {:#x?}", entry);
+            trace!("get_entry(): visiting {:#x?}", entry);
 
             // Retrive page table at the current level.
             page_table = frame_to_page_table(entry.frame().unwrap());

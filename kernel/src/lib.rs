@@ -91,9 +91,8 @@ pub fn kmain() -> ! {
     if cpu_id() == *BSP_ID.get().unwrap() as usize {
         info!("kmain(): kernel main procedure started.");
         print_banner();
+        crate::process::thread::debug_threading();
     }
-
-    crate::process::thread::debug_threading();
 
     loop {
         scheduler::FIFO_SCHEDULER.start_schedule();

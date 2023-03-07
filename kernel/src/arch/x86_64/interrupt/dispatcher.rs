@@ -9,7 +9,7 @@ use crate::{
         cpu::AbstractCpu,
         interrupt::{
             eoi, ipi::IpiType, timer::handle_timer, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT,
-            IRQ_MAX, IRQ_MIN, PAGE_FAULT_INTERRUPT, TIMER_INTERRUPT,
+            GENERAL_PROTECTION_INTERRUPT, IRQ_MAX, IRQ_MIN, PAGE_FAULT_INTERRUPT, TIMER_INTERRUPT,
         },
         mm::pretty_interpret,
     },
@@ -30,6 +30,10 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
     // Dispatch based on tf.trap_num.
     match tf.trap_num {
         BREAKPOINT_INTERRUPT => dump_all(tf),
+        GENERAL_PROTECTION_INTERRUPT => {
+            error!("__trap_dispatcher(): segmentation fault!");
+            arch::cpu::die()
+        }
         PAGE_FAULT_INTERRUPT => page_fault(tf),
         DOUBLE_FAULT_INTERRUPT => {
             error!("__trap_dispatcher(): interrupt cannot be handled! CPU is dead.");

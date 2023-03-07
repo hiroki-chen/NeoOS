@@ -314,7 +314,11 @@ where
     }
 
     fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {
-        let entry = page_table.map(addr, PhysAddr::new(0));
+        let frame = self
+            .frame_allocator
+            .alloc()
+            .expect("map(): no physical memory available!");
+        let entry = page_table.map(addr, frame);
         entry.set_present(false);
         entry.set_execute(!flags.non_executable);
         entry.set_writable(flags.writable);
@@ -326,7 +330,7 @@ where
     fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {
         let entry = page_table
             .get_entry(addr)
-            .expect("unmap(): failed to get entry");
+            .expect("unmap(): failed to get entry; maybe unmapped?");
         self.frame_allocator.dealloc(addr.as_u64()).unwrap();
         page_table.unmap(addr);
     }

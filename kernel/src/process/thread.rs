@@ -23,11 +23,11 @@ use crate::{
     arch::{
         cpu::{cpu_id, FpState, MAX_CPU_NUM},
         interrupt::{Context, PAGE_FAULT_INTERRUPT},
-        mm::paging::{get_pf_addr, handle_page_fault, KernelPageTable},
+        mm::paging::{get_pf_addr, handle_page_fault, KernelPageTable, PageTableBehaviors},
         PAGE_SIZE,
     },
     error::{Errno, KResult},
-    memory::{KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
+    memory::{get_physical_address, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
     mm::{callback::SystemArenaCallback, Arena, ArenaFlags, FutureWithPageTable, MemoryManager},
     signal::{SignalSet, Stack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
@@ -43,15 +43,13 @@ global_asm!(
     r#"
 .global __debug_thread
 __debug_thread:
+    hlt
     mov rcx, 100
 
-__do_loop:
     xor rax, rax
     mov rax, rcx
 
     sub rcx, 1
-    cmp rcx, 0
-    jge __do_loop
 "#
 );
 
@@ -174,7 +172,14 @@ impl Thread {
     ///
     /// This function is unsafe because `inst_addr` must be valid.
     pub unsafe fn from_raw(inst_addr: u64) -> KResult<Arc<Thread>> {
-        let mut vm = MemoryManager::new(false);
+        let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
+        let func_phys_addr = get_physical_address(__debug_thread as u64);
+        info!(
+            "from_raw(): the test function's physical address is {:#x}",
+            func_phys_addr
+        );
+        vm.page_table().map(virt!(inst_addr), phys!(func_phys_addr));
+
         let stack_top = Self::prepare_user_stack(&mut vm)? as u64;
         let vm = Arc::new(Mutex::new(vm));
 
@@ -321,11 +326,11 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading() {
     // TODO: We may need to copy to user space first?
-    // FIXME: Something triggered page fault, while the address seems very weird.
     info!(
         "debug_threading(): creating a dummy thread. RIP @ {:#x}",
         __debug_thread as u64
     );
-    let thread = unsafe { Thread::from_raw(__debug_thread as u64) }.unwrap();
+
+    let thread = unsafe { Thread::from_raw(0x400000u64) }.unwrap();
     spawn(thread).unwrap();
 }

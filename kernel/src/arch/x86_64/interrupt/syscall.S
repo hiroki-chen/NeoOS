@@ -105,7 +105,7 @@ __sysreturn:
   # Resume the context.
   cli
   mov ecx, 0xC0000100
-  wrmsr
+  rdmsr
 
   shl rdx, 0x20
   or rax, rdx

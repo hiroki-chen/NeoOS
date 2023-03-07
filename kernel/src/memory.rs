@@ -34,6 +34,7 @@ use num_traits::AsPrimitive;
 
 use crate::{
     arch::{
+        mm::paging::{KernelPageTable, PageTableBehaviors},
         KERNEL_BASE, KERNEL_HEAP_SIZE, PAGE_MASK, PAGE_SIZE, PHYSICAL_MEMORY_START, USER_MEM_TOP,
     },
     error::{Errno, KResult},
@@ -46,7 +47,7 @@ use alloc::{
 
 use buddy_system_allocator::Heap;
 use log::{info, warn};
-use x86_64::PhysAddr;
+use x86_64::{PhysAddr, VirtAddr};
 
 pub const USER_STACK_SIZE: usize = 0x0040_0000;
 pub const USER_STACK_START: usize = 0x0000_8000_0000_0000 - USER_STACK_SIZE;
@@ -493,7 +494,7 @@ pub unsafe fn copy_from_user<T>(src: *const T) -> KResult<T> {
     }
 }
 
-/// Copies a buffer from the user space into kernel space. This is useful for kernel modules / drivers.
+/// Copies a buffer to the user space into kernel space. This is useful for kernel modules / drivers.
 pub unsafe fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {
     // Check the memory address first.
     let kern_addr = src as u64;
@@ -569,6 +570,15 @@ pub unsafe fn kmalloc(size: usize) -> KResult<*mut u8> {
 
 pub unsafe fn kfree(ptr: *mut u8) {
     unimplemented!()
+}
+
+/// Unlike [`virt_to_phys`], this function converts non-linear mapping into a physical address by page table walking.
+pub fn get_physical_address(virt: u64) -> u64 {
+    KernelPageTable::active()
+        .get_entry(VirtAddr::new(virt))
+        .unwrap()
+        .phys_addr()
+        .as_u64()
 }
 
 /// Dangerous operation: Read something typed `T` from a given raw pointer at `offset`. This function does not
