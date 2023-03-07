@@ -7,8 +7,7 @@ import sys
 import shutil
 import subprocess
 
-# If this is python2, check if python3 is available and re-execute with that
-# interpreter. Only python3 allows downloading CI LLVM.
+# If this is python2, check if python3 is available and re-execute with that iinterpreter.
 #
 # This matters if someone's system `python` is python2.
 if sys.version_info.major < 3:
@@ -24,7 +23,13 @@ if sys.version_info.major < 3:
 # Check if nasm is installed.
 if shutil.which('nasm') is None:
     print('Installing `nasm`...')
-    subprocess.run('sudo install -y nasm'.split())
+    subprocess.run('sudo apt install -y nasm'.split())
+
+# Check if QEMU is installed.
+if shutil.which('qemu-system-x86_64') is None:
+    print('Installing `qemu`, `OVMF` and KVM environment.')
+    subprocess.run('sudo apt install -y qemu-system ovmf qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils'.split())
+    subprocess.run('sudo adduser `id -un` kvm'.split())
 
 # Check if rust is installed.
 path = os.environ['PATH']
