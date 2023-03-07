@@ -1,0 +1,6 @@
+[book]
+authors = ["Hiroki Chen"]
+language = "en"
+multilingual = false
+src = "src"
+title = "The NeoOS Toy Kernel"

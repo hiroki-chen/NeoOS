@@ -1,0 +1,6 @@
+[book]
+authors = ["Hiroki Chen"]
+language = "zh-cn"
+multilingual = false
+src = "src"
+title = "NeoOS 内核简介"
