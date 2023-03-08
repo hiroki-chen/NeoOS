@@ -2,6 +2,16 @@
 
 This kernel is built with Rust (nightly channel); you must install the corresponding toolchain first. Also, the emulator QEMU must be installed, and KVM support should be enabled (you may also need to add yourself into KVM group and then do `su - $USER`).
 
+## Build Rust Documentations
+
+You can get the documentation via
+
+```shell
+cargo doc --target-dir=doc --no-deps
+```
+
+which outputs the doc to `./doc/doc` where you can check the documentation by the crate name. For example, you want to check `kernel`'s doc, you may open `./doc/doc/kernel/index.html`.
+
 ## UEFI and Bootloader
 
 This kernel can boot itself by the UEFI crate provided by the `uefi-rs` crate. The UEFI support allows us to conveniently use some basic OS-like tools to do some pre-boot preparations. For example, we can use the simple filesystem to load the kernel image from the disk into the main memory. Also, note that the page table mapping in the UEFI environment is *identical*; that is, the physical address is its virtual address. The NeoOS kernel will remap its component and build a new page table for itself. Then it maps the old virtual address into the kernel range.
