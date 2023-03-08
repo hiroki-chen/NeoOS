@@ -7,7 +7,7 @@ use boot_header::{Header, MemoryDescriptor, MemoryType};
 use log::{debug, error, info, trace, warn};
 use x86_64::{
     instructions::tlb::flush,
-    registers::control::{Cr2, Cr3, Cr3Flags},
+    registers::control::{Cr0, Cr0Flags, Cr2, Cr3, Cr3Flags},
     structures::paging::{
         mapper::PageTableFrameMapping,
         page_table::{PageTableEntry, PageTableLevel},
@@ -568,6 +568,33 @@ pub fn init_mm(header: &'static Header) -> KResult<()> {
 /// This function is a wrapper for fetching that value.
 pub fn get_pf_addr() -> u64 {
     Cr2::read_raw()
+}
+
+/// Executes a high-order function `f` with write protection disabled. Useful when you want to modify the kernel's
+/// page table. This function will re-enable write protection after `f` finishes.
+///
+/// # Safety
+///
+/// This function is unsafe because modifying the page table in use can cause problems if one does not know what she/he
+/// is doing now. The permissions are **important**. Unless needed (e.g., debugging), do not disable protection.
+/// 
+/// # Examples
+/// 
+/// ```rust
+/// kernel::arch::mm::paging::disable_protection(|| {
+///     let mut pt = kernel::arch::mm::paging::KernelPageTable::active();
+///     let entry = pt.get_entry(virt!(0x10000));
+///     entry.set_user(true);
+///     entry.update();
+/// });
+/// ```
+pub unsafe fn disable_protection<F>(f: F)
+where
+    F: FnOnce(),
+{
+    Cr0::update(|flag| flag.remove(Cr0Flags::WRITE_PROTECT));
+    f();
+    Cr0::update(|flag| flag.insert(Cr0Flags::WRITE_PROTECT));
 }
 
 /// Set the page table by overwriting the `cr3` value.

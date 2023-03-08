@@ -1,5 +1,4 @@
-//! Implements all the utility functions related to debugging. Typically the `backtrace`
-//! feature.
+//! Implements all the utility functions related to debugging. Typically the `backtrace` feature.
 //!
 //! This library is meant to supplement the `RUST_BACKTRACE=1` support of the
 //! standard library by allowing an acquisition of a backtrace at runtime
@@ -151,6 +150,7 @@ unsafe impl Sync for Frame {}
 /// Dumps all the control registers.
 ///
 /// # Note
+/// 
 /// Only works if the log level is set to `DEBUG` or lower.
 pub fn dump_cr_regs() {
     let cr0 = Cr0::read();

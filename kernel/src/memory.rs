@@ -151,7 +151,7 @@ where
 
 /// A bitmap consisting of only 16 bits => the minimal one.
 /// BitAlloc16 acts as the leaf (except the leaf bits of course) nodes in the segment trees.
-/// An adaptive port of https://github.com/rcore-os/bitmap-allocator/blob/main/src/lib.rs
+/// An adaptive port of <https://github.com/rcore-os/bitmap-allocator/blob/main/src/lib.rs>
 #[derive(Default)]
 pub struct BitAlloc16bit(u16);
 
@@ -538,14 +538,22 @@ where
     (addr.as_() & PAGE_MASK).as_()
 }
 
+/// Asks the [`KernelFrameAllocator`] to allocate exactly one physical frame for storing the data.
+/// 
+/// The caller may need to map the physical frame to a valid virtual address.
 pub fn allocate_frame() -> KResult<PhysAddr> {
     KernelFrameAllocator.alloc()
 }
 
+/// Asks the [`KernelFrameAllocator`] to allocate exactly a continuous area of physical frames for storing the data.
+/// Also, the caller can choose an appropriate value of `align_log2` that indicates the alignment of the physical frame.
+/// 
+/// The caller may need to map the physical frame to a valid virtual address.
 pub fn allocate_frame_contiguous(size: usize, align_log2: usize) -> KResult<PhysAddr> {
     KernelFrameAllocator.alloc_contiguous(size, align_log2)
 }
 
+/// Drops a physical frame and adds it to the bitmap. An invalid input is allowed.
 pub fn deallocate_frame(addr: u64) -> KResult<()> {
     KernelFrameAllocator.dealloc(addr)
 }
@@ -554,7 +562,17 @@ pub fn deallocate_frame(addr: u64) -> KResult<()> {
 /// a contiguous *physical* memory region.
 ///
 /// # Safety
+/// 
 /// This function is unsafe because the allocator must ensure that the memory is dropped.
+/// 
+/// # Examples
+/// 
+/// ```rust
+/// let ptr = kmalloc(0x1000).expect("kmalloc(): memory allocation failed!");
+/// unsafe {
+///     core::ptr::write_bytes(ptr, 1u8, 0x1000);
+/// }
+/// ```
 pub unsafe fn kmalloc(size: usize) -> KResult<*mut u8> {
     if size >= 0x0001_0000 {
         Err(Errno::ENOMEM)
@@ -573,6 +591,20 @@ pub unsafe fn kfree(ptr: *mut u8) {
 }
 
 /// Unlike [`virt_to_phys`], this function converts non-linear mapping into a physical address by page table walking.
+/// 
+/// If you have an address that does not belong to the physical mapping area (e.g., you want to determine the
+/// physical address of an instruction in the kernel space), you must ask this function for the physical address.
+/// 
+/// Note however, that this function can only called if you have set a valid page table.
+/// 
+/// # Examples
+/// 
+/// ```rust
+/// let inst_addr = some_function as u64;
+/// let phys_addr = get_physical_address(inst_addr);
+/// 
+/// println!("addr: {:#x}", phys_addr);
+/// ```
 pub fn get_physical_address(virt: u64) -> u64 {
     KernelPageTable::active()
         .get_entry(VirtAddr::new(virt))
@@ -591,12 +623,24 @@ pub fn get_physical_address(virt: u64) -> u64 {
 /// Just note that the pointer `ptr` does not require to be aligned.
 ///
 /// # Safety
+/// 
 /// This function requires that:
 /// * The pointer itself points to a valid address
 /// * The offset must not exceed the length of the object `ptr` represents
 /// * The type `T` is statically sized; in other words, you must ensure there is *no* fat pointer.
 ///   For example, [`u64`] is statically sized, and so is function pointer, but things like `dyn Trait`
 ///   are not since they must be stored within a [`alloc::boxed::Box`] due to heap allocations.
+/// 
+/// # Examples
+/// 
+/// ```rust
+/// let ptr = 0xdeadbeef;
+/// let data: Vec<u8> = unsafe {
+///     kernel::memory::read_at(ptr as *const _, 0x0)
+/// };
+/// 
+/// println!("{:?}", data);
+/// ```
 #[cfg(target_pointer_width = "64")]
 pub unsafe fn read_at<T>(ptr: *const c_void, offset: usize) -> &'static T
 where
@@ -627,8 +671,21 @@ where
 /// Any other orderings are ignored and converted to `unordered`.
 ///
 /// # Safety
+/// 
 /// This function is unsafe because we have no guarantee that `ptr` points to a valid memory region; it is the caller's
 /// responsibility to check this address is valid.
+/// 
+/// # Examples
+/// 
+/// ```rust
+/// let ptr = 0xdeadbeef;
+/// 
+/// ap_start(); // From this timepoint, other cores are awake.
+/// 
+/// unsafe {
+///     kernel::memory::atomic_memset::<ApHeader>(ptr as *const _, 0u8, core::sync::atomic::Ordering::SeqCst);
+/// }
+/// ```
 pub unsafe fn atomic_memset<T>(ptr: *const c_void, val: u8, ordering: Ordering)
 where
     T: 'static + Sized,

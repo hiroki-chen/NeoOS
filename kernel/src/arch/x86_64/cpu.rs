@@ -54,7 +54,7 @@ pub static mut CPUS: [spin::Once<AbstractCpu>; MAX_CPU_NUM] = {
 /// operations involving floating-point numbers with higher precision than the regular integer arithmetic units in the
 /// processor.
 #[derive(Debug, Copy, Clone, Default)]
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 pub struct FpState {
     /// x87 FPU Control Word (16 bits). See Figure 8-6 in the Intel® 64 and IA-32 Architectures Software Developer’s Manual
     /// Volume 1, for the layout of the x87 FPU control word.
@@ -88,10 +88,14 @@ pub struct FpState {
     pub mm: [u128; 8],
     /// XMM registers (128 bits per field).
     pub xmm: [u128; 16],
+    /// reserved.
+    pub _pad: [u64; 12],
 }
 
 impl FpState {
     pub fn new() -> Self {
+        assert!(core::mem::size_of::<Self>() == 0x200);
+
         Self {
             // RESET_VALUE = 0x1f80
             mxcsr: 0x1f80,

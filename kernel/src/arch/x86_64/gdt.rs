@@ -118,7 +118,7 @@ pub unsafe fn init_gdt() -> KResult<()> {
     let mut tss = Box::new(TaskStateSegment::new());
     // Allocate stack for trap from user
     let trap_stack_top = Box::leak(Box::new([0u8; PAGE_SIZE])).as_ptr() as u64 + PAGE_SIZE as u64;
-    tss.privilege_stack_table[0] = VirtAddr::new(trap_stack_top);
+    tss.privilege_stack_table[0] = virt!(trap_stack_top);
     let tss: &'static _ = Box::leak(tss);
     let (tss0, tss1) = match Descriptor::tss_segment(tss) {
         Descriptor::SystemSegment(tss0, tss1) => (tss0, tss1),
@@ -138,7 +138,7 @@ pub unsafe fn init_gdt() -> KResult<()> {
 
     // Step 4: Finally, we load it into the processor.
     let gdt = DescriptorTablePointer {
-        base: VirtAddr::new(gdt_slice.as_ptr() as u64),
+        base: virt!(gdt_slice.as_ptr() as u64),
         limit: gdt_slice.len() as u16 * 8 - 1,
     };
     let tr = SegmentSelector::new(gdt_len as u16, PrivilegeLevel::Ring0);

@@ -1,3 +1,5 @@
+//! A trigger primitive that executes a callback upon timeout.
+
 use core::{cmp::Ordering, time::Duration};
 
 use alloc::{boxed::Box, collections::BinaryHeap};

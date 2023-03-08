@@ -284,6 +284,12 @@ impl Context {
     }
 
     /// Execute this user context.
+    ///
+    /// Why do we use a [`__sysreturn`] to jump to the user space? Thsi is because the only way that allows us
+    /// to switch the privilege level is **interrupt**. Normally, interrupt and interrupt return should work in
+    /// tandem. The first user-level process created by the kernel, however, does not invoke interrupt since
+    /// we are already in the kernel! Thus, we need to explicitly invoke `IRETD` (or `IRETQ` on x64) to jump back
+    /// to the user mode and resume execution with the stack-stored register values.
     pub fn start(&mut self) {
         unsafe {
             // FIXME: IRETQ makes qemu quit?

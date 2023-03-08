@@ -53,7 +53,9 @@ impl Log for EnvLogger {
     }
 }
 
-/// Initialize the envrionment logger.
+/// Initializes the envrionment logger.
+/// 
+/// The logger relies on the [log](https://crates.io/crates/log) crate for providing all the logging macros.
 pub fn init_env_logger() -> KResult<()> {
     static ENV_LOGGER: EnvLogger = EnvLogger;
     // Register this logger into `log`.
@@ -97,6 +99,11 @@ macro_rules! println {
     }};
 }
 
+/// From std::print!
+/// 
+/// Prints to the standard output, *without* a newline.
+/// 
+/// Similar to its [`println!`] coutnerpart, this macro will also lock the output on each call.
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {{
@@ -132,6 +139,7 @@ fn log_level_to_color_code(level: Level) -> u8 {
     }
 }
 
+/// Prints the kernel banner to the output.
 pub fn print_banner() {
     let strs = BANNER.split('\n').collect::<Vec<_>>();
 

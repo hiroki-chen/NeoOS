@@ -10,7 +10,7 @@
 //! defined directly on the `f64` type.
 //!
 //! We use Rust-port libm for all the floating operations.
-//! See https://crates.io/libm
+//! See <https://crates.io/libm>
 
 // Export constants.
 #[allow(deprecated, deprecated_in_future)]
