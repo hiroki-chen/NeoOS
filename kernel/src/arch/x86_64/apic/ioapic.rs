@@ -24,7 +24,7 @@ pub const REDIR_DISABLED: u32 = 0x0001_0000;
 #[inline(always)]
 fn ioapic_rediration_table(val: u8) -> u8 {
     // lower-32bits (add +1 for upper 32-bits).
-    0x10 + val << 1
+    0x10 + val * 2
 }
 
 /// The wrapper for IOAPIC.
