@@ -54,13 +54,12 @@ debug: kernel
 
 kernel: efi
 	@cd kernel && RUSTFLAGS=-g RUST_BACKTRACE=$(BACKTRACE) OS_LOG_LEVEL=$(OS_LOG_LEVEL) \
-								cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
-								--target ./x86_64.json
+								cargo build
 	@cp $(KERNEL_TARGET) $(KERNEL_IMAGE)
 
 efi:
 	@mkdir -p $(BOOT_DIR)
-	@cd boot && cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem --target x86_64-unknown-uefi
+	@cd boot && cargo build
 	@cp $(EFI_TARGET) $(EFI)
 
 run: kernel hard_disk
