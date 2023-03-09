@@ -54,7 +54,7 @@ impl Log for EnvLogger {
 }
 
 /// Initializes the envrionment logger.
-/// 
+///
 /// The logger relies on the [log](https://crates.io/crates/log) crate for providing all the logging macros.
 pub fn init_env_logger() -> KResult<()> {
     static ENV_LOGGER: EnvLogger = EnvLogger;
@@ -100,9 +100,9 @@ macro_rules! println {
 }
 
 /// From std::print!
-/// 
+///
 /// Prints to the standard output, *without* a newline.
-/// 
+///
 /// Similar to its [`println!`] coutnerpart, this macro will also lock the output on each call.
 #[macro_export]
 macro_rules! print {

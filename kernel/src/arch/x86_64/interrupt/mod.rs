@@ -231,7 +231,7 @@ pub struct GeneralRegisters {
 }
 
 /// The context for the *user* processes. It is then stored into TSS.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub struct Context {
     pub regs: GeneralRegisters,

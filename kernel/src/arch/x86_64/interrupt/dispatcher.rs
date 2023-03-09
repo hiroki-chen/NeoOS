@@ -11,13 +11,16 @@ use crate::{
             eoi, ipi::IpiType, timer::handle_timer, BREAKPOINT_INTERRUPT, DOUBLE_FAULT_INTERRUPT,
             GENERAL_PROTECTION_INTERRUPT, IRQ_MAX, IRQ_MIN, PAGE_FAULT_INTERRUPT, TIMER_INTERRUPT,
         },
-        mm::pretty_interpret,
+        mm::{
+            paging::{get_pf_addr, handle_page_fault},
+            pretty_interpret,
+        },
     },
     drivers::IRQ_MANAGER,
     process::thread::current,
 };
 
-use super::TrapFrame;
+use super::{TrapFrame, INVALID_OPCODE_INTERRUPT};
 
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
 #[no_mangle]
@@ -74,6 +77,42 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
                 )
             }
         }
+    }
+}
+
+/// The interrupt handler for user-space applications. The return value indicates whether the application can be resumed.
+/// If so, resume the context; otherwise, abort the application due to some unrecoverable errors.
+pub fn trap_dispatcher_user(tf: usize, id: usize) -> bool {
+    match tf {
+        BREAKPOINT_INTERRUPT => {
+            info!("spawn(): breakpoint!");
+            true
+        }
+
+        INVALID_OPCODE_INTERRUPT => {
+            error!("spawn(): invalid opcode.");
+            false
+        }
+        GENERAL_PROTECTION_INTERRUPT => {
+            error!("spawn(): illegal instruction.");
+            false
+        }
+        PAGE_FAULT_INTERRUPT => {
+            let cr2 = get_pf_addr();
+            info!(
+                "spawn(): thread {:#x} triggered page fault @ {:#x}",
+                id, cr2
+            );
+
+            if !handle_page_fault(cr2) {
+                // Report SEGSEV.
+                panic!("spawn(): Segmentation fault.");
+                false
+            } else {
+                true
+            }
+        }
+        tf => unimplemented!("spawn(): not supported {:#x}.", tf),
     }
 }
 

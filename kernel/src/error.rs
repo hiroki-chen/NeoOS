@@ -1,7 +1,7 @@
 use core::result::Result;
 
 /// Unix standard error codes.
-/// 
+///
 /// The `perror` tool can be used to find the error message which is associated with a given error code.
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 pub enum Errno {
@@ -51,15 +51,15 @@ pub enum Errno {
 pub type KResult<T> = Result<T, Errno>;
 
 /// Converts from [`KResult`] to the unix-like error code represented by an [`i32`].
-/// 
+///
 /// Useful in cases when the raw number of the error is needed. For example, a C function may want to invoke the Rust
 /// FFI function but it does not recognize Rust error types.
-/// 
+///
 /// # Examples
 /// ```rust
 /// let error = Err(Errno::EINVAL);
 /// let error_code = error_to_int(error);
-/// 
+///
 /// println!("My error code is {:#x}", error_code);
 /// ```
 pub fn error_to_int<T>(result: &KResult<T>) -> i32 {

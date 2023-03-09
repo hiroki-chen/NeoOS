@@ -2,6 +2,7 @@
 
 use core::{fmt::Debug, mem::ManuallyDrop};
 
+use alloc::boxed::Box;
 use boot_header::{Header, MemoryDescriptor, MemoryType};
 
 use log::{debug, error, info, trace, warn};
@@ -125,9 +126,17 @@ pub trait PageTableBehaviors {
     /// Unmap a page of virual address `addr`
     fn unmap(&mut self, addr: VirtAddr);
 
-    /// Get the page table entry of a page of virual address `addr`
+    /// Gets the page table entry of a page of virual address `addr` and performs a closure `f` on it.
     /// If its page do not exist, return `None`
-    fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors>;
+    fn get_entry_with(
+        &mut self,
+        addr: VirtAddr,
+        f: Box<dyn Fn(&mut PageTableEntry)>,
+    ) -> KResult<&mut dyn EntryBehaviors>;
+
+    fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors> {
+        self.get_entry_with(addr, Box::new(|_| {}))
+    }
 
     /// Get a mutable reference of the content of a page of virtual address `addr`
     fn get_page_slice_mut<'a>(&mut self, addr: VirtAddr) -> KResult<&'a mut [u8]>;
@@ -259,9 +268,7 @@ impl EntryBehaviors for PageEntryWrapper {
         self.0.flags().set(PageTableFlags::NO_EXECUTE, value)
     }
 
-    fn set_mmio(&mut self, value: u8) {
-        return;
-    }
+    fn set_mmio(&mut self, value: u8) {}
 
     fn set_present(&mut self, value: bool) {
         self.0.flags().set(PageTableFlags::PRESENT, value)
@@ -425,7 +432,11 @@ impl PageTableBehaviors for KernelPageTable {
             .flush();
     }
 
-    fn get_entry(&mut self, addr: VirtAddr) -> KResult<&mut dyn EntryBehaviors> {
+    fn get_entry_with(
+        &mut self,
+        addr: VirtAddr,
+        f: Box<dyn Fn(&mut PageTableEntry)>,
+    ) -> KResult<&mut dyn EntryBehaviors> {
         trace!(
             "get_entry(): getting entry for {:#x} with current page table located at {:#x}",
             addr.as_u64(),
@@ -437,6 +448,9 @@ impl PageTableBehaviors for KernelPageTable {
             // Get the index for level at `page_table_level`.
             let index = index_at_level(page_table_level, addr.as_u64());
             let entry = unsafe { &mut (&mut *page_table)[index as usize] };
+
+            // Do something with the entry.
+            f(entry);
 
             // If this is not page table entry (PTE), continue walking.
             if page_table_level == 3 {
@@ -577,9 +591,9 @@ pub fn get_pf_addr() -> u64 {
 ///
 /// This function is unsafe because modifying the page table in use can cause problems if one does not know what she/he
 /// is doing now. The permissions are **important**. Unless needed (e.g., debugging), do not disable protection.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// kernel::arch::mm::paging::disable_protection(|| {
 ///     let mut pt = kernel::arch::mm::paging::KernelPageTable::active();

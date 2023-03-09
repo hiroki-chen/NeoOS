@@ -103,10 +103,10 @@ impl Process {
     }
 }
 
-pub fn register(process: Arc<Mutex<Process>>, id: u64) {
+pub fn register(process: &Arc<Mutex<Process>>, id: u64) {
     let mut table = KERNEL_PROCESS_LIST.write();
     process.lock().process_id = id;
-    table.insert(id, process);
+    table.insert(id, process.clone());
 }
 
 pub fn search_by_id(id: u64) -> KResult<Arc<Mutex<Process>>> {

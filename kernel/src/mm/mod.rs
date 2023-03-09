@@ -72,8 +72,8 @@ impl Future for FutureWithPageTable {
         set_page_table(self.cr3);
         let poll_res = self.future.lock().as_mut().poll(cx);
 
-        if old.is_some() {
-            drop(old.unwrap());
+        if let Some(old) = old {
+            drop(old);
         }
 
         poll_res

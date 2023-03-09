@@ -16,12 +16,13 @@ use alloc::{
 use lazy_static::lazy_static;
 use log::info;
 use spin::RwLock;
+use x86_64::structures::paging::PageTableFlags;
 
 use crate::{
     arch::{
         cpu::{cpu_id, FpState, MAX_CPU_NUM},
-        interrupt::{Context, PAGE_FAULT_INTERRUPT},
-        mm::paging::{get_pf_addr, handle_page_fault, KernelPageTable},
+        interrupt::{dispatcher::trap_dispatcher_user, Context},
+        mm::paging::{disable_protection, KernelPageTable, PageTableBehaviors},
         PAGE_SIZE,
     },
     error::{Errno, KResult},
@@ -36,9 +37,20 @@ use super::{event::EventBus, register, scheduler::FIFO_SCHEDULER, Process};
 const DEBUG_THREAD_ID: u64 = 0xdeadbeef;
 const DEBUG_PROC_ID: u64 = 0xbeefdead;
 
+/// A naked function that is used to test if ring switch works. If it works, this function would trigger general
+/// protection fault (0xd) indicating that `hlt` is privileged instruction so that the user-level application is
+/// expected to abort immediately.
+///
+/// Since we haven't implemented filesystem, we cannot load the program from the filesystem. So, the solution for
+/// the time being is, to simply load the instruction from the memory and make that memory user-accessible.
+#[naked]
+unsafe extern "C" fn __debug_thread_invalid() {
+    unsafe { core::arch::asm!("hlt", options(noreturn)) }
+}
+
 #[naked]
 unsafe extern "C" fn __debug_thread() {
-    unsafe { core::arch::asm!("hlt", options(noreturn)) }
+    unsafe { core::arch::asm!("int 3", options(noreturn)) }
 }
 
 /// An enum representing the state of a thread.
@@ -134,7 +146,49 @@ impl Thread {
         // Cow the vm.
         let vm = Arc::new(Mutex::new(self.vm.lock().clone()));
 
-        todo!()
+        let mut ctx = context.clone();
+        ctx.regs.rax = 0;
+
+        let mut lock = self.parent.lock();
+        let id = find_available_tid().unwrap();
+        let forked_process = Arc::new(Mutex::new(Process {
+            process_id: id,
+            process_group_id: lock.process_group_id,
+            threads: Vec::new(),
+            vm: vm.clone(),
+            exec_path: lock.exec_path.clone(),
+            pwd: lock.pwd.clone(),
+            opened_files: BTreeMap::new(),
+            exit_code: 0,
+            event_bus: EventBus::new(),
+            futexes: BTreeMap::new(),
+            parent: (lock.process_id, Arc::downgrade(&self.parent)),
+            children: Vec::new(),
+        }));
+
+        register(&forked_process, id);
+
+        let thread = Thread {
+            id,
+            parent: forked_process,
+            inner: Arc::new(Mutex::new(ThreadInner {
+                sigmask: self.inner.lock().sigmask,
+                thread_context: Some(ThreadContext {
+                    user_context: Box::new(ctx),
+                    fp_state: Box::new(FpState::new()),
+                }),
+                sigaltstack: self.inner.lock().sigaltstack.clone(),
+            })),
+            vm,
+        }
+        .register()
+        .unwrap();
+
+        thread.parent.lock().threads.push(id);
+        lock.children
+            .push((thread.id, Arc::downgrade(&thread.parent)));
+
+        thread
     }
 
     pub fn take(&self) -> ThreadContext {
@@ -205,7 +259,7 @@ impl Thread {
 
         // Add itself into the global thread table.
         let thread_ref = thread.register()?;
-        register(thread_ref.parent.clone(), DEBUG_PROC_ID);
+        register(&thread_ref.parent, DEBUG_PROC_ID);
 
         Ok(thread_ref)
     }
@@ -272,12 +326,6 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
         .as_u64();
     let thread_clone = thread.clone();
 
-    // let mut this_context = thread.take();
-    // let ctx = &mut this_context.user_context;
-    // println!("before: {:#x?}", ctx);
-    // ctx.start();
-    // println!("after: {:#x?}", ctx);
-
     let thread_future = async move {
         loop {
             let mut ctx = thread.take();
@@ -287,25 +335,10 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
             ctx.fp_state.fxsave();
 
             // syscall / trap: anyway, a context switch happens here.
-            let tf = ctx.user_context.trapno as usize;
-            match tf {
-                PAGE_FAULT_INTERRUPT => {
-                    let cr2 = get_pf_addr();
-                    info!(
-                        "spawn(): thread {:#x} triggered page fault @ {:#x}",
-                        thread.id, cr2
-                    );
-
-                    if !handle_page_fault(cr2) {
-                        // Report SEGSEV.
-                        panic!("spawn(): Segmentation fault.");
-                    }
-                }
-                tf => unimplemented!("spawn(): not supported {:#x}.", tf),
+            if !trap_dispatcher_user(ctx.user_context.trapno as usize, thread.id as usize) {
+                break;
             }
-
             thread.restore(ctx);
-
             // Handle signal or other errors.
         }
     };
@@ -319,11 +352,27 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading() {
-    // TODO: We may need to copy to user space first?
     info!(
         "debug_threading(): creating a dummy thread. RIP @ {:#x}",
         __debug_thread as u64
     );
+
+    // HACK: Just for debugging. So we assume modifying the page table is acceptable, but it should be avoided, anyway.
+    // A normal workaround should be copy the function to the user space and construct a proper page table.
+    unsafe {
+        disable_protection(|| {
+            let mut pt = KernelPageTable::active();
+            let entry = pt
+                .get_entry_with(
+                    virt!(__debug_thread as u64),
+                    Box::new(|entry| {
+                        let flags = entry.flags();
+                        entry.set_flags(flags | PageTableFlags::USER_ACCESSIBLE);
+                    }),
+                )
+                .unwrap();
+        });
+    }
 
     let thread = unsafe { Thread::from_raw(__debug_thread as u64) }.unwrap();
     spawn(thread).unwrap();

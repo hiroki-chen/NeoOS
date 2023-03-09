@@ -150,7 +150,7 @@ unsafe impl Sync for Frame {}
 /// Dumps all the control registers.
 ///
 /// # Note
-/// 
+///
 /// Only works if the log level is set to `DEBUG` or lower.
 pub fn dump_cr_regs() {
     let cr0 = Cr0::read();
