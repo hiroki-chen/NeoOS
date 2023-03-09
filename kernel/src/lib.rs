@@ -12,6 +12,7 @@
 #![allow(unreachable_code)]
 #![allow(dead_code)]
 #![feature(atomic_from_mut)]
+#![feature(naked_functions)]
 #![feature(allocator_api)]
 #![feature(core_intrinsics)]
 #![feature(rustc_attrs)]

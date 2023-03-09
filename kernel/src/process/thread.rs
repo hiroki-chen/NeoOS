@@ -7,8 +7,6 @@
 //! types that are guaranteed to be threadsafe are easily shared between threads using the
 //! atomically-reference-counted container, Arc.
 
-use core::arch::global_asm;
-
 use alloc::{
     boxed::Box,
     collections::BTreeMap,
@@ -23,11 +21,11 @@ use crate::{
     arch::{
         cpu::{cpu_id, FpState, MAX_CPU_NUM},
         interrupt::{Context, PAGE_FAULT_INTERRUPT},
-        mm::paging::{get_pf_addr, handle_page_fault, KernelPageTable, PageTableBehaviors},
+        mm::paging::{get_pf_addr, handle_page_fault, KernelPageTable},
         PAGE_SIZE,
     },
     error::{Errno, KResult},
-    memory::{get_physical_address, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
+    memory::{KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
     mm::{callback::SystemArenaCallback, Arena, ArenaFlags, FutureWithPageTable, MemoryManager},
     signal::{SignalSet, Stack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
@@ -38,23 +36,9 @@ use super::{event::EventBus, register, scheduler::FIFO_SCHEDULER, Process};
 const DEBUG_THREAD_ID: u64 = 0xdeadbeef;
 const DEBUG_PROC_ID: u64 = 0xbeefdead;
 
-// Test script.
-global_asm!(
-    r#"
-.global __debug_thread
-__debug_thread:
-    hlt
-    mov rcx, 100
-
-    xor rax, rax
-    mov rax, rcx
-
-    sub rcx, 1
-"#
-);
-
-extern "C" {
-    fn __debug_thread();
+#[naked]
+unsafe extern "C" fn __debug_thread() {
+    unsafe { core::arch::asm!("hlt", options(noreturn)) }
 }
 
 /// An enum representing the state of a thread.
@@ -173,19 +157,23 @@ impl Thread {
     /// This function is unsafe because `inst_addr` must be valid.
     pub unsafe fn from_raw(inst_addr: u64) -> KResult<Arc<Thread>> {
         let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
-        let func_phys_addr = get_physical_address(__debug_thread as u64);
-        info!(
-            "from_raw(): the test function's physical address is {:#x}",
-            func_phys_addr
-        );
-        vm.page_table().map(virt!(inst_addr), phys!(func_phys_addr));
-
         let stack_top = Self::prepare_user_stack(&mut vm)? as u64;
         let vm = Arc::new(Mutex::new(vm));
 
+        // So we must pretend that 'interrupt' occurs here so that CPU allows to perform `IRETQ`.
+        // To this end, we must carefully construct the stack upon return, whose layout should be:
+        //
+        // SS           <- stack selector before interrupt
+        // RSP          <- stack pointer before interrupt
+        // RFLAGS       <- flag register before interrupt
+        // CS           <- code selector before interrupt
+        // RIP          <- instruction pointer register before interupt
+        // error_code   <- error code / trap number / syscall number
+        // blahblah     <- SS:RSP
         let mut context = Context::default();
         context.set_rip(inst_addr);
         context.set_rsp(stack_top);
+        // IOPL | IF | RSVD
         context.regs.rflags = 0x3202;
 
         let thread = Thread {
@@ -284,6 +272,12 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
         .as_u64();
     let thread_clone = thread.clone();
 
+    // let mut this_context = thread.take();
+    // let ctx = &mut this_context.user_context;
+    // println!("before: {:#x?}", ctx);
+    // ctx.start();
+    // println!("after: {:#x?}", ctx);
+
     let thread_future = async move {
         loop {
             let mut ctx = thread.take();
@@ -331,6 +325,6 @@ pub fn debug_threading() {
         __debug_thread as u64
     );
 
-    let thread = unsafe { Thread::from_raw(0x400000u64) }.unwrap();
+    let thread = unsafe { Thread::from_raw(__debug_thread as u64) }.unwrap();
     spawn(thread).unwrap();
 }

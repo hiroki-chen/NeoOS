@@ -70,7 +70,7 @@ pub fn init_syscall() -> KResult<()> {
         | RFlags::NESTED_TASK;
 
     SFMask::write(rflags_mask_syscall);
-    LStar::write(VirtAddr::new(__syscall as usize as u64));
+    LStar::write(VirtAddr::new(__syscall as u64));
 
     Ok(())
 }
