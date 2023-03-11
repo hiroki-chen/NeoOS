@@ -15,27 +15,27 @@
 
 .phony: all clean test efi debug clippy
 
-BACKTRACE			?= 5
+BACKTRACE		?= 5
 OS_LOG_LEVEL	?= info
 TEST_KERNEL		?= ./test_jump.S
-WORK_DIR 			?= ./test
-BOOT_DIR 			:= $(WORK_DIR)/esp/efi/boot
+WORK_DIR 		?= ./test
+BOOT_DIR 		:= $(WORK_DIR)/esp/efi/boot
 EFI_TARGET		?= target/x86_64-unknown-uefi/debug/boot.efi
-EFI 		 			?= $(BOOT_DIR)/bootx64.efi
+EFI 		 	?= $(BOOT_DIR)/bootx64.efi
 KERNEL_TARGET	?= target/x86_64/debug/kernel
 KERNEL_IMAGE	?= $(BOOT_DIR)/kernel.img
-DEBUG					?= 0
-DISK					?= disk.img
-DISK_SIZE			?= 10G
+DEBUG			?= 0
+DISK			?= disk.img
+DISK_SIZE		?= 10G
 QEMU_COMMAND	?= qemu-system-x86_64 -enable-kvm \
-									-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
-									-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
-									-drive format=raw,file=fat:rw:esp \
-									-nographic -smp cores=4 -no-reboot -m 4G -rtc clock=vm \
-									-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
-									-device ahci,id=ahci0 \
-									-device ide-hd,drive=sfsimg,bus=ahci0.0 \
-									-cpu host
+						-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
+						-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
+						-drive format=raw,file=fat:rw:esp \
+						-nographic -smp cores=4 -no-reboot -m 4G -rtc clock=vm \
+						-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
+						-device ahci,id=ahci0 \
+						-device ide-hd,drive=sfsimg,bus=ahci0.0 \
+						-cpu host
 
 ifeq ($(DEBUG), 1)
 	QEMU_COMMAND += -s -S
@@ -54,7 +54,7 @@ debug: kernel
 
 kernel: efi
 	@cd kernel && RUSTFLAGS=-g RUST_BACKTRACE=$(BACKTRACE) OS_LOG_LEVEL=$(OS_LOG_LEVEL) \
-								cargo build
+				  cargo build
 	@cp $(KERNEL_TARGET) $(KERNEL_IMAGE)
 
 efi:
@@ -65,8 +65,7 @@ efi:
 run: kernel hard_disk
 	@cp boot.cfg $(BOOT_DIR)
 	@cd $(WORK_DIR) && cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_VARS.fd .
-	@cd $(WORK_DIR) && \
-			$(QEMU_COMMAND)
+	@cd $(WORK_DIR) && $(QEMU_COMMAND)
 
 clean:
 	@cargo clean
