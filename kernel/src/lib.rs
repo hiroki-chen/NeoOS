@@ -26,10 +26,11 @@ extern crate alloc;
 
 pub mod debug;
 pub mod drivers;
-pub mod error;
 pub mod fs;
 pub mod irq;
 
+#[macro_use]
+pub mod error;
 #[macro_use]
 pub mod logging;
 #[macro_use]

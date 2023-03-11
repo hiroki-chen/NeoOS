@@ -1,6 +1,8 @@
 //! This module manages the kernel memory as well as the user space memory.
 //!
 //! Below is the memory layout of the Linux kernel.
+//!
+//! ```text
 //! =============================================================================================
 //! Start addr    |   Offset   |     End addr     |  Size   | VM area description
 //! =============================================================================================
@@ -27,6 +29,7 @@
 //!  ffffeb0000000000 |  -21    TB | ffffebffffffffff |    1 TB | ... unused hole
 //!  ffffec0000000000 |  -20    TB | fffffbffffffffff |   16 TB | KASAN shadow memory
 //! ==================|============|==================|=========|================================
+//! ```
 
 use bit_field::BitField;
 use core::{ffi::c_void, fmt::Debug, ops::Range, sync::atomic::Ordering};
@@ -514,6 +517,7 @@ pub unsafe fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {
 }
 
 /// Checks whether the lower 3 bits are zero.
+#[inline]
 pub fn is_page_aligned<T>(num: T) -> bool
 where
     T: AsPrimitive<usize>,
@@ -522,6 +526,7 @@ where
 }
 
 /// Ignores the lower bits of 0xfff.
+#[inline]
 pub fn page_mask<T>(num: T) -> T
 where
     T: AsPrimitive<usize>,
@@ -531,6 +536,7 @@ where
 }
 
 /// Extract the page frame number.
+#[inline]
 pub fn page_frame_number<T>(addr: T) -> T
 where
     T: AsPrimitive<usize>,

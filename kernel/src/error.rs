@@ -68,3 +68,11 @@ pub fn error_to_int<T>(result: &KResult<T>) -> i32 {
         Err(errno) => -(*errno as i32),
     }
 }
+
+/// A simple wrapepr for conversion between unix error code and intermediate error status.
+#[macro_export]
+macro_rules! make_unix_error_code {
+    ($e:expr) => {
+        0x80u8 + $e as u8
+    };
+}

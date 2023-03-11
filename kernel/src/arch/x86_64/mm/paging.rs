@@ -56,7 +56,16 @@ impl FrameDeallocator<Size4KiB> for PTFrameAllocator {
 
 /// Handles the page fault by the current thread.
 pub fn handle_page_fault(addr: u64) -> bool {
-    let thread = current().expect("handle_page_fault(): no thread is running?");
+    let thread = match current() {
+        Ok(thread) => thread,
+        Err(errno) => {
+            error!(
+                "handle_page_fault(): cannot get the current thread. Errno: {:?}",
+                errno
+            );
+            return false;
+        }
+    };
 
     trace!(
         "handle_page_fault(): page fault @ {:#x} handled by {:#x}",
@@ -649,5 +658,45 @@ pub fn tlb_broadcast(target: Option<u8>, addr: Option<VirtAddr>) {
             IpiType::TlbFlush,
         ),
         None => send_ipi(|| (), target, true, IpiType::TlbFlush),
+    }
+}
+
+/// Allows a kernel page to be accessible to the user.
+///
+/// # Safety
+///
+/// This function is marked unsafe because self-modifying page table and allowing the user to access the kernel page will
+/// cause some unexpected consequences.
+///
+/// However, for debugging, we assume modifying the page table is acceptable, but it should be avoided, anyway, and a sane
+/// workaround should be to copy the function to the user space and construct a proper page table.
+///
+/// # Examples
+///
+/// ```rust
+/// #[no_mangle]
+/// pub fn foo() -> bool {
+///     true
+/// }
+///
+/// let some_addr = foo as u64;
+/// unsafe {
+///     allow_user(some_addr);
+/// }
+/// ```
+pub unsafe fn allow_user(addr: u64) {
+    unsafe {
+        disable_protection(|| {
+            let mut pt = KernelPageTable::active();
+            let entry = pt
+                .get_entry_with(
+                    virt!(addr),
+                    Box::new(|entry| {
+                        let flags = entry.flags();
+                        entry.set_flags(flags | PageTableFlags::USER_ACCESSIBLE);
+                    }),
+                )
+                .unwrap();
+        });
     }
 }

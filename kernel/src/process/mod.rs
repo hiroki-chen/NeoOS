@@ -4,10 +4,11 @@ use crate::{
     fs::file::FileObject,
     mm::MemoryManager,
     process::event::Event,
+    signal::{SigAction, SigInfo, SigSet},
     sync::{futex::SimpleFutex, mutex::SpinLockNoInterrupt as Mutex},
 };
 use alloc::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     string::String,
     sync::{Arc, Weak},
     vec::Vec,
@@ -48,7 +49,7 @@ pub struct Process {
     /// Opened files.
     pub opened_files: BTreeMap<u64, FileObject>,
     /// Exit code.
-    pub exit_code: u64,
+    pub exit_code: u8,
     /// Events like exiting
     pub event_bus: Arc<Mutex<EventBus>>,
     pub futexes: BTreeMap<u64, Arc<SimpleFutex>>,
@@ -57,6 +58,12 @@ pub struct Process {
     pub parent: (u64, Weak<Mutex<Process>>),
     /// Children process
     pub children: Vec<(u64, Weak<Mutex<Process>>)>,
+    /// Pending signals.
+    pub pending_sigset: SigSet,
+    /// Signal queue.
+    pub sig_queue: VecDeque<(SigInfo, i64)>,
+    /// Signal actions.
+    pub actions: [SigAction; 0x41],
 }
 
 impl Process {
@@ -76,7 +83,7 @@ impl Process {
         Ok(fd)
     }
 
-    pub fn exit(&mut self, exit_code: u64) {
+    pub fn exit(&mut self, exit_code: u8) {
         let all_fd = self.opened_files.keys().copied().collect::<Vec<u64>>();
         for fd in all_fd.iter() {
             let file = self.opened_files.remove(fd).unwrap();

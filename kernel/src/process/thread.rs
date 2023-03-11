@@ -9,26 +9,25 @@
 
 use alloc::{
     boxed::Box,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, Weak},
     vec::Vec,
 };
 use lazy_static::lazy_static;
 use log::info;
 use spin::RwLock;
-use x86_64::structures::paging::PageTableFlags;
 
 use crate::{
     arch::{
         cpu::{cpu_id, FpState, MAX_CPU_NUM},
         interrupt::{dispatcher::trap_dispatcher_user, Context},
-        mm::paging::{disable_protection, KernelPageTable, PageTableBehaviors},
+        mm::paging::KernelPageTable,
         PAGE_SIZE,
     },
     error::{Errno, KResult},
-    memory::{KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
+    memory::{page_mask, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
     mm::{callback::SystemArenaCallback, Arena, ArenaFlags, FutureWithPageTable, MemoryManager},
-    signal::{SignalSet, Stack},
+    signal::{SigAction, SigSet, SigStack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
@@ -164,6 +163,9 @@ impl Thread {
             futexes: BTreeMap::new(),
             parent: (lock.process_id, Arc::downgrade(&self.parent)),
             children: Vec::new(),
+            pending_sigset: SigSet::default(),
+            sig_queue: VecDeque::new(),
+            actions: lock.actions,
         }));
 
         register(&forked_process, id);
@@ -209,10 +211,24 @@ impl Thread {
     /// # Safety
     ///
     /// This function is unsafe because `inst_addr` must be valid.
-    pub unsafe fn from_raw(inst_addr: u64) -> KResult<Arc<Thread>> {
+    pub unsafe fn from_raw(inst_addr: u64, size: usize) -> KResult<Arc<Thread>> {
         let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
         let stack_top = Self::prepare_user_stack(&mut vm)? as u64;
         let vm = Arc::new(Mutex::new(vm));
+
+        // Allocate page and copy the instruction to the user page table. This is done by inserting a new arena into
+        // the vm of the process. todo: how to copy from kernel to the user?
+        let start = page_mask(inst_addr);
+        vm.lock().add(Arena {
+            range: (start..start + size as u64),
+            flags: ArenaFlags {
+                writable: false,
+                user_accessible: true,
+                non_executable: false,
+                mmio: 0, // ignore mmio.
+            },
+            callback: Box::new(SystemArenaCallback::new(KernelFrameAllocator)),
+        });
 
         // So we must pretend that 'interrupt' occurs here so that CPU allows to perform `IRETQ`.
         // To this end, we must carefully construct the stack upon return, whose layout should be:
@@ -240,19 +256,22 @@ impl Thread {
                 exec_path: "".into(),
                 pwd: ".".into(),
                 opened_files: BTreeMap::new(),
-                exit_code: 0u64,
+                exit_code: 0u8,
                 event_bus: EventBus::new(),
                 futexes: BTreeMap::new(),
                 parent: (0xffff_ffff, Weak::new()),
                 children: Vec::new(),
+                pending_sigset: SigSet::default(),
+                sig_queue: VecDeque::new(),
+                actions: [SigAction::default(); 0x41],
             })),
             inner: Arc::new(Mutex::new(ThreadInner {
-                sigmask: SignalSet::new(),
+                sigmask: SigSet::new(),
                 thread_context: Some(ThreadContext {
                     user_context: Box::new(context),
                     fp_state: Box::new(FpState::new()),
                 }),
-                sigaltstack: Stack::default(),
+                sigaltstack: SigStack::default(),
             })),
             vm,
         };
@@ -268,11 +287,11 @@ impl Thread {
 #[derive(Default)]
 pub struct ThreadInner {
     /// Signals that this thread ignores.
-    sigmask: SignalSet,
+    pub sigmask: SigSet,
     /// The thread context.
-    thread_context: Option<ThreadContext>,
+    pub thread_context: Option<ThreadContext>,
     /// The signal alternative stack.
-    sigaltstack: Stack,
+    pub sigaltstack: SigStack,
 }
 
 /// A structure representing the context of a thread.
@@ -357,23 +376,6 @@ pub fn debug_threading() {
         __debug_thread as u64
     );
 
-    // HACK: Just for debugging. So we assume modifying the page table is acceptable, but it should be avoided, anyway.
-    // A normal workaround should be copy the function to the user space and construct a proper page table.
-    unsafe {
-        disable_protection(|| {
-            let mut pt = KernelPageTable::active();
-            let entry = pt
-                .get_entry_with(
-                    virt!(__debug_thread as u64),
-                    Box::new(|entry| {
-                        let flags = entry.flags();
-                        entry.set_flags(flags | PageTableFlags::USER_ACCESSIBLE);
-                    }),
-                )
-                .unwrap();
-        });
-    }
-
-    let thread = unsafe { Thread::from_raw(__debug_thread as u64) }.unwrap();
+    let thread = unsafe { Thread::from_raw(__debug_thread as u64, PAGE_SIZE) }.unwrap();
     spawn(thread).unwrap();
 }

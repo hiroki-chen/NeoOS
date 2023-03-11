@@ -10,7 +10,7 @@ pub mod callback;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use bitflags::bitflags;
 use core::{future::Future, ops::Range, pin::Pin};
-use log::{debug, error};
+use log::{debug, error, info};
 use x86_64::{structures::paging::Page, VirtAddr};
 
 use crate::{
@@ -274,7 +274,10 @@ where
                 arena.callback.handle_page_fault(&mut self.page_table, addr)
             }
             None => {
-                error!("handle_page_fault(): cannot find arena for this address ?!");
+                error!(
+                    "handle_page_fault(): cannot find arena for this address @ {:#x}.",
+                    addr
+                );
                 false
             }
         }
@@ -343,11 +346,14 @@ where
 
     /// Extends this memory space.
     pub fn add(&mut self, other: Arena) {
+        info!("add(): adding {:#x?} to vm...", other.range);
+
         let start_addr = page_frame_number(other.range.start);
-        let end_addr = page_frame_number(other.range.end + PAGE_SIZE as u64 - 1);
+        let end_addr = page_frame_number(other.range.end + PAGE_SIZE as u64);
 
         // Performs sanity check: we must ensure that `other` is valid.
-        if start_addr >= end_addr {
+		// Also note that the range is exclusive on the right side.
+        if start_addr > end_addr {
             panic!(
               "add(): cannot add this arena into the vm because the memory region is invalid. Address: {:#x} >= {:#x}!",
               start_addr,
