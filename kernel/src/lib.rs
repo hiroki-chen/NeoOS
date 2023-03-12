@@ -40,6 +40,7 @@ pub mod mm;
 pub mod process;
 pub mod signal;
 pub mod sync;
+pub mod syscall;
 pub mod time;
 pub mod trigger;
 
@@ -60,6 +61,7 @@ use crate::{
     arch::cpu::{cpu_id, BSP_ID},
     debug::{Frame, UNWIND_DEPTH},
     logging::print_banner,
+    memory::ELF_DEFAULT_ENTRY,
 };
 
 lazy_static! {
@@ -80,20 +82,20 @@ extern "C" {
 
 /// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
 pub fn kmain() -> ! {
-    // Test IPI.
-    crate::arch::interrupt::ipi::send_ipi(
-        || {
-            info!("Hello from the other side ^^");
-        },
-        None,
-        true,
-        crate::arch::interrupt::ipi::IpiType::Others,
-    );
-
     if cpu_id() == *BSP_ID.get().unwrap() as usize {
+        // Test IPI.
+        crate::arch::interrupt::ipi::send_ipi(
+            || {
+                info!("Hello from the other side ^^");
+            },
+            None,
+            true,
+            crate::arch::interrupt::ipi::IpiType::Others,
+        );
+
         info!("kmain(): kernel main procedure started.");
         print_banner();
-        crate::process::thread::debug_threading();
+        crate::process::thread::debug_threading(ELF_DEFAULT_ENTRY);
     }
 
     loop {
@@ -103,8 +105,9 @@ pub fn kmain() -> ! {
 }
 
 /// The global allocator for the heap memory.
+///
 /// Note that we use the on-the-shelf implementation for the heap allocator with kernel-level.
-/// spin lock `SpinLockNoInterrupt` and a heap grow utility function to rescue us from OOM.
+/// spin lock [`mutex::SpinLockNoInterrupt`] and a heap grow utility function to rescue us from OOM.
 /// Before oom, the allocator will try to call rescue function and try for one more time.
 #[global_allocator]
 static ALLOCATOR: LockedHeapWithRescue<32> = LockedHeapWithRescue::new(memory::grow_heap_on_oom);

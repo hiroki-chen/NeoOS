@@ -74,12 +74,3 @@ pub fn init_syscall() -> KResult<()> {
 
     Ok(())
 }
-
-/// Defines the routine upon syscall return.
-impl Context {
-    pub fn resume(&mut self) {
-        unsafe {
-            __sysreturn(self);
-        }
-    }
-}

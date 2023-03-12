@@ -129,8 +129,7 @@ pub struct Arena {
     pub range: Range<u64>,
     /// Memory flags.
     pub flags: ArenaFlags,
-    /// The memory write / read callback.
-    /// We do not care how it is implemented.
+    /// The memory write / read callback. This backend implements all the page table interfaces.
     pub callback: Box<dyn ArenaCallback>,
 }
 

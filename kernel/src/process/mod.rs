@@ -1,3 +1,5 @@
+use core::{future::Future, task::Poll};
+
 use crate::{
     arch::mm::paging::KernelPageTable,
     error::{Errno, KResult},
@@ -29,6 +31,28 @@ pub mod thread;
 lazy_static! {
     pub static ref KERNEL_PROCESS_LIST: RwLock<BTreeMap<u64, Arc<Mutex<Process>>>> =
         RwLock::new(BTreeMap::new());
+}
+
+#[derive(Default)]
+pub struct Yield(bool);
+
+impl Future for Yield {
+    type Output = ();
+
+    fn poll(
+        mut self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        match self.0 {
+            true => Poll::Ready(()),
+            false => {
+                self.0 = true;
+                // Wake me.
+                cx.waker().clone().wake();
+                Poll::Pending
+            }
+        }
+    }
 }
 
 /// Implementation of the OS-level processes. Each process consists of several threads. See

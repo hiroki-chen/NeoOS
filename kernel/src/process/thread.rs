@@ -7,6 +7,8 @@
 //! types that are guaranteed to be threadsafe are easily shared between threads using the
 //! atomically-reference-counted container, Arc.
 
+use core::{fmt::Debug, time::Duration};
+
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, VecDeque},
@@ -14,24 +16,27 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::lazy_static;
-use log::info;
+use log::{error, info, trace};
 use spin::RwLock;
 
 use crate::{
     arch::{
         cpu::{cpu_id, FpState, MAX_CPU_NUM},
         interrupt::{dispatcher::trap_dispatcher_user, Context},
-        mm::paging::KernelPageTable,
+        mm::paging::{KernelPageTable, PageTableBehaviors},
+        pit::countdown,
         PAGE_SIZE,
     },
     error::{Errno, KResult},
-    memory::{page_mask, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
+    memory::{
+        allocate_frame, phys_to_virt, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START,
+    },
     mm::{callback::SystemArenaCallback, Arena, ArenaFlags, FutureWithPageTable, MemoryManager},
-    signal::{SigAction, SigSet, SigStack},
+    signal::{handle_signal, SigAction, SigSet, SigStack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
-use super::{event::EventBus, register, scheduler::FIFO_SCHEDULER, Process};
+use super::{event::EventBus, register, scheduler::FIFO_SCHEDULER, Process, Yield};
 
 const DEBUG_THREAD_ID: u64 = 0xdeadbeef;
 const DEBUG_PROC_ID: u64 = 0xbeefdead;
@@ -49,7 +54,7 @@ unsafe extern "C" fn __debug_thread_invalid() {
 
 #[naked]
 unsafe extern "C" fn __debug_thread() {
-    unsafe { core::arch::asm!("int 3", options(noreturn)) }
+    unsafe { core::arch::asm!("int3; lea rax, [rip]; jmp rax", options(noreturn)) }
 }
 
 /// An enum representing the state of a thread.
@@ -93,6 +98,21 @@ pub fn find_available_tid() -> KResult<u64> {
     (1u64..)
         .find(|id| THREAD_TABLE.read().get(id).is_none())
         .ok_or(Errno::EBUSY)
+}
+
+/// Put the current core into sleeping state and wake it up after `duration` time.
+///
+/// Note, however, that this operation can be interrupted by, e.g., a syscall. The target of this function is to ensure
+/// a sleep in the current thread, but not the whole system; the current thread cannot make the system suspend.
+pub fn sleep(duration: Duration) {
+    // The granularity is 10 ms.
+    const TIME_SLICE: u128 = 10_000;
+
+    let mut cnt = (duration.as_millis() / TIME_SLICE).min(u64::MAX as u128) as u64;
+    while cnt != 0 {
+        countdown(TIME_SLICE as _);
+        cnt -= 1;
+    }
 }
 
 impl Thread {
@@ -216,20 +236,6 @@ impl Thread {
         let stack_top = Self::prepare_user_stack(&mut vm)? as u64;
         let vm = Arc::new(Mutex::new(vm));
 
-        // Allocate page and copy the instruction to the user page table. This is done by inserting a new arena into
-        // the vm of the process. todo: how to copy from kernel to the user?
-        let start = page_mask(inst_addr);
-        vm.lock().add(Arena {
-            range: (start..start + size as u64),
-            flags: ArenaFlags {
-                writable: false,
-                user_accessible: true,
-                non_executable: false,
-                mmio: 0, // ignore mmio.
-            },
-            callback: Box::new(SystemArenaCallback::new(KernelFrameAllocator)),
-        });
-
         // So we must pretend that 'interrupt' occurs here so that CPU allows to perform `IRETQ`.
         // To this end, we must carefully construct the stack upon return, whose layout should be:
         //
@@ -312,6 +318,31 @@ pub struct ThreadContext {
     fp_state: Box<FpState>,
 }
 
+impl ThreadContext {
+    pub fn switch(&mut self) {
+        self.fp_state.fxrstor();
+        self.user_context.start();
+        self.fp_state.fxsave();
+    }
+
+    pub fn get_trapno(&self) -> usize {
+        self.user_context.trapno as usize
+    }
+
+    pub fn get_user_context(&mut self) -> &mut Box<Context> {
+        &mut self.user_context
+    }
+  }
+
+impl Debug for ThreadContext {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ThreadContext")
+            .field("User Context", self.user_context.as_ref())
+            .field("Float Point State", self.fp_state.as_ref())
+            .finish()
+    }
+}
+
 pub static mut CURRENT_THREAD_PER_CPU: [Option<Arc<Thread>>; MAX_CPU_NUM] = {
     const THREAD: Option<Arc<Thread>> = None;
     [THREAD; MAX_CPU_NUM]
@@ -336,46 +367,82 @@ pub fn current() -> KResult<Arc<Thread>> {
 /// This function returns a [`KResult`] object, indicating whether the operation was successful. If the thread was
 /// successfully spawned, Ok(()) is returned. If an error occurred, an appropriate error code is returned.
 pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
-    let cr3 = thread
-        .vm
-        .lock()
-        .page_table()
-        .page_table_frame
-        .start_address()
-        .as_u64();
+    let cr3 = thread.vm.lock().page_table().cr3();
     let thread_clone = thread.clone();
+    let mut exited = false;
+    let mut should_yield = false;
 
     let thread_future = async move {
         loop {
             let mut ctx = thread.take();
             // Perform a context switch.
-            ctx.fp_state.fxrstor();
-            ctx.user_context.start();
-            ctx.fp_state.fxsave();
+            ctx.switch();
 
             // syscall / trap: anyway, a context switch happens here.
-            if !trap_dispatcher_user(ctx.user_context.trapno as usize, thread.id as usize) {
+            if !trap_dispatcher_user(&thread, &mut ctx, &mut should_yield).await {
+                error!(
+                    "spawn(): cannot handle context switch. Dumped context is {:#x?}",
+                    ctx.user_context
+                );
                 break;
             }
-            thread.restore(ctx);
+
             // Handle signal or other errors.
+            if !exited {
+                exited = handle_signal(&thread, &mut ctx.user_context);
+            }
+
+            thread.restore(ctx);
+            if exited {
+                info!("spawn(): thread {:#x} ended.", thread.id);
+                break;
+            }
+            if should_yield {
+                // Suspend execution until is ready.
+                trace!("spawn(): thread {:#x} yields the CPU.", thread.id);
+                Yield::default().await
+            }
         }
     };
 
+    // Yield <- ThreadFuture <- PageTable <- Scheduler
     FIFO_SCHEDULER.spawn(
         FutureWithPageTable::new(Box::pin(thread_future), cr3, thread_clone),
         None,
     );
+
     Ok(())
 }
 
 /// Spawn a debug thread with in-memory instructions.
-pub fn debug_threading() {
+pub fn debug_threading(entry: u64) {
     info!(
         "debug_threading(): creating a dummy thread. RIP @ {:#x}",
         __debug_thread as u64
     );
 
-    let thread = unsafe { Thread::from_raw(__debug_thread as u64, PAGE_SIZE) }.unwrap();
+    let thread = unsafe { Thread::from_raw(entry, PAGE_SIZE) }.unwrap();
+
+    let thread_inst_frame = allocate_frame().unwrap();
+    // Copy the instruction's memory to the physical frame where the process's virtual memory points to.
+    unsafe {
+        core::ptr::write_bytes(
+            phys_to_virt(thread_inst_frame.as_u64()) as *mut u8,
+            0u8,
+            PAGE_SIZE,
+        );
+        core::ptr::copy(
+            __debug_thread as *const u8,
+            phys_to_virt(thread_inst_frame.as_u64()) as *mut u8,
+            0x40,
+        );
+    }
+
+    thread
+        .vm
+        .lock()
+        .page_table()
+        .map(virt!(entry), thread_inst_frame);
+
     spawn(thread).unwrap();
 }

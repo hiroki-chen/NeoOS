@@ -77,6 +77,19 @@ pub fn init_env_logger() -> KResult<()> {
     Ok(())
 }
 
+/// Prints the name of the function that invokes this macro.
+#[macro_export]
+macro_rules! function {
+    () => {{
+        fn f() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            core::any::type_name::<T>()
+        }
+        let name = type_name_of(f);
+        &name[..name.len() - 3]
+    }};
+}
+
 /// From std::println!
 ///
 /// Prints to the standard output, with a newline.
@@ -96,6 +109,41 @@ macro_rules! println {
     };
     ($($arg:tt)*) => {{
         $crate::print!("{}", format_args_nl!($($arg)*));
+    }};
+}
+
+#[macro_export]
+macro_rules! kinfo {
+    ($($arg:tt)*) => {{
+        log::info!("[{}@L{}] {}", function!(), line!(), format_args!($($arg)*));
+    }};
+}
+
+#[macro_export]
+macro_rules! kerror {
+    ($($arg:tt)*) => {{
+        log::error!("[{}@L{}] {}", function!(), line!(), format_args!($($arg)*));
+    }};
+}
+
+#[macro_export]
+macro_rules! kdebug {
+    ($($arg:tt)*) => {{
+        log::debug!("[{}@L{}] {}", function!(), line!(), format_args!($($arg)*));
+    }};
+}
+
+#[macro_export]
+macro_rules! ktrace {
+    ($($arg:tt)*) => {{
+        log::trace!("[{}@L{}] {}", function!(), line!(), format_args!($($arg)*));
+    }};
+}
+
+#[macro_export]
+macro_rules! kwarn {
+    ($($arg:tt)*) => {{
+        log::warn!("[{}@L{}] {}", function!(), line!(), format_args!($($arg)*));
     }};
 }
 

@@ -1,5 +1,6 @@
 //! This module implementes the interrupt handlers.
 
+use alloc::sync::Arc;
 use log::{debug, error, info, trace};
 use x86_64::instructions::tlb::flush_all;
 
@@ -17,10 +18,11 @@ use crate::{
         },
     },
     drivers::IRQ_MANAGER,
-    process::thread::current,
+    process::thread::{current, Thread, ThreadContext},
+    syscall::handle_syscall,
 };
 
-use super::{TrapFrame, INVALID_OPCODE_INTERRUPT};
+use super::{TrapFrame, INVALID_OPCODE_INTERRUPT, SYSCALL};
 
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
 #[no_mangle]
@@ -43,33 +45,11 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
             arch::cpu::die()
         }
         IRQ_MIN..=IRQ_MAX => {
-            eoi(tf.trap_num as u8);
-
-            let irq = tf.trap_num - IRQ_MIN;
-            if irq == TIMER_INTERRUPT {
-                // Prevent logging when timer interrupt occurs because the previous contexts may hold
-                // the lock so that the whole program hangs due to deadlock.
-                handle_timer();
-            } else {
-                // Dispatch.
-                if let Err(errno) = IRQ_MANAGER.read().dispatch_irq(irq as u64) {
-                    error!("__trap_dispatcher(): IRQ manager returned {:?}", errno);
-                } else {
-                    trace!("__trap_dispatcher() IRQ handled.");
-                }
-            }
+            handle_irq(tf.trap_num as _, false, None);
         }
-
         ipi => {
             if (IpiType::TlbFlush as u8..=IpiType::Others as u8).contains(&(ipi as u8)) {
-                eoi((ipi - IRQ_MIN) as u8);
-
-                match unsafe { core::mem::transmute::<u8, IpiType>(ipi as _) } {
-                    IpiType::TlbFlush => flush_all(),
-                    // Does nothing.
-                    IpiType::WakeUp => (),
-                    IpiType::Others => AbstractCpu::current().unwrap().pop_event(),
-                }
+                handle_ipi(ipi as _);
             } else {
                 panic!(
                     "__trap_dispatcher(): unrecognized type {:#x?}!",
@@ -82,7 +62,12 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
 
 /// The interrupt handler for user-space applications. The return value indicates whether the application can be resumed.
 /// If so, resume the context; otherwise, abort the application due to some unrecoverable errors.
-pub fn trap_dispatcher_user(tf: usize, id: usize) -> bool {
+pub async fn trap_dispatcher_user(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    should_yield: &mut bool,
+) -> bool {
+    let tf = ctx.get_trapno();
     match tf {
         BREAKPOINT_INTERRUPT => {
             info!("spawn(): breakpoint!");
@@ -101,7 +86,7 @@ pub fn trap_dispatcher_user(tf: usize, id: usize) -> bool {
             let cr2 = get_pf_addr();
             info!(
                 "spawn(): thread {:#x} triggered page fault @ {:#x}",
-                id, cr2
+                thread.id, cr2
             );
 
             if !handle_page_fault(cr2) {
@@ -112,8 +97,74 @@ pub fn trap_dispatcher_user(tf: usize, id: usize) -> bool {
                 true
             }
         }
-        tf => unimplemented!("spawn(): not supported {:#x}.", tf),
+        IRQ_MIN..IRQ_MAX => handle_irq(tf as _, true, Some(should_yield)),
+        SYSCALL => handle_syscall(thread, ctx).await,
+        tf => {
+            error!("spawn(): not supported {:#x}.", tf);
+            false
+        }
     }
+}
+
+/// Handle an interrupt.
+///
+/// This function takes an interrupt number as an argument, acknowledges the interrupt using EOI
+/// (end of interrupt), and dispatches the interrupt to the appropriate handler. If the interrupt
+/// is the timer interrupt, it invokes `handle_timer` function to prevent logging when timer interrupt
+/// occurs. Otherwise, it calls the `dispatch_irq` method of the `IRQ_MANAGER` to dispatch the interrupt
+/// to the appropriate handler. If the `dispatch_irq` method returns an error, it logs the error and returns
+/// `false`, otherwise it returns `true`.
+///
+/// This functions also takes as input the value `user` indicating whether the kernel is dealing with user interrupt
+/// and a callback `cb` to be invoked later.
+fn handle_irq(trapno: u8, user: bool, should_yield: Option<&mut bool>) -> bool {
+    eoi(trapno);
+
+    // Must check before we handle the IRQ.
+    assert!(
+        !user || matches!(should_yield, Some(_)),
+        "handle_irq(): user IRQ must be installed with a callback!"
+    );
+
+    let irq = trapno - IRQ_MIN as u8;
+    if irq == TIMER_INTERRUPT as u8 {
+        if user {
+            *should_yield.unwrap() = true;
+        }
+        // Prevent logging when timer interrupt occurs because the previous contexts may hold
+        // the lock so that the whole program hangs due to deadlock.
+        handle_timer();
+        true
+    } else {
+        // Dispatch.
+        if let Err(errno) = IRQ_MANAGER.read().dispatch_irq(irq as u64) {
+            error!("__trap_dispatcher(): IRQ manager returned {:?}", errno);
+            false
+        } else {
+            trace!("__trap_dispatcher() IRQ handled.");
+            true
+        }
+    }
+}
+
+/// Handle an inter-processor interrupt (IPI).
+///
+/// This function takes an inter-processor interrupt number as an argument, acknowledges the interrupt using
+/// EOI (end of interrupt), and dispatches the interrupt to the appropriate handler. It matches the interrupt number
+/// with an `IpiType` using `transmute` function. If the interrupt is `TlbFlush`, it calls `flush_all` function to flush
+/// the TLB entries. If the interrupt is `WakeUp`, it does nothing. If the interrupt is `Others`, it pops the event from the
+/// current CPU's event queue using `pop_event` method of the `AbstractCpu`. Finally, it returns `true`.
+fn handle_ipi(ipi: u8) -> bool {
+    eoi(ipi - IRQ_MIN as u8);
+
+    match unsafe { core::mem::transmute::<u8, IpiType>(ipi as _) } {
+        IpiType::TlbFlush => flush_all(),
+        // Does nothing.
+        IpiType::WakeUp => (),
+        IpiType::Others => AbstractCpu::current().unwrap().pop_event(),
+    }
+
+    true
 }
 
 /// Simply dumps the tf.

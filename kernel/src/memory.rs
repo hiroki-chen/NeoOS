@@ -57,6 +57,7 @@ pub const USER_STACK_SIZE: usize = 0x0040_0000;
 pub const USER_STACK_START: usize = 0x0000_8000_0000_0000 - USER_STACK_SIZE;
 pub const HEAP_UNIT: usize = 0x4000;
 pub const BITMAP_SIZE: usize = 256_000_000usize;
+pub const ELF_DEFAULT_ENTRY: u64 = 0x400000;
 /// The locked frame allocator for user-space processes.
 pub static LOCKED_FRAME_ALLOCATOR: Mutex<Chunk256MiB> = Mutex::new(Chunk256MiB::DEFAULT);
 
@@ -482,6 +483,12 @@ pub fn check_within_user(addr: u64, size: usize) -> bool {
 }
 
 /// Copies a buffer from the user space into kernel space. This is useful for kernel modules / drivers.
+/// 
+/// # Safety
+/// 
+/// This function is unsafe because it requires that the kernel reads a valid data from a given pointer. Even though
+/// this function checks the pointer address is within the thread's virtual memory, there is no guarantee that the
+/// data read from the user thread is always valid at all.
 pub unsafe fn copy_from_user<T>(src: *const T) -> KResult<T> {
     // Check the memory address first.
     let addr = src as u64;
@@ -499,6 +506,11 @@ pub unsafe fn copy_from_user<T>(src: *const T) -> KResult<T> {
 }
 
 /// Copies a buffer to the user space into kernel space. This is useful for kernel modules / drivers.
+/// 
+/// # Safety
+/// 
+/// Similar to [`copy_from_user`], this function is unsafe because we require that the user thread does not always read
+/// valid data from the kernel even though the input pointers are valid.
 pub unsafe fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {
     // Check the memory address first.
     let kern_addr = src as u64;

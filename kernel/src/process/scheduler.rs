@@ -90,9 +90,9 @@ pub trait SchedAlgorithm: Send + Sync {
     /// Given a task list, decide which one should be executed; is there is no task, the scheduler needs to idle.
     fn schedule(&self) -> Option<Arc<Task>>;
     /// Pops out the first runnable process.
-    fn first_ready(&self) -> Option<Arc<Task>>;
+    fn first_ready(&self) -> Option<(Arc<Task>, Option<TaskInfo>)>;
     /// Push a task into the algorithm.
-    fn add_task(&self, task: Task, task_info: Option<TaskInfo>);
+    fn add_task(&self, task: Arc<Task>, task_info: Option<TaskInfo>);
     /// Get the type.
     fn ty(&self) -> ScheduleType;
 }
@@ -123,20 +123,20 @@ impl Fifo {
 }
 
 impl SchedAlgorithm for Fifo {
-    fn add_task(&self, task: Task, task_info: Option<TaskInfo>) {
+    fn add_task(&self, task: Arc<Task>, task_info: Option<TaskInfo>) {
         if task_info.is_some() {
             warn!("add_task(): FIFO ignores the `task_info` struct. You are feeding the algorithm the wrong input.");
         }
 
-        self.task_list.lock().push_back(Arc::new(task));
+        self.task_list.lock().push_back(task);
     }
 
-    fn first_ready(&self) -> Option<Arc<Task>> {
+    fn first_ready(&self) -> Option<(Arc<Task>, Option<TaskInfo>)> {
         let mut task_list = self.task_list.lock();
-        match task_list.iter().position(|task| task.waiting()) {
-            Some(idx) => task_list.remove(idx),
-            None => None,
-        }
+        task_list
+            .iter()
+            .position(|task| task.waiting())
+            .map(|idx| (task_list.remove(idx).unwrap(), None))
     }
 
     fn schedule(&self) -> Option<Arc<Task>> {
@@ -153,11 +153,11 @@ impl SchedAlgorithm for RoundRobin {
         unimplemented!()
     }
 
-    fn add_task(&self, task: Task, task_info: Option<TaskInfo>) {
+    fn add_task(&self, task: Arc<Task>, task_info: Option<TaskInfo>) {
         unimplemented!()
     }
 
-    fn first_ready(&self) -> Option<Arc<Task>> {
+    fn first_ready(&self) -> Option<(Arc<Task>, Option<TaskInfo>)> {
         unimplemented!()
     }
 
@@ -200,27 +200,31 @@ impl Scheduler {
         );
 
         self.add_task(
-            Task {
+            Arc::new(Task {
                 future: Mutex::new(Box::pin(future)),
                 state: Mutex::new(ThreadState::WAITING),
-            },
+            }),
             task_info,
         );
     }
 
-    fn add_task(&self, task: Task, task_info: Option<TaskInfo>) {
+    fn add_task(&self, task: Arc<Task>, task_info: Option<TaskInfo>) {
         self.algorithm.add_task(task, task_info);
     }
 
     pub fn start_schedule(&self) {
         // Start running!
-        while let Some(task) = self.algorithm.first_ready() {
+        while let Some((task, task_info)) = self.algorithm.first_ready() {
             task.set_sleeping();
 
             // Make an explicit poll.
             let waker = waker_ref(&task);
             let mut ctx = Context::from_waker(&waker);
-            let poll_state = task.future.lock().as_mut().poll(&mut ctx);
+
+            // Still not ok. Add to the task list again.
+            if task.future.lock().as_mut().poll(&mut ctx).is_pending() {
+                self.add_task(task.clone(), task_info);
+            }
         }
     }
 }

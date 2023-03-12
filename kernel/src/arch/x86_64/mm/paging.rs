@@ -414,7 +414,8 @@ impl PageTableBehaviors for KernelPageTable {
     }
 
     fn map(&mut self, addr: VirtAddr, target: PhysAddr) -> &mut dyn EntryBehaviors {
-        let flags = PageTableFlags::WRITABLE | PageTableFlags::PRESENT;
+        let flags =
+            PageTableFlags::WRITABLE | PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
         unsafe {
             self.page_table
                 .map_to(

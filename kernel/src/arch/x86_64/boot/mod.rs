@@ -116,6 +116,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     while AP_UP_NUM.load(Ordering::Relaxed) != *CPU_NUM.get().unwrap() - 1 {
         spin_loop();
     }
+
     kmain();
 }
 
@@ -149,5 +150,7 @@ pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
     }
 
     AP_UP_NUM.fetch_add(0x1, Ordering::Relaxed);
-    loop {}
+
+    // Jump into the main routine.
+    kmain();
 }

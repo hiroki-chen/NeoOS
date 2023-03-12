@@ -132,7 +132,7 @@ pub const IRQ_MIN: usize = 0x20;
 pub const IRQ_MAX: usize = 0x3f;
 pub const SYSCALL: usize = 0x100;
 
-pub const SYSCALL_REGS: usize = 0x6;
+pub const SYSCALL_REGS_NUM: usize = 0x6;
 
 global_asm!(include_str!("trap.S"));
 global_asm!(include_str!("idt_vectors.S"));
@@ -246,7 +246,7 @@ impl Context {
     }
 
     /// Returns the syscall registers.
-    pub fn get_syscall_params(&self) -> [u64; SYSCALL_REGS] {
+    pub fn get_syscall_params(&self) -> [u64; SYSCALL_REGS_NUM] {
         [
             self.regs.rdi,
             self.regs.rsi,

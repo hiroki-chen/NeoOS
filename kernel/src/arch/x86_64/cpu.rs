@@ -351,6 +351,9 @@ pub fn init_cpu() -> KResult<()> {
     Ok(())
 }
 
+/// Measures an approximate CPU frequency by `rdtsc`.
+///
+/// This operations does not guarantee that the measured frequency matches the real frequency due to reasons like boost.
 pub fn measure_frequency() {
     // Measure.
     x86_64::instructions::interrupts::without_interrupts(|| {
