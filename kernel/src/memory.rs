@@ -415,6 +415,8 @@ pub fn grow_heap_on_oom(mem: &mut Heap<32>, layout: &core::alloc::Layout) {
         addr_len += 1;
     }
 
+    // TODO: Need an OOM killer for this function so that the kernel won't panic.
+
     for (addr, len) in addrs[..addr_len].iter() {
         info!(
             "grow_heap_on_oom(): created {:#x} with length {:#x}",
@@ -483,9 +485,9 @@ pub fn check_within_user(addr: u64, size: usize) -> bool {
 }
 
 /// Copies a buffer from the user space into kernel space. This is useful for kernel modules / drivers.
-/// 
+///
 /// # Safety
-/// 
+///
 /// This function is unsafe because it requires that the kernel reads a valid data from a given pointer. Even though
 /// this function checks the pointer address is within the thread's virtual memory, there is no guarantee that the
 /// data read from the user thread is always valid at all.
@@ -506,9 +508,9 @@ pub unsafe fn copy_from_user<T>(src: *const T) -> KResult<T> {
 }
 
 /// Copies a buffer to the user space into kernel space. This is useful for kernel modules / drivers.
-/// 
+///
 /// # Safety
-/// 
+///
 /// Similar to [`copy_from_user`], this function is unsafe because we require that the user thread does not always read
 /// valid data from the kernel even though the input pointers are valid.
 pub unsafe fn copy_to_user<T>(src: *const T, dst: *mut T) -> KResult<()> {

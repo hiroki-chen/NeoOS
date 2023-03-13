@@ -1,8 +1,22 @@
+//! To be deprecated: we will migrate to APFS and ext4 (to appear).
+//! 
+//! Some useful links:
+//! * <https://developer.apple.com/support/downloads/Apple-File-System-Reference.pdf>
+//! * <https://developer.apple.com/documentation/foundation/file_system/about_apple_file_system>
+
 use crate::error::{Errno, KResult};
 
 pub mod devfs;
 pub mod file;
+
+#[cfg(feature = "sfs")]
 pub mod sfs;
+#[cfg(feature = "apfs")]
+pub mod apfs;
+
+#[cfg(not(any(feature = "sfs", feature = "apfs")))]
+compile_error!("Must specify one filesystem type: apfs or sfs.");
+
 pub mod vfs;
 
 use alloc::{

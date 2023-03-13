@@ -5,7 +5,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["multiprocessor", "x2apic"]
+default = ["multiprocessor", "x2apic", "apfs"]
+apfs = []
+# Simple file system.
+sfs = []
 multiprocessor = []
 x2apic = []
 xapic = []
@@ -40,6 +43,7 @@ memchr = { version = "2.5.0", default-features = false }
 libm = "0.2.6"
 cfg-if = { version = "1.0.0" }
 woke = "0.0.4"
+serde = { version = "1.0.155", default-features = false, features = ["alloc", "derive"] }
 
 
 [build-dependencies]

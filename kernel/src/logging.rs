@@ -105,10 +105,10 @@ macro_rules! function {
 #[macro_export]
 macro_rules! println {
     () => {
-        $crate::logging::print!("\n")
+        print!("\n")
     };
     ($($arg:tt)*) => {{
-        $crate::print!("{}", format_args_nl!($($arg)*));
+        print!("{}", format_args_nl!($($arg)*));
     }};
 }
 
