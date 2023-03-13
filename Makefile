@@ -24,6 +24,7 @@ EFI_TARGET	?= target/x86_64-unknown-uefi/debug/boot.efi
 EFI 		?= $(BOOT_DIR)/bootx64.efi
 KERNEL_TARGET	?= target/x86_64/debug/kernel
 KERNEL_IMAGE	?= $(BOOT_DIR)/kernel.img
+TEST_IMAGE	?= $(KERNEL_IMAGE)
 DEBUG		?= 0
 DISK		?= disk.img
 DISK_SIZE	?= 10G
@@ -71,9 +72,13 @@ clean:
 	@cargo clean
 	@rm -r $(WORK_DIR)
 
-test: $(TEST_KERNEL)
-	@gcc $^ -o test.img -no-pie -nostartfiles
-	@mv test.img $(BOOT_DIR)
+$(TEST_IMAGE): $(TEST_KERNEL)
+	gcc $^ -o $@ -no-pie -nostartfiles
+
+test_run: efi $(TEST_IMAGE) hard_disk
+	@cp boot.cfg $(BOOT_DIR)
+	@cd $(WORK_DIR) && cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_VARS.fd .
+	@cd $(WORK_DIR) && $(QEMU_COMMAND)
 
 clippy:
 	@cargo clippy

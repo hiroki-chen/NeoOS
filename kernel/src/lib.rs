@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![no_main]
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::uninit_assumed_init)]
@@ -43,6 +43,7 @@ pub mod sync;
 pub mod syscall;
 pub mod time;
 pub mod trigger;
+pub mod utils;
 
 #[cfg(target_arch = "x86_64")]
 pub mod f32;

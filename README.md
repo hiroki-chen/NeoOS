@@ -47,9 +47,11 @@ target remote :1234
 
 ## Some TODOs
 
-* Implement keyboard drivers. (QEMU --> serial --> ? some sort of tty)
-* Implement the file system.
+* ~~Implement keyboard drivers. (QEMU --> serial --> ? some sort of tty)~~
+* Implement the file system (we now aim to implement the APFS for its performance :)).
 * Implement more device drivers.
+* Implement more system calls.
+* Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
 
 ## Advanced Programmable Interrupt Controller (APIC)
 

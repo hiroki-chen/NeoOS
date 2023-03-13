@@ -27,6 +27,11 @@ pub const VM_MEMORY_START: u64 = 0xffff_c900_0000_0000;
 #[allow(unused)]
 pub const VMMAP_BASE: u64 = 0xffff_ea00_0000_0000;
 
+pub const BYTE_LEN: usize = core::mem::size_of::<u8>();
+pub const WORD_LEN: usize = core::mem::size_of::<u16>();
+pub const DWORD_LEN: usize = core::mem::size_of::<u32>();
+pub const QWORD_LEN: usize = core::mem::size_of::<u64>();
+
 // Paging-related constants.
 // These two constants are used to locate the page table entries of kernel components.
 pub const KERNEL_PM4: u64 = (KERNEL_BASE >> 39) & 0o777;

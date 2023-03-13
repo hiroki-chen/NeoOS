@@ -3,13 +3,21 @@ use alloc::sync::Arc;
 use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, signal::SigContext},
     error::{Errno, KResult},
-    memory::copy_from_user,
+    memory::{copy_from_user, copy_to_user},
     process::thread::{Thread, ThreadContext},
-    signal::{SigFrame, Signal},
+    signal::{SigAction, SigFrame, SigSet, Signal},
 };
 
 const NON_MASKABLE_SIGNALS: &[Signal; 3] = &[Signal::SIGSTOP, Signal::SIGKILL, Signal::SIGABRT];
 
+/// The sigaction() system call is used to change the action taken by a process on receipt of a specific signal.
+/// (See signal(7) for an overview of signals.)
+///
+/// signum specifies the signal and can be any valid signal except [`Signal::SIGSTOP`], [`Signal::SIGKILL`], and
+/// [`Signal::SIGABRT`].
+///
+/// * If `act` is non-NULL, the new action for signal signum is installed from `act`.
+/// * If `oldact` is non-NULL, the previous action is saved in `oldact`.
 pub fn sys_rt_sigaction(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
@@ -18,8 +26,8 @@ pub fn sys_rt_sigaction(
     // Explanation:
     //
     // rdi: int signal
-    // rsi: const struct sigaction* action
-    // rdx: struct sigaction* oldaction
+    // rsi: const struct sigaction* act
+    // rdx: struct sigaction* oldact
     // r10: size_t sigsetsize
     let signal = unsafe { core::mem::transmute::<u64, Signal>(syscall_registers[0]) };
     let action = syscall_registers[1];
@@ -40,7 +48,43 @@ pub fn sys_rt_sigaction(
         return Err(Errno::EINVAL);
     }
 
-    // Prepare the registers.
+    // Check sigset size.
+    if size != core::mem::size_of::<SigSet>() {
+        kerror!(
+            "sigset size invalid: expected {:#x}, got {:#x}.",
+            core::mem::size_of::<SigSet>(),
+            size
+        );
+        return Err(Errno::EINVAL);
+    }
+
+    let mut process = thread.parent.lock();
+
+    // Check if oldact is null.
+    if !old_action == 0 {
+        // Copy to user.
+        if let Err(errno) = unsafe {
+            copy_to_user(
+                &process.actions[signal as usize] as *const SigAction,
+                old_action as *mut SigAction,
+            )
+        } {
+            kerror!("cannot set the oldact pointer. Errno: {:?}", errno);
+            return Err(errno);
+        }
+    }
+
+    // Check if act is null.
+    if !action == 0 {
+        let newact = match unsafe { copy_from_user(action as *const SigAction) } {
+            Ok(newact) => newact,
+            Err(errno) => {
+                kerror!("cannot read from user's act!");
+                return Err(errno);
+            }
+        };
+        process.actions[signal as usize] = newact;
+    }
 
     Ok(0)
 }
