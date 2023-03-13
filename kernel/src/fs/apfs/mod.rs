@@ -23,7 +23,10 @@ use crate::{
 
 use self::meta::{CheckpointMapPhysical, NxSuperBlock, ObjectPhysical, ObjectTypes, Oid};
 
-use super::vfs::{FileSytem, INode, MaybeDirty};
+use rcore_fs::{
+    dirty::Dirty as MaybeDirty,
+    vfs::{FileSystem, FsInfo, INode},
+};
 
 pub mod meta;
 
@@ -109,10 +112,16 @@ impl BlockLike for dyn Device {}
 
 /// Represents the instance of the APFS.
 ///
-/// The inode is a unique identifier that identifies a file system object — a file or a folder
+/// The inode is a unique identifier that identifies a file system object — a file or a folder.
+///
+/// # Current goals (~3 months)
+///
+/// * Implement basic reading / BTree manipulations
+/// * Add more unit test suites.
+/// * Add support for concurrency.
 pub struct AppleFileSystem {
     // TODO: What should be included here?
-    superblock: MaybeDirty<RwLock<NxSuperBlock>>,
+    superblock: RwLock<MaybeDirty<NxSuperBlock>>,
     device: Arc<dyn Device>,
 }
 
@@ -177,9 +186,23 @@ impl AppleFileSystem {
 
         kinfo!("mounted the superblock: {:#x?}", nx_superblock);
         Ok(Arc::new(Self {
-            superblock: MaybeDirty::new(RwLock::new(nx_superblock)),
+            superblock: RwLock::new(MaybeDirty::new(nx_superblock)),
             device: device.clone(),
         }))
+    }
+}
+
+impl FileSystem for AppleFileSystem {
+    fn sync(&self) -> rcore_fs::vfs::Result<()> {
+        todo!()
+    }
+
+    fn root_inode(&self) -> Arc<dyn INode> {
+        todo!()
+    }
+
+    fn info(&self) -> FsInfo {
+        todo!()
     }
 }
 
@@ -188,34 +211,20 @@ pub struct AppleFileSystemInode {
     fs: Arc<AppleFileSystem>,
 }
 
-impl FileSytem for AppleFileSystem {
-    fn sync(&self) -> crate::error::KResult<()> {
-        todo!()
-    }
-
-    fn root(&self) -> crate::error::KResult<alloc::sync::Arc<dyn super::vfs::INode>> {
-        todo!()
-    }
-
-    fn metadata(&self) -> crate::error::KResult<super::vfs::FsMetadata> {
-        todo!()
-    }
-}
-
 impl INode for AppleFileSystemInode {
-    fn poll(&self) -> crate::error::KResult<super::vfs::PollFlags> {
+    fn read_at(&self, offset: usize, buf: &mut [u8]) -> rcore_fs::vfs::Result<usize> {
         todo!()
     }
 
-    fn read_buf_at(&self, offset: usize, buf: &mut [u8]) -> crate::error::KResult<usize> {
+    fn write_at(&self, offset: usize, buf: &[u8]) -> rcore_fs::vfs::Result<usize> {
         todo!()
     }
 
-    fn write_buf_at(&self, offset: usize, buf: &[u8]) -> crate::error::KResult<usize> {
+    fn poll(&self) -> rcore_fs::vfs::Result<rcore_fs::vfs::PollStatus> {
         todo!()
     }
 
-    fn cast_to_any(&self) -> &dyn core::any::Any {
+    fn as_any_ref(&self) -> &dyn core::any::Any {
         todo!()
     }
 }

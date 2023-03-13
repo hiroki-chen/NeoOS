@@ -5,7 +5,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["multiprocessor", "x2apic", "apfs"]
+default = ["multiprocessor", "x2apic", "sfs"]
+# TODO: separate as a single library.
 apfs = []
 # Simple file system.
 sfs = []
@@ -31,6 +32,7 @@ num-traits = { version = "0.2", default-features = false }
 pci = { git = "https://github.com/hiroki-chen/pci-rs.git" }
 pc-keyboard = "0.6.1"
 raw-cpuid = "10.6.0"
+rcore-fs = { git = "https://github.com/rcore-os/rcore-fs.git" }
 spin = { version = "0.9.5", default-features = false, features = [
   'rwlock',
   'once',
@@ -43,8 +45,10 @@ memchr = { version = "2.5.0", default-features = false }
 libm = "0.2.6"
 cfg-if = { version = "1.0.0" }
 woke = "0.0.4"
-serde = { version = "1.0.155", default-features = false, features = ["alloc", "derive"] }
-
+serde = { version = "1.0.155", default-features = false, features = [
+  "alloc",
+  "derive",
+] }
 
 [build-dependencies]
 cc = "1.0"

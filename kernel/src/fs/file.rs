@@ -4,28 +4,18 @@
 //! includes the file's inode number, which is a unique identifier for the file within the file system, as well as various
 //! flags and pointers that are used to manage the file.
 
-use core::pin::Pin;
-
 use alloc::{
-    boxed::Box,
     string::{String, ToString},
     sync::Arc,
 };
 use bitflags::bitflags;
+use rcore_fs::vfs::{INode, Metadata, PollStatus, Result};
 use spin::RwLock;
 
 use crate::{
-    error::{Errno, KResult},
-    memory::KernelFrameAllocator,
-    mm::{
-        callback::{FileArenaCallback, INodeWrapper},
-        Arena, MmapPerm,
-    },
-    process::thread,
+    error::{fserror_to_kerror, Errno, KResult},
     time::{SystemTime, UNIX_EPOCH},
 };
-
-use super::vfs::{AsyncPoll, INode, INodeMetadata, INodeType, MemoryMap, PollFlags};
 
 bitflags! {
       pub struct FileOpenOption: u8{
@@ -39,7 +29,7 @@ bitflags! {
 
 /// Minimum `file-like` trait.
 pub trait ReadAsFile: Clone + Sync + Send + 'static {
-    fn read_buf_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize>;
+    fn read_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize>;
 }
 
 /// flock - apply or remove an advisory lock on an open file.
@@ -148,14 +138,14 @@ impl File {
     /// Reads the file from `self.file_option.offset`.
     pub async fn read_buf(&mut self, buf: &mut [u8]) -> KResult<usize> {
         let offset = self.file_option.read().offset as usize;
-        let len = self.read_buf_at(offset, buf).await?;
+        let len = self.read_at(offset, buf).await?;
         self.file_option.write().offset += len as u64;
 
         Ok(len)
     }
 
     /// Reads the file from `offset + self.file_option.offset`.
-    pub async fn read_buf_at(&mut self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
+    pub async fn read_at(&mut self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
         let file_option = self.file_option.read();
         // Check file option.
         if !file_option.open_option.contains(FileOpenOption::READ) {
@@ -169,19 +159,25 @@ impl File {
         {
             // Block.
             loop {
-                match self.inode.read_buf_at(file_offset, buf) {
+                match self.inode.read_at(file_offset, buf) {
                     Ok(len) => return Ok(len),
-                    Err(errno) => match errno {
-                        // Read again as inode is not ready.
-                        Errno::EAGAIN | Errno::EWOULDBLOCK => {
-                            self.inode.async_poll().await?;
+                    Err(errno) => {
+                        let errno = fserror_to_kerror(errno);
+                        match errno {
+                            // Read again as inode is not ready.
+                            Errno::EAGAIN | Errno::EWOULDBLOCK => {
+                                self.inode.async_poll().await.map_err(fserror_to_kerror)?;
+                            }
+
+                            _ => return Err(errno),
                         }
-                        _ => return Err(errno),
-                    },
+                    }
                 }
             }
         } else {
-            Ok(self.inode.read_buf_at(file_offset, buf)?)
+            self.inode
+                .read_at(file_offset, buf)
+                .map_err(fserror_to_kerror)
         }
     }
 
@@ -196,22 +192,22 @@ impl File {
             .contains(FileOpenOption::APPEND)
         {
             // Jump to end.
-            self.inode.metadata()?.size
+            self.inode.metadata().map_err(fserror_to_kerror)?.size
         } else {
             self.file_option.read().offset as usize
         };
 
-        let len = self.write_buf_at(offset, buf)?;
+        let len = self.write_at(offset, buf)?;
         self.file_option.write().offset += len as u64;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        self.inode.set_atime(timestamp)?;
+        // self.inode.(timestamp)?;
         Ok(len)
     }
 
-    pub fn write_buf_at(&mut self, offset: usize, buf: &[u8]) -> KResult<usize> {
+    pub fn write_at(&mut self, offset: usize, buf: &[u8]) -> KResult<usize> {
         // First check if we have permissions to write this file.
         if !self
             .file_option
@@ -221,14 +217,17 @@ impl File {
         {
             return Err(Errno::EBADF);
         }
-        let len = self.inode.write_buf_at(offset, buf)?;
+        let len = self
+            .inode
+            .write_at(offset, buf)
+            .map_err(fserror_to_kerror)?;
 
         // Modify the time.
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        self.inode.set_mtime(timestamp)?;
+        // self.inode.set_mtime(timestamp)?;
         Ok(len)
     }
 
@@ -237,7 +236,13 @@ impl File {
         file_option.offset = match seek {
             Seek::Start(offset) => offset,
             Seek::Cur(offset) => file_option.offset as usize + offset,
-            Seek::End(offset) => self.inode.metadata()?.size.checked_add(offset).unwrap_or(0),
+            Seek::End(offset) => self
+                .inode
+                .metadata()
+                .map_err(fserror_to_kerror)?
+                .size
+                .checked_add(offset)
+                .unwrap_or(0),
         } as u64;
 
         Ok(file_option.offset as usize)
@@ -253,20 +258,20 @@ impl File {
         {
             Err(Errno::EPERM)
         } else {
-            self.inode.resize(size)
+            self.inode.resize(size).map_err(fserror_to_kerror)
         }
     }
 
-    pub fn metadata(&self) -> KResult<INodeMetadata> {
+    pub fn metadata(&self) -> Result<Metadata> {
         self.inode.metadata()
     }
 
     pub fn sync_all(&self) -> KResult<()> {
-        self.inode.sync_all()
+        self.inode.sync_all().map_err(fserror_to_kerror)
     }
 
     pub fn sync_data(&self) -> KResult<()> {
-        self.inode.sync_data()
+        self.inode.sync_data().map_err(fserror_to_kerror)
     }
 
     pub fn inode(&self) -> Arc<dyn INode> {
@@ -278,15 +283,17 @@ impl File {
         path: &str,
         maximum_follow: usize,
     ) -> KResult<Arc<dyn INode>> {
-        self.inode.lookup_with_symlink(path, maximum_follow)
+        self.inode
+            .lookup_follow(path, maximum_follow)
+            .map_err(fserror_to_kerror)
     }
 
-    pub fn poll(&self) -> KResult<PollFlags> {
-        self.inode.poll()
+    pub fn poll(&self) -> KResult<PollStatus> {
+        self.inode.poll().map_err(fserror_to_kerror)
     }
 
-    pub fn async_poll(&self) -> Pin<Box<AsyncPoll>> {
-        self.inode.async_poll()
+    pub async fn async_poll(&self) -> KResult<PollStatus> {
+        Ok(self.inode.async_poll().await.unwrap())
     }
 
     pub fn entry(&mut self) -> KResult<String> {
@@ -296,39 +303,12 @@ impl File {
         }
 
         let offset = &mut file_option.offset;
-        let name = self.inode.entry(*offset as usize)?;
+        let name = self
+            .inode
+            .get_entry(*offset as usize)
+            .map_err(fserror_to_kerror)?;
         *offset += 1;
         Ok(name)
-    }
-
-    pub fn ioctl(&self, cmdline: u64, size: usize) -> KResult<()> {
-        self.inode.ioctl(cmdline, size)
-    }
-
-    pub fn mmap(&mut self, mmap: MemoryMap) -> KResult<()> {
-        match self.inode.metadata()?.ty {
-            INodeType::CharDevice => self.inode.mmap(mmap),
-            INodeType::File => {
-                let perm = MmapPerm::from_bits_truncate(mmap.flags);
-                let arena = Arena {
-                    range: mmap.range.clone(),
-                    flags: perm.into(),
-                    callback: Box::new(FileArenaCallback {
-                        mem_start: mmap.range.start,
-                        file_start: mmap.offset,
-                        file_end: mmap.offset + mmap.range.end - mmap.range.start,
-                        frame_allocator: KernelFrameAllocator,
-                        file: INodeWrapper(self.inode.clone()),
-                    }),
-                };
-
-                let current = thread::current().unwrap();
-                current.vm.lock().add(arena);
-
-                Ok(())
-            }
-            _ => Err(Errno::EINVAL),
-        }
     }
 }
 

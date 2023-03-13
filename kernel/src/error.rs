@@ -1,5 +1,8 @@
 use core::result::Result;
 
+use rcore_fs::vfs::FsError;
+use x86_64::registers::segmentation::FS;
+
 /// Unix standard error codes.
 ///
 /// The `perror` tool can be used to find the error message which is associated with a given error code.
@@ -66,6 +69,42 @@ pub fn error_to_int<T>(result: &KResult<T>) -> i32 {
     match result.as_ref() {
         Ok(_) => 0i32,
         Err(errno) => -(*errno as i32),
+    }
+}
+
+// NotSupported,  // E_UNIMP, or E_INVAL
+// NotFile,       // E_ISDIR
+// IsDir,         // E_ISDIR, used only in link
+// NotDir,        // E_NOTDIR
+// EntryNotFound, // E_NOENT
+// EntryExist,    // E_EXIST
+// NotSameFs,     // E_XDEV
+// InvalidParam,  // E_INVAL
+// NoDeviceSpace, // E_NOSPC, but is defined and not used in the original ucore, which uses E_NO_MEM
+// DirRemoved,    // E_NOENT, when the current dir was remove by a previous unlink
+// DirNotEmpty,   // E_NOTEMPTY
+// WrongFs,       // E_INVAL, when we find the content on disk is wrong when opening the device
+// DeviceError,
+// IOCTLError,
+// NoDevice,
+// Again,       // E_AGAIN, when no data is available, never happens in fs
+// SymLoop,     // E_LOOP
+// Busy,        // E_BUSY
+// Interrupted, // E_INTR
+pub fn fserror_to_kerror(err: FsError) -> Errno {
+    match err {
+        FsError::Again => Errno::EAGAIN,
+        FsError::Busy => Errno::EBUSY,
+        FsError::DeviceError => Errno::EACCES,
+        FsError::DirNotEmpty => Errno::EINVAL,
+        FsError::EntryExist => Errno::EEXIST,
+        FsError::EntryNotFound => Errno::ENOENT,
+        FsError::NotFile => Errno::EISDIR,
+        FsError::IsDir => Errno::EISDIR,
+        FsError::NoDeviceSpace => Errno::ENOSPC,
+        FsError::Interrupted => Errno::EINTR,
+        FsError::NotSameFs => Errno::EXDEV,
+        _ => Errno::EINVAL,
     }
 }
 

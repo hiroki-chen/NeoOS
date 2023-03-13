@@ -5,10 +5,9 @@
 use core::any::Any;
 
 use alloc::sync::Arc;
+use rcore_fs::vfs::{make_rdev, FileType, INode, Metadata, PollStatus, Result, Timespec};
 
-use crate::{arch::cpu::rdrand, error::KResult, sync::mutex::SpinLockNoInterrupt as Mutex};
-
-use super::vfs::{INode, INodeMetadata, INodeType, PollFlags, Time};
+use crate::{arch::cpu::rdrand, sync::mutex::SpinLockNoInterrupt as Mutex};
 
 struct RandomInner {
     seed: u32,
@@ -32,7 +31,7 @@ impl Random {
 }
 
 impl INode for Random {
-    fn read_buf_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
+    fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
         let mut inner = self.inner.lock();
 
         // A simple linear congruential generator (LCG).
@@ -45,36 +44,36 @@ impl INode for Random {
         Ok(buf.len())
     }
 
-    fn write_buf_at(&self, offset: usize, buf: &[u8]) -> KResult<usize> {
+    fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize> {
         Ok(0)
     }
 
-    fn cast_to_any(&self) -> &dyn Any {
+    fn as_any_ref(&self) -> &dyn Any {
         self
     }
 
-    fn poll(&self) -> KResult<PollFlags> {
-        Ok(PollFlags::READ)
+    fn poll(&self) -> Result<PollStatus> {
+        Ok(PollStatus::default())
     }
 
     /// stat /dev/random
-    fn metadata(&self) -> KResult<INodeMetadata> {
-        Ok(INodeMetadata {
-            dev_id: 1,
-            inode_id: 9,
+    fn metadata(&self) -> Result<Metadata> {
+        Ok(Metadata {
+            dev: 1,
+            inode: 1,
+            size: 0,
+            blk_size: 0,
+            blocks: 0,
+            atime: Timespec { sec: 0, nsec: 0 },
+            mtime: Timespec { sec: 0, nsec: 0 },
+            ctime: Timespec { sec: 0, nsec: 0 },
+            type_: FileType::CharDevice,
             mode: 0o666,
-            link_num: 1,
+            nlinks: 1,
             uid: 0,
             gid: 0,
-            size: 0,
-            times: Time {
-                last_accessed: 0,
-                last_modified: 0,
-                last_stchange: 0,
-            },
-            blksize: 4096,
-            block_num: 0,
-            ty: INodeType::CharDevice,
+            // Assume secure.
+            rdev: make_rdev(1, 9),
         })
     }
 }

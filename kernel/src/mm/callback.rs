@@ -4,12 +4,13 @@ use core::fmt::Debug;
 
 use alloc::{boxed::Box, sync::Arc};
 use log::error;
+use rcore_fs::vfs::INode;
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::{
     arch::{mm::paging::PageTableBehaviors, PAGE_SIZE},
-    error::KResult,
-    fs::{file::ReadAsFile, vfs::INode},
+    error::{fserror_to_kerror, KResult},
+    fs::file::ReadAsFile,
     memory::FrameAlloc,
 };
 
@@ -115,7 +116,7 @@ where
             .max(0) as usize;
         let read_size = self
             .file
-            .read_buf_at(file_offset.as_u64() as usize, &mut dst[..read_size])?;
+            .read_at(file_offset.as_u64() as usize, &mut dst[..read_size])?;
         if read_size != PAGE_SIZE {
             dst[read_size..].iter_mut().for_each(|d| *d = 0);
         }
@@ -128,8 +129,8 @@ where
 pub struct INodeWrapper(pub Arc<dyn INode>);
 
 impl ReadAsFile for INodeWrapper {
-    fn read_buf_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
-        self.0.read_buf_at(offset, buf)
+    fn read_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
+        self.0.read_at(offset, buf).map_err(fserror_to_kerror)
     }
 }
 

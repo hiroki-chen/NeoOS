@@ -2,9 +2,11 @@
 
 use core::cmp::Ordering;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::collections::BTreeMap;
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
+
+use crate::{arch::DWORD_LEN, error::KResult};
 
 // Some type alias.
 
@@ -36,6 +38,7 @@ pub const BLOCK_SIZE: usize = 0x1000;
 pub const NX_MAGIC: &[u8; 4] = b"BSXN";
 pub const APFS_MAGIC: &[u8; 4] = b"BSPA";
 pub const OBJECT_HDR_SIZE: usize = core::mem::size_of::<ObjectPhysical>();
+pub const MAX_ALLOWED_CHECKPOINT_MAP_SIZE: usize = 100;
 
 bitflags! {
     /// Values used as types and subtypes by the obj_phys_t structure.
@@ -366,7 +369,6 @@ pub struct JInodeKey {
 }
 
 /// The value half of an inode record.
-#[derive(Clone, Default)]
 #[repr(C, packed)]
 pub struct JInodeVal {
     pub parent_id: u64,
@@ -387,7 +389,7 @@ pub struct JInodeVal {
     // Perhaps we won't use it at all because we do not want to do compression for the time being.
     pub uncompressed_size: u64,
     // DISABLED.
-    // pub xfields: Vec<u8>,
+    pub xfields: [u8],
 }
 
 #[derive(Clone)]
@@ -412,7 +414,7 @@ pub struct CheckpointMapPhysical {
     /// If a checkpoint needs to store more mappings than a single block can hold, the checkpoint has multiple
     /// checkpoint-mapping blocks stored contiguously in the checkpoint descriptor area. The last checkpoint-mapping
     /// block is marked with the CHECKPOINT_MAP_LAST flag.
-    pub cpm_map: Vec<CheckpointMap>,
+    pub cpm_map: [CheckpointMap; MAX_ALLOWED_CHECKPOINT_MAP_SIZE],
 }
 
 /// A volume superblock.
@@ -432,4 +434,48 @@ pub struct ApfsSuperblock {
     pub apfs_fs_reserve_block_count: u64,
     pub apfs_fs_quota_block_count: u64,
     pub apfs_fs_alloc_count: u64,
+}
+
+/// A location within a B-tree node.
+#[derive(Clone)]
+#[repr(C, align(4))]
+pub struct Nloc {
+    pub off: u16,
+    pub len: u16,
+}
+
+/// A B-tree node.
+#[repr(C, align(8))]
+pub struct BTreeNodePhysical {
+    pub btn_o: ObjectPhysical,
+    pub btn_flags: u16,
+    pub btn_level: u16,
+    pub btn_nkeys: u32,
+    pub btn_table_space: Nloc,
+    pub btn_free_space: Nloc,
+    pub btn_key_free_list: Nloc,
+    pub btn_val_free_list: Nloc,
+    /// We do not know the exact size of this struct.
+    pub btn_data: [u8],
+}
+
+/// Static information about a B-tree
+#[derive(Clone)]
+#[repr(C, align(8))]
+pub struct BTreeInfoFixed {
+    pub bt_flags: u32,
+    pub bt_node_size: u32,
+    pub bt_key_size: u32,
+    pub bt_val_size: u32,
+}
+
+/// Information about a B-tree.
+#[derive(Clone)]
+#[repr(C, align(8))]
+pub struct BTreeInfo {
+    pub bt_fixed: BTreeInfoFixed,
+    pub bt_longest_key: u32,
+    pub bt_longest_val: u32,
+    pub bt_key_count: u64,
+    pub bt_node_count: u64,
 }
