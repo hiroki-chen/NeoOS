@@ -39,3 +39,9 @@ if shutil.which('cargo') is None:
     print('Installing Rust toolchain...')
     subprocess.run(
         'curl --proto \'=http\' --tlsv1.2 -sSf https://sh.rustup.rs | sh'.split())
+    subprocess.run('cargo -V'.split())
+    # Add rust-src.
+    f = open('./rust-toolchain')
+    toolchain_version = f.read().strip('\n')
+    subprocess.run(
+        'rustup component add rust-src --toolchain {}-x86_64-unknown-linux-gnu'.format(toolchain_version).split())
