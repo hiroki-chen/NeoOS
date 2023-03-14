@@ -1,7 +1,6 @@
 use core::result::Result;
 
 use rcore_fs::vfs::FsError;
-use x86_64::registers::segmentation::FS;
 
 /// Unix standard error codes.
 ///

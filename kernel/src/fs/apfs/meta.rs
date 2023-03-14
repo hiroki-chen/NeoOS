@@ -2,11 +2,15 @@
 
 use core::cmp::Ordering;
 
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::{arch::DWORD_LEN, error::KResult};
+use crate::{
+    arch::QWORD_LEN,
+    error::{Errno, KResult},
+    function, kerror,
+};
 
 // Some type alias.
 
@@ -29,7 +33,7 @@ pub type Oid = u64;
 pub type Xid = u64;
 /// The object map type; we store it as a BTreeMap.
 ///
-/// We may need to serialize this thing.
+/// We may need to serialize this thing. virtual -> physical;
 pub type ObjectMap = BTreeMap<ObjectMapKey, ObjectMapValue>;
 
 // Some important constants.
@@ -39,6 +43,13 @@ pub const NX_MAGIC: &[u8; 4] = b"BSXN";
 pub const APFS_MAGIC: &[u8; 4] = b"BSPA";
 pub const OBJECT_HDR_SIZE: usize = core::mem::size_of::<ObjectPhysical>();
 pub const MAX_ALLOWED_CHECKPOINT_MAP_SIZE: usize = 100;
+
+// B-Tree constants.
+pub const BTREE_STORAGE_SIZE: usize =
+    BLOCK_SIZE - OBJECT_HDR_SIZE - 4 * core::mem::size_of::<Nloc>() - QWORD_LEN;
+
+/// Defines how a b-tree key should behave.
+pub trait BTreeKey: Send + Sync + Eq + Ord + PartialEq + PartialOrd {}
 
 bitflags! {
     /// Values used as types and subtypes by the obj_phys_t structure.
@@ -135,6 +146,33 @@ bitflags! {
   }
 }
 
+bitflags! {
+    /// The flags used in btree node.
+    pub struct BTreeNodeFlags: u16 {
+        const BTNODE_ROOT = 0x0001;
+        const BTNODE_LEAF = 0x0002;
+        const BTNODE_FIXED_KV_SIZE = 0x0004;
+        const BTNODE_HASHED = 0x0008;
+        const BTNODE_NOHEADER = 0x0010;
+        const BTNODE_CHECK_KOFF_INVAL = 0x8000;
+    }
+}
+
+bitflags! {
+    /// The flags used in btree.
+    pub struct BTreeFlags: u32 {
+        const BTREE_UINT64_KEYS = 0x00000001;
+        const BTREE_SEQUENTIAL_INSERT = 0x00000002;
+        const BTREE_ALLOW_GHOSTS = 0x00000004;
+        const BTREE_EPHEMERAL = 0x00000008;
+        const BTREE_PHYSICAL = 0x00000010;
+        const BTREE_NONPERSISTENT = 0x00000020;
+        const BTREE_KV_NONALIGNED = 0x00000040;
+        const BTREE_HASHED = 0x00000080;
+        const BTREE_NOHEADER = 0x0000010;
+    }
+}
+
 /// A range of physical addresses.
 #[derive(Debug, Clone)]
 #[repr(C, align(8))]
@@ -153,7 +191,7 @@ pub struct ObjectPhysical {
     ///
     /// ```c
     /// typedef pub xid_t: u64,
-    /// typedef pub oid_t: u64,
+    /// typedef pub pub: u64: Oid,
     /// ```
     pub o_oid: Oid,
     pub o_xid: Xid,
@@ -270,7 +308,7 @@ impl NxSuperBlock {
 /// As per the doc by Apple, we search the B-tree for a key whose object identifier is the same as the desired object
 /// identifier, and whose transaction identifier is less than or equal to the desired transaction identifier. If there are
 /// multiple keys that satisfy this test, use the key with the **largest** transaction identifier.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[repr(C, align(8))]
 pub struct ObjectMapKey {
     pub ok_oid: Oid,
@@ -279,7 +317,7 @@ pub struct ObjectMapKey {
 
 impl PartialEq for ObjectMapKey {
     fn eq(&self, other: &Self) -> bool {
-        self.ok_oid == other.ok_oid && self.ok_xid == other.ok_xid
+        self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -295,7 +333,11 @@ impl Ord for ObjectMapKey {
     fn cmp(&self, other: &Self) -> Ordering {
         // Determine the relationship between their object ids.
         match self.ok_oid.cmp(&other.ok_oid) {
-            Ordering::Equal => self.ok_xid.cmp(&other.ok_xid),
+            Ordering::Equal => match self.ok_xid.cmp(&other.ok_xid) {
+                // Ensures that we always read the latest record.
+                Ordering::Less | Ordering::Equal => Ordering::Equal,
+                Ordering::Greater => Ordering::Greater,
+            },
             res => res,
         }
     }
@@ -339,13 +381,6 @@ pub struct ObjectMapPhysical {
     pub om_most_recent_snap: u64,
     pub om_pending_revert_min: u64,
     pub om_pending_revert_max: u64,
-}
-
-impl ObjectMapPhysical {
-    /// Parse the raw content of the block and then return an in-memory representation of the object map.
-    pub fn parse(&self) -> ObjectMap {
-        todo!()
-    }
 }
 
 /// A header used at the beginning of all file-system keys.
@@ -417,8 +452,26 @@ pub struct CheckpointMapPhysical {
     pub cpm_map: [CheckpointMap; MAX_ALLOWED_CHECKPOINT_MAP_SIZE],
 }
 
-/// A volume superblock.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
+#[repr(C, align(2))]
+pub struct WrappedMetaCryptoState {
+    pub major_version: u16,
+    pub minor_version: u16,
+    pub cpflags: u32,
+    pub persistent_class: u32,
+    pub key_os_version: u32,
+    pub _pad: u16,
+}
+
+#[derive(Debug, Clone)]
+#[repr(C, align(8))]
+pub struct ApfsModfiedBy {
+    pub id: [u8; 32],
+    pub timestamp: u64,
+    pub last_xid: Xid,
+}
+
+#[derive(Debug, Clone)]
 #[repr(C, align(8))]
 pub struct ApfsSuperblock {
     pub apfs_o: ObjectPhysical,
@@ -434,10 +487,63 @@ pub struct ApfsSuperblock {
     pub apfs_fs_reserve_block_count: u64,
     pub apfs_fs_quota_block_count: u64,
     pub apfs_fs_alloc_count: u64,
+
+    pub apfs_meta_crypto: WrappedMetaCryptoState,
+
+    pub apfs_root_tree_type: u32,
+    pub apfs_extentref_tree_type: u32,
+    pub apfs_snap_meta_tree_type: u32,
+
+    pub apfs_omap_oid: Oid,
+    pub apfs_root_tree_oid: Oid,
+    pub apfs_extentref_tree_oid: Oid,
+    pub apfs_snap_meta_tree_oid: Oid,
+
+    pub apfs_revert_to_xid: Xid,
+    pub apfs_revert_to_sblock_oid: Oid,
+
+    pub apfs_next_obj_id: u64,
+    pub apfs_num_files: u64,
+    pub apfs_num_directories: u64,
+    pub apfs_num_symlinks: u64,
+    pub apfs_num_other_fsobjects: u64,
+    pub apfs_num_snapshots: u64,
+    pub apfs_total_blocks_alloced: u64,
+    pub apfs_total_blocks_freed: u64,
+
+    pub apfs_vol_uuid: Uuid,
+    pub apfs_last_mod_time: u64,
+
+    pub apfs_fs_flags: u64,
+
+    pub apfs_formatted_by: ApfsModfiedBy,
+    pub apfs_modified_by: [ApfsModfiedBy; 8],
+
+    pub apfs_volname: [u8; 256],
+    pub apfs_next_doc_id: u32,
+
+    pub apfs_role: u16,
+    pub _pad: u16,
+
+    pub apfs_root_to_xid: Xid,
+    pub apfs_er_state_oid: Oid,
+
+    pub apfs_cloneinfo_id_epoch: u64,
+    pub apfs_cloneinfo_xid: u64,
+
+    pub apfs_snap_meta_ext_oid: Oid,
+    pub apfs_volume_group_id: Uuid,
+
+    pub apfs_integrity_meta_oid: Oid,
+    pub apfs_fext_tree_oid: Oid,
+    pub apfs_fext_tree_type: u32,
+
+    pub reserved_type: u32,
+    pub reserved_oid: Oid,
 }
 
 /// A location within a B-tree node.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[repr(C, align(4))]
 pub struct Nloc {
     pub off: u16,
@@ -445,22 +551,133 @@ pub struct Nloc {
 }
 
 /// A B-tree node.
+#[derive(Clone, Debug)]
 #[repr(C, align(8))]
 pub struct BTreeNodePhysical {
     pub btn_o: ObjectPhysical,
     pub btn_flags: u16,
     pub btn_level: u16,
     pub btn_nkeys: u32,
+    /// If the BTNODE_FIXED_KV_SIZE flag is set, the table of contents is an array of instances of kvoff_t; otherwise,
+    /// itʼs an array of instances of kvloc_t.
     pub btn_table_space: Nloc,
+    /// The locationʼs offset is counted from the beginning of the *key area* to the beginning of the free space.
     pub btn_free_space: Nloc,
+    /// The offset from the beginning of the key area to the first available space for a key is stored in the off field,
+    /// and the total amount of free key space is stored in the len field. Each free space stores an instance of nloc_t
+    /// whose len field indicates the size of that free space and whose off field contains the location of the next free
+    /// space.
     pub btn_key_free_list: Nloc,
     pub btn_val_free_list: Nloc,
-    /// We do not know the exact size of this struct.
-    pub btn_data: [u8],
+
+    pub btn_data: [u8; BTREE_STORAGE_SIZE],
+}
+
+impl BTreeNodePhysical {
+    /// Reads the root node and construct a B-Tree in the memory.
+    pub fn parse_as_object_map(&self) -> KResult<ObjectMap> {
+        // Check if we are using object map root node.
+        if !ObjectTypeFlags::from_bits_truncate(self.btn_o.o_type)
+            .contains(ObjectTypeFlags::OBJ_PHYSICAL)
+        {
+            kerror!("cannot parse object map because the node is physical!");
+            return Err(Errno::EINVAL);
+        }
+        if !ObjectTypes::from_bits_truncate((self.btn_o.o_type & 0xff) as _)
+            .intersects(ObjectTypes::OBJECT_TYPE_BTREE_NODE | ObjectTypes::OBJECT_TYPE_BTREE)
+        {
+            kerror!("cannot parse object map because this is not a B-Tree");
+            return Err(Errno::EINVAL);
+        }
+        if !ObjectTypes::from_bits_truncate((self.btn_o.o_subtype & 0xff) as _)
+            .contains(ObjectTypes::OBJECT_TYPE_OMAP)
+        {
+            kerror!("cannot parse object map because this is not a omap");
+            return Err(Errno::EINVAL);
+        }
+
+        let keys = self.interpret_as_omap_keys()?;
+        let values = self.interpret_as_omap_values()?;
+
+        if keys.len() != values.len() {
+            kerror!("keys and values have different lengths?!");
+            return Err(Errno::EINVAL);
+        }
+
+        let mut omap = ObjectMap::new();
+        keys.into_iter().zip(values).for_each(|(k, v)| {
+            omap.insert(k, v);
+        });
+
+        Ok(omap)
+    }
+
+    /// Interprets the u8 array and returns a human-readable array of toc.
+    pub fn interpret_as_toc(&self) -> KResult<Vec<KvOff>> {
+        let mut toc = Vec::new();
+        let toc_off = self.btn_table_space.off as u32;
+        // The real length, not the capacity.
+        let toc_len = self.btn_nkeys;
+
+        for i in (toc_off..toc_len).step_by(core::mem::size_of::<KvOff>()) {
+            let kv_off = unsafe { &*(self.btn_data.as_ptr().add(i as _) as *const KvOff) }.clone();
+            toc.push(kv_off);
+        }
+
+        Ok(toc)
+    }
+
+    /// Extacts the map keys as a vector.
+    pub fn interpret_as_omap_keys(&self) -> KResult<Vec<ObjectMapKey>> {
+        let key_off = self.btn_table_space.off + self.btn_table_space.len;
+        let key_len = self.btn_nkeys as u16;
+
+        let mut keys = Vec::new();
+        let key_size = core::mem::size_of::<ObjectMapKey>() as u16;
+
+        for i in 0..key_len {
+            let key = unsafe {
+                let off = key_off + i * key_size;
+                &*(self.btn_data.as_ptr().add(off as _) as *const ObjectMapKey)
+            }
+            .clone();
+            keys.push(key);
+        }
+
+        Ok(keys)
+    }
+
+    /// Extacts the map values as a vector.
+    pub fn interpret_as_omap_values(&self) -> KResult<Vec<ObjectMapValue>> {
+        let toc = self.interpret_as_toc()?;
+        let mut values = Vec::new();
+        let data_rev = self.btn_data.iter().copied().rev().collect::<Vec<_>>();
+
+        let value_off = if BTreeNodeFlags::from_bits_truncate(self.btn_flags)
+            .contains(BTreeNodeFlags::BTNODE_ROOT)
+        {
+            core::mem::size_of::<BTreeInfo>()
+        } else {
+            0
+        };
+
+        let val_size = core::mem::size_of::<ObjectMapValue>();
+        for (i, v) in toc.iter().enumerate() {
+            // Convert the endianess.
+            let slice = data_rev[value_off..value_off + i * val_size + v.v as usize]
+                .iter()
+                .copied()
+                .rev()
+                .collect::<Vec<_>>();
+            let value = unsafe { &*(slice.as_ptr() as *const ObjectMapValue) }.clone();
+            values.push(value);
+        }
+        Ok(values)
+    }
 }
 
 /// Static information about a B-tree
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[repr(C, align(8))]
 pub struct BTreeInfoFixed {
     pub bt_flags: u32,
@@ -470,7 +687,7 @@ pub struct BTreeInfoFixed {
 }
 
 /// Information about a B-tree.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[repr(C, align(8))]
 pub struct BTreeInfo {
     pub bt_fixed: BTreeInfoFixed,
@@ -478,4 +695,26 @@ pub struct BTreeInfo {
     pub bt_longest_val: u32,
     pub bt_key_count: u64,
     pub bt_node_count: u64,
+}
+
+/// The location, within a B-tree node, of a key and value. The B-tree nodeʼs table of contents uses this structure when
+/// the keys and values are not both fixed in size.
+#[derive(Clone, Debug)]
+#[repr(C, align(4))]
+pub struct KvOff {
+    pub k: u16,
+    pub v: u16,
+}
+
+/// The location, within a B-tree node, of a fixed-size key and value.
+///
+/// The B-tree nodeʼs table of contents uses this structure when the keys and values are both fixed in size. The meaning
+/// of the offsets stored in this structureʼs k and v fields is the same as the meaning of the off field in an instance
+/// of nloc_t. This structure doesnʼt have a field thatʼs equivalent to the len field of nloc_t — the key and value
+/// lengths are always the same, and omitting them from the table of contents saves space.
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct KvLoc {
+    pub k: Nloc,
+    pub v: Nloc,
 }

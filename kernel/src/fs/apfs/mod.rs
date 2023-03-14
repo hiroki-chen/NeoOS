@@ -10,18 +10,21 @@
 //!
 //! Most implementations are directly taken from Apple's Developer Manual for APFS.
 
-use alloc::{sync::Arc, vec, vec::Vec};
+use alloc::{string::String, sync::Arc, vec, vec::Vec};
 use spin::RwLock;
 
 use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
-    fs::apfs::meta::BLOCK_SIZE,
+    fs::apfs::meta::{BTreeInfo, BLOCK_SIZE},
     function, kerror, kinfo,
     utils::calc_fletcher64,
 };
 
-use self::meta::{CheckpointMapPhysical, NxSuperBlock, ObjectPhysical, ObjectTypes, Oid};
+use self::meta::{
+    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, NxSuperBlock,
+    ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid,
+};
 
 use rcore_fs::{
     dirty::Dirty as MaybeDirty,
@@ -29,6 +32,9 @@ use rcore_fs::{
 };
 
 pub mod meta;
+
+#[cfg(feature = "apfs_write")]
+pub mod btree;
 
 /// Denotes the disk driver backend the filesystem uses.
 pub trait Device: Send + Sync {
@@ -119,15 +125,24 @@ impl BlockLike for dyn Device {}
 /// * Implement basic reading / BTree manipulations
 /// * Add more unit test suites.
 /// * Add support for concurrency.
+///
+/// All members should be guarded with a wrapper like [`Arc`] or [`RwLock`] to prevent self mutablility issues.
 pub struct AppleFileSystem {
     // TODO: What should be included here?
     superblock: RwLock<MaybeDirty<NxSuperBlock>>,
     device: Arc<dyn Device>,
+    /// Read-only volumn list. Should be a list of root node?
+    volumn_lists: RwLock<Vec<ApfsSuperblock>>,
+    /// The root node of the object map.
+    omap_root: RwLock<Option<(BTreeNodePhysical, BTreeInfo)>>,
+    /// The object map (in-memory).
+    omap: RwLock<Option<ObjectMap>>,
 }
 
 impl AppleFileSystem {
-    /// Mounts the filesystem via a device driver (AHCI SATA) and returns a arc-ed instance. We only need the superblock.
-    pub fn mount(device: Arc<dyn Device>) -> KResult<Arc<Self>> {
+    /// Mounts the APFS container via a device driver (AHCI SATA) and returns a arc-ed instance. One may need to call
+    /// `self.mount_volumns` to make other volumns present.
+    pub fn mount_container(device: Arc<dyn Device>) -> KResult<Arc<Self>> {
         // Step 1: Read block zero of the partition. This block contains a copy of the container superblock
         // (an instance of `nx_superblock_t`). It might be a copy of the latest version or an old version,
         // depending on whether the drive was unmounted cleanly.
@@ -188,7 +203,123 @@ impl AppleFileSystem {
         Ok(Arc::new(Self {
             superblock: RwLock::new(MaybeDirty::new(nx_superblock)),
             device: device.clone(),
+            volumn_lists: RwLock::new(Vec::new()),
+            omap_root: RwLock::new(None),
+            omap: RwLock::new(None),
         }))
+    }
+
+    /// Mounts all volumns
+    pub fn mount_volumns_all(&self) -> KResult<()> {
+        // Read from the nx_fs_oid.
+        let nx_fs_oid = self.superblock.read().nx_fs_oid;
+
+        // For each volume, look up the specified virtual object identifier in the container object map to locate the
+        // volume superblock. Since oid must not be zero, we can skip zeros.
+        let valid_fs_oids = nx_fs_oid
+            .into_iter()
+            .filter(|&oid| oid != 0)
+            .collect::<Vec<_>>();
+
+        for oid in valid_fs_oids {
+            let key = ObjectMapKey {
+                ok_oid: oid,
+                // TODO: There is no transaction id currently.
+                ok_xid: 0,
+            };
+
+            kinfo!("mounting {:x?}", key);
+            self.mount_volumn(&key)?;
+        }
+
+        Ok(())
+    }
+
+    /// Mounts other volumn.
+    pub fn mount_volumn(&self, omap_key: &ObjectMapKey) -> KResult<()> {
+        let omap = self.omap.read();
+        let omap_root = self.omap_root.read();
+
+        if omap.is_none() || omap_root.is_none() {
+            kerror!("cannot mount other volumns if we have not mounted the container!");
+            return Err(Errno::ENODEV);
+        }
+
+        let entry = match omap.as_ref().unwrap().get(omap_key) {
+            Some(entry) => entry,
+            None => {
+                kerror!("the requested volumn does not exist.");
+                return Err(Errno::ENOENT);
+            }
+        };
+        if entry.ov_size as usize % BLOCK_SIZE != 0 {
+            kerror!("not aligned to block size.");
+            return Err(Errno::EINVAL);
+        }
+
+        let object = read_object(&self.device, entry.ov_paddr)?;
+        // Parse it as apfs_superblock_t.
+        let apfs_superblock = unsafe { &*(object.as_ptr() as *const ApfsSuperblock) }.clone();
+
+        if !ObjectTypes::from_bits_truncate((apfs_superblock.apfs_o.o_type & 0xff) as _)
+            .contains(ObjectTypes::OBJECT_TYPE_FS)
+        {
+            kerror!("this apfs header is corrupted.");
+            return Err(Errno::EINVAL);
+        }
+
+        let volumn_name =
+            String::from_utf8(apfs_superblock.apfs_volname.to_vec()).map_err(|_| Errno::EINVAL)?;
+        kinfo!("successfully mounted volumn: {volumn_name}.");
+
+        self.volumn_lists.write().push(apfs_superblock);
+
+        Ok(())
+    }
+
+    /// Loads the object map into the filesystem.
+    pub fn load_object_map(&self) -> KResult<()> {
+        let omap_phys_oid = self.superblock.read().nx_omap_oid;
+        let buf = read_object(&self.device, omap_phys_oid)?;
+        let omap_phys = unsafe { &*(buf.as_ptr() as *const ObjectMapPhysical) };
+
+        // Read the root node.
+        let root_node_oid = omap_phys.om_tree_oid;
+        let buf = read_object(&self.device, root_node_oid)?;
+        let root_node = unsafe { &*(buf.as_ptr() as *const BTreeNodePhysical) };
+
+        // Check if root node is correct.
+        let btree_node_flags = BTreeNodeFlags::from_bits_truncate(root_node.btn_flags);
+        if !btree_node_flags.contains(BTreeNodeFlags::BTNODE_ROOT) {
+            kerror!("trying to parse a non-root node; abort.");
+            return Err(Errno::EINVAL);
+        } else if !btree_node_flags.contains(BTreeNodeFlags::BTNODE_FIXED_KV_SIZE) {
+            kerror!("non-fixed k-v pairs are not supported; abort.");
+            return Err(Errno::EINVAL);
+        }
+
+        // If this is the root node, then the end of the block contains the B-Tree node information, and we
+        // should parse this information so that we know how the tree is organized.
+        let btree_info = root_node
+            .btn_data
+            .iter()
+            .copied()
+            .rev()
+            .take(core::mem::size_of::<BTreeInfo>())
+            .rev() // Note the endianess.
+            .collect::<Vec<_>>();
+
+        // Parse the information.
+        let btree_info = unsafe { &*(btree_info.as_ptr() as *const BTreeInfo) };
+        kinfo!("loaded BTree information: {:#x?}", btree_info);
+        let omap = root_node.parse_as_object_map()?;
+
+        self.omap_root
+            .write()
+            .replace((root_node.clone(), btree_info.clone()));
+        self.omap.write().replace(omap);
+
+        Ok(())
     }
 }
 
