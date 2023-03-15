@@ -16,14 +16,14 @@ use spin::RwLock;
 use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
-    fs::apfs::meta::{BTreeInfo, BLOCK_SIZE},
+    fs::apfs::meta::{BTreeInfo, BLOCK_SIZE, ApfsVolumn},
     function, kerror, kinfo,
     utils::calc_fletcher64,
 };
 
 use self::meta::{
-    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, NxSuperBlock,
-    ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid,
+    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical,
+    NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid,
 };
 
 use rcore_fs::{
@@ -132,11 +132,11 @@ pub struct AppleFileSystem {
     superblock: RwLock<MaybeDirty<NxSuperBlock>>,
     device: Arc<dyn Device>,
     /// Read-only volumn list. Should be a list of root node?
-    volumn_lists: RwLock<Vec<ApfsSuperblock>>,
+    volumn_lists: RwLock<Vec<ApfsVolumn>>,
     /// The root node of the object map.
-    omap_root: RwLock<Option<(BTreeNodePhysical, BTreeInfo)>>,
+    nx_omap_root: RwLock<Option<(BTreeNodePhysical, BTreeInfo)>>,
     /// The object map (in-memory).
-    omap: RwLock<Option<ObjectMap>>,
+    nx_omap: RwLock<Option<ObjectMap>>,
 }
 
 impl AppleFileSystem {
@@ -204,8 +204,8 @@ impl AppleFileSystem {
             superblock: RwLock::new(MaybeDirty::new(nx_superblock)),
             device: device.clone(),
             volumn_lists: RwLock::new(Vec::new()),
-            omap_root: RwLock::new(None),
-            omap: RwLock::new(None),
+            nx_omap_root: RwLock::new(None),
+            nx_omap: RwLock::new(None),
         }))
     }
 
@@ -237,8 +237,8 @@ impl AppleFileSystem {
 
     /// Mounts other volumn.
     pub fn mount_volumn(&self, omap_key: &ObjectMapKey) -> KResult<()> {
-        let omap = self.omap.read();
-        let omap_root = self.omap_root.read();
+        let omap = self.nx_omap.read();
+        let omap_root = self.nx_omap_root.read();
 
         if omap.is_none() || omap_root.is_none() {
             kerror!("cannot mount other volumns if we have not mounted the container!");
@@ -272,52 +272,21 @@ impl AppleFileSystem {
             String::from_utf8(apfs_superblock.apfs_volname.to_vec()).map_err(|_| Errno::EINVAL)?;
         kinfo!("successfully mounted volumn: {volumn_name}.");
 
-        self.volumn_lists.write().push(apfs_superblock);
+        self.volumn_lists
+            .write()
+            .push(ApfsVolumn::from_raw(&self.device, apfs_superblock)?);
 
         Ok(())
     }
 
-    /// Loads the object map into the filesystem.
-    pub fn load_object_map(&self) -> KResult<()> {
+    /// Loads the object map of the nx_superblock into the filesystem.
+    pub fn load_nx_object_map(&self) -> KResult<()> {
         let omap_phys_oid = self.superblock.read().nx_omap_oid;
-        let buf = read_object(&self.device, omap_phys_oid)?;
-        let omap_phys = unsafe { &*(buf.as_ptr() as *const ObjectMapPhysical) };
-
-        // Read the root node.
-        let root_node_oid = omap_phys.om_tree_oid;
-        let buf = read_object(&self.device, root_node_oid)?;
-        let root_node = unsafe { &*(buf.as_ptr() as *const BTreeNodePhysical) };
-
-        // Check if root node is correct.
-        let btree_node_flags = BTreeNodeFlags::from_bits_truncate(root_node.btn_flags);
-        if !btree_node_flags.contains(BTreeNodeFlags::BTNODE_ROOT) {
-            kerror!("trying to parse a non-root node; abort.");
-            return Err(Errno::EINVAL);
-        } else if !btree_node_flags.contains(BTreeNodeFlags::BTNODE_FIXED_KV_SIZE) {
-            kerror!("non-fixed k-v pairs are not supported; abort.");
-            return Err(Errno::EINVAL);
-        }
-
-        // If this is the root node, then the end of the block contains the B-Tree node information, and we
-        // should parse this information so that we know how the tree is organized.
-        let btree_info = root_node
-            .btn_data
-            .iter()
-            .copied()
-            .rev()
-            .take(core::mem::size_of::<BTreeInfo>())
-            .rev() // Note the endianess.
-            .collect::<Vec<_>>();
-
-        // Parse the information.
-        let btree_info = unsafe { &*(btree_info.as_ptr() as *const BTreeInfo) };
-        kinfo!("loaded BTree information: {:#x?}", btree_info);
-        let omap = root_node.parse_as_object_map()?;
-
-        self.omap_root
+        let (nx_omap, root_node, btree_info) = read_omap(&self.device, omap_phys_oid)?;
+        self.nx_omap_root
             .write()
             .replace((root_node.clone(), btree_info.clone()));
-        self.omap.write().replace(omap);
+        self.nx_omap.write().replace(nx_omap);
 
         Ok(())
     }
@@ -360,8 +329,49 @@ impl INode for AppleFileSystemInode {
     }
 }
 
+pub fn read_omap(
+    device: &Arc<dyn Device>,
+    oid: Oid,
+) -> KResult<(ObjectMap, BTreeNodePhysical, BTreeInfo)> {
+    let buf = read_object(device, oid)?;
+    let omap_phys = unsafe { &*(buf.as_ptr() as *const ObjectMapPhysical) };
+
+    // Read the root node.
+    let root_node_oid = omap_phys.om_tree_oid;
+    let buf = read_object(device, root_node_oid)?;
+    let root_node = unsafe { &*(buf.as_ptr() as *const BTreeNodePhysical) }.clone();
+
+    // Check if root node is correct.
+    let btree_node_flags = BTreeNodeFlags::from_bits_truncate(root_node.btn_flags);
+    if !btree_node_flags.contains(BTreeNodeFlags::BTNODE_ROOT) {
+        kerror!("trying to parse a non-root node; abort.");
+        return Err(Errno::EINVAL);
+    } else if !btree_node_flags.contains(BTreeNodeFlags::BTNODE_FIXED_KV_SIZE) {
+        kerror!("non-fixed k-v pairs are not supported; abort.");
+        return Err(Errno::EINVAL);
+    }
+
+    // If this is the root node, then the end of the block contains the B-Tree node information, and we
+    // should parse this information so that we know how the tree is organized.
+    let btree_info = root_node
+        .btn_data
+        .iter()
+        .copied()
+        .rev()
+        .take(core::mem::size_of::<BTreeInfo>())
+        .rev() // Note the endianess.
+        .collect::<Vec<_>>();
+
+    // Parse the information.
+    let btree_info = unsafe { &*(btree_info.as_ptr() as *const BTreeInfo) }.clone();
+    kinfo!("loaded BTree information: {:#x?}", btree_info);
+    let omap = root_node.parse_as_object_map()?;
+
+    Ok((omap, root_node, btree_info))
+}
+
 /// Reads a file object from the disk at a given address.
-fn read_object(device: &Arc<dyn Device>, addr: u64) -> KResult<Vec<u8>> {
+pub fn read_object(device: &Arc<dyn Device>, addr: u64) -> KResult<Vec<u8>> {
     let mut buf = vec![0u8; BLOCK_SIZE];
     device.read_block(addr, 0, &mut buf)?;
 

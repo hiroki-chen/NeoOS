@@ -14,7 +14,7 @@ _start:
 __calc:
     add rax, rcx
     sub rcx, rcx
-    cmp rcx, rcx
+    cmp rcx, 0
     jge __calc
 
 __loop:

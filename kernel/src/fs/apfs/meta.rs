@@ -2,7 +2,7 @@
 
 use core::cmp::Ordering;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +11,8 @@ use crate::{
     error::{Errno, KResult},
     function, kerror,
 };
+
+use super::{read_omap, Device};
 
 // Some type alias.
 
@@ -35,6 +37,9 @@ pub type Xid = u64;
 ///
 /// We may need to serialize this thing. virtual -> physical;
 pub type ObjectMap = BTreeMap<ObjectMapKey, ObjectMapValue>;
+/// The filesystem inode tree.
+pub type InodeMap = BTreeMap<JInodeKey, JInodeVal>;
+pub type DirRecordMap = BTreeMap<JDrecKey, JDrecVal>;
 
 // Some important constants.
 
@@ -48,8 +53,17 @@ pub const MAX_ALLOWED_CHECKPOINT_MAP_SIZE: usize = 100;
 pub const BTREE_STORAGE_SIZE: usize =
     BLOCK_SIZE - OBJECT_HDR_SIZE - 4 * core::mem::size_of::<Nloc>() - QWORD_LEN;
 
+pub const OBJ_ID_MASK: u64 = 0x0fffffffffffffff;
+pub const OBJ_TYPE_MASK: u64 = 0xf000000000000000;
+pub const OBJ_TYPE_SHIFT: u64 = 60;
+pub const SYSTEM_OBJ_ID_MARK: u64 = 0x0fffffff00000000;
+
+pub const J_DREC_LEN_MASK: u32 = 0x000003ff;
+pub const J_DREC_HASH_MASK: u32 = 0xfffff400;
+pub const J_DREC_HASH_SHIFT: u32 = 10;
+
 /// Defines how a b-tree key should behave.
-pub trait BTreeKey: Send + Sync + Eq + Ord + PartialEq + PartialOrd {}
+pub trait BTreeKey: Eq + Ord + PartialEq + PartialOrd + Sized {}
 
 bitflags! {
     /// Values used as types and subtypes by the obj_phys_t structure.
@@ -171,6 +185,23 @@ bitflags! {
         const BTREE_HASHED = 0x00000080;
         const BTREE_NOHEADER = 0x0000010;
     }
+}
+
+bitflags! {
+  /// Values used by the flags field of j_drec_val_t to indicate a directory entryʼs type.
+  ///
+  /// These values are the same as the values defined in File Modes, except for a bit shift.
+  pub struct DrecFlags: u16 {
+      const DT_UNKNOWN = 0;
+      const DT_FIFO = 1;
+      const DT_CHR = 2;
+      const DT_DIR = 4;
+      const DT_BLK = 6;
+      const DT_REG = 8;
+      const DT_LNK = 10;
+      const DT_SOCK = 12;
+      const DT_WHT = 14;
+  }
 }
 
 /// A range of physical addresses.
@@ -344,7 +375,7 @@ impl Ord for ObjectMapKey {
 }
 
 /// A value in the object map.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[repr(C, align(8))]
 pub struct ObjectMapValue {
     pub ov_flags: u32,
@@ -398,9 +429,117 @@ pub struct JKey {
 /// The key half of a directory-information record.
 #[repr(C, packed)]
 pub struct JInodeKey {
-    /// The object identifier in the header is the file-system objectʼs identifier, also known as its inode number. The type
-    /// in the header is always `APFS_TYPE_INODE`.
+    /// The object identifier in the header is the file-system objectʼs identifier, also known as its inode number. The
+    /// type in the header is always `APFS_TYPE_INODE`.
     pub hdr: JKey,
+}
+
+/// The key half of a directory entry record.
+#[repr(C, packed)]
+pub struct JDrecKey {
+    pub hdr: JKey,
+    pub name_len: u16,
+    /// The length is undetermined.
+    pub name: [u8],
+}
+
+/// The key half of a directory entry record hashed.
+/// 
+/// Not sure if we really need this thing, but we keep it here for future usage (perhaps)?
+#[repr(C, packed)]
+pub struct JDrecHashedKey {
+    pub hdr: JKey,
+    pub name_len_and_hash: u16,
+    /// The length is undetermined.
+    pub name: [u8],
+}
+
+/// The value half of a directory entry record.
+#[repr(C, packed)]
+pub struct JDrecVal {
+    pub file_id: u64,
+    pub date_added: u64,
+    pub flags: u16,
+    pub xfields: [u8],
+}
+
+impl PartialEq for JKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for JKey {}
+
+impl PartialOrd for JKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // For sorting file-system records — for example, to keep them ordered in a B-tree — the following comparison
+        // rules are used:
+        // 1. Compare the object identifiers numerically
+        let obj_lhs = self.obj_id_and_type & OBJ_ID_MASK;
+        let obj_rhs = other.obj_id_and_type & OBJ_ID_MASK;
+
+        if obj_lhs.cmp(&obj_rhs) == Ordering::Equal {
+            return Ordering::Equal;
+        }
+
+        // 2. Compare the object types numerically.
+        let type_lhs = obj_lhs >> OBJ_TYPE_SHIFT;
+        let type_rhs = obj_rhs >> OBJ_TYPE_SHIFT;
+
+        type_lhs.cmp(&type_rhs)
+        // 3. For extended attribute records and directory entry records, compare the names lexicographically.
+        // This can be skipped for directory inodes.
+    }
+}
+
+impl PartialEq for JInodeKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for JInodeKey {}
+
+impl Ord for JInodeKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.hdr.cmp(&other.hdr)
+    }
+}
+
+impl PartialOrd for JInodeKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for JDrecKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for JDrecKey {}
+
+impl PartialOrd for JDrecKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JDrecKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.hdr.cmp(&other.hdr) {
+            Ordering::Equal => self.name.cmp(&other.name),
+            res => res,
+        }
+    }
 }
 
 /// The value half of an inode record.
@@ -618,8 +757,9 @@ impl BTreeNodePhysical {
         let toc_off = self.btn_table_space.off as u32;
         // The real length, not the capacity.
         let toc_len = self.btn_nkeys;
+        let entry_size = core::mem::size_of::<KvOff>();
 
-        for i in (toc_off..toc_len).step_by(core::mem::size_of::<KvOff>()) {
+        for i in (toc_off..toc_off + toc_len * entry_size as u32).step_by(entry_size) {
             let kv_off = unsafe { &*(self.btn_data.as_ptr().add(i as _) as *const KvOff) }.clone();
             toc.push(kv_off);
         }
@@ -661,10 +801,9 @@ impl BTreeNodePhysical {
             0
         };
 
-        let val_size = core::mem::size_of::<ObjectMapValue>();
-        for (i, v) in toc.iter().enumerate() {
+        for v in toc.iter() {
             // Convert the endianess.
-            let slice = data_rev[value_off..value_off + i * val_size + v.v as usize]
+            let slice = data_rev[value_off..value_off + v.v as usize]
                 .iter()
                 .copied()
                 .rev()
@@ -717,4 +856,29 @@ pub struct KvOff {
 pub struct KvLoc {
     pub k: Nloc,
     pub v: Nloc,
+}
+
+/// A simpler wrapper for the volumn.
+#[derive(Debug, Clone)]
+pub struct ApfsVolumn {
+    pub superblock: ApfsSuperblock,
+    pub object_map: ObjectMap,
+    // Not determined.
+    pub root_tree: (),
+}
+
+impl ApfsVolumn {
+    /// Parses the raw `apfs_superblock` struct and constructs a Self.
+    pub fn from_raw(device: &Arc<dyn Device>, apfs_superblock: ApfsSuperblock) -> KResult<Self> {
+        let apfs_omap_oid = apfs_superblock.apfs_omap_oid;
+        // Read omap.
+        let (apfs_omap, root_node, root_info) = read_omap(device, apfs_omap_oid)?;
+        // Read root tree?
+
+        Ok(Self {
+            superblock: apfs_superblock,
+            object_map: todo!(),
+            root_tree: todo!(),
+        })
+    }
 }
