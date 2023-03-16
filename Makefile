@@ -44,9 +44,14 @@ endif
 
 all: kernel
 
-# Creates virtual hard disk
+# Creates virtual hard disk.
+# TODO: Add APFS support
 hard_disk:
-	@cd $(WORK_DIR) && qemu-img create -f qcow2 $(DISK) $(DISK_SIZE)
+	@echo 'Building the hard disk with a given filesystem... This may take a while.'
+	@cd $(WORK_DIR) && mkdir -p fs && echo 'test data' >> fs/foo
+	@cd $(WORK_DIR) && rcore-fs-fuse $(DISK) fs zip
+	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
+	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)
 
 debug: kernel
 	@$(QEMU_COMMAND) -s S &

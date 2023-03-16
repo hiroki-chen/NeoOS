@@ -60,3 +60,27 @@ Intel introduced APIC after Pentium P54C CPU to enable more advanced and customa
 The IOAPIC register can be accessed by the physical address 0xffc00000, and one can verify the default address via the ACPI table obtained by the bootloader. You may need to map the address to a virtual address first.
 
 LAPIC, in fact, handles all interrupts including the interrupt issues by the current core, that from IOAPIC, and IPI (Inter-Processor Interrupt) from other LAPICs.
+
+## Apple Filesystem Support for Linux
+
+Additionally, you can install `mkfs.apfs` via this link: <https://github.com/linux-apfs/linux-apfs-rw.git>. This allows one to create an APFS filesystem image on Linux platforms. For example, you can createa an image `apfs.img` by
+
+```sh
+$ dd if=/dev/zero bs=1M count=400 > apfs.img
+400+0 records in
+400+0 records out
+419430400 bytes (419 MB, 400 MiB) copied, 0.355215 s, 1.2 GB/s
+$ mkfs.apfs apfs.img
+$ file apfs.img
+apfs.img: Apple File System (APFS), blocksize 4096
+```
+
+Then you can convert it to QCOW2 file format:
+
+```sh
+$ qemu-img convert -f raw apfs.img -O qcow2 apfs.img.qcow2
+$ qemu-img resize apfs.img.qcow2 +1G
+Image resized.
+```
+
+I have checked the correctness of the this tool using my own Rust library for APFS parsing.

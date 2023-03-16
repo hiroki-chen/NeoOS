@@ -16,14 +16,14 @@ use spin::RwLock;
 use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
-    fs::apfs::meta::{BTreeInfo, BLOCK_SIZE, ApfsVolumn},
-    function, kerror, kinfo,
+    fs::apfs::meta::{ApfsVolumn, BTreeInfo, BLOCK_SIZE},
+    function, kerror, kinfo, kwarn,
     utils::calc_fletcher64,
 };
 
 use self::meta::{
-    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical,
-    NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid,
+    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, FsMap, NxSuperBlock,
+    ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid, Omap,
 };
 
 use rcore_fs::{
@@ -129,7 +129,9 @@ impl BlockLike for dyn Device {}
 /// All members should be guarded with a wrapper like [`Arc`] or [`RwLock`] to prevent self mutablility issues.
 pub struct AppleFileSystem {
     // TODO: What should be included here?
+    /// The container's superblock.
     superblock: RwLock<MaybeDirty<NxSuperBlock>>,
+    /// The block driver (e.g., AHCI controller).
     device: Arc<dyn Device>,
     /// Read-only volumn list. Should be a list of root node?
     volumn_lists: RwLock<Vec<ApfsVolumn>>,
@@ -170,7 +172,11 @@ impl AppleFileSystem {
             // Should check whether this object is a checkpoint mapping or another superblock.
             // This can be done by reading the header of the target block.
             let addr = nx_xp_desc_base + idx as u64;
-            let object = read_object(&device, addr)?;
+            let object = match read_object(&device, addr) {
+                Ok(object) => object,
+                // Not a valid block (maybe continuguous to the previous one).
+                Err(_) => continue,
+            };
 
             // Check the type.
             let hdr = unsafe { &*(object.as_ptr() as *const ObjectPhysical) };
@@ -282,11 +288,11 @@ impl AppleFileSystem {
     /// Loads the object map of the nx_superblock into the filesystem.
     pub fn load_nx_object_map(&self) -> KResult<()> {
         let omap_phys_oid = self.superblock.read().nx_omap_oid;
-        let (nx_omap, root_node, btree_info) = read_omap(&self.device, omap_phys_oid)?;
+        let omap = read_omap(&self.device, omap_phys_oid)?;
         self.nx_omap_root
             .write()
-            .replace((root_node.clone(), btree_info.clone()));
-        self.nx_omap.write().replace(nx_omap);
+            .replace((omap.root_node.clone(), omap.btree_info.clone()));
+        self.nx_omap.write().replace(omap.omap);
 
         Ok(())
     }
@@ -306,6 +312,13 @@ impl FileSystem for AppleFileSystem {
     }
 }
 
+impl Drop for AppleFileSystem {
+    fn drop(&mut self) {
+        self.sync()
+            .expect("Cannot synchronize the filesystem. Check if driver is dropped accidentally.");
+    }
+}
+
 pub struct AppleFileSystemInode {
     // TODO: What should be included here?
     fs: Arc<AppleFileSystem>,
@@ -317,7 +330,14 @@ impl INode for AppleFileSystemInode {
     }
 
     fn write_at(&self, offset: usize, buf: &[u8]) -> rcore_fs::vfs::Result<usize> {
-        todo!()
+        #[cfg(not(feature = "apfs_write"))]
+        {
+            kwarn!("Trying to write to a read-only filesystem. Your modification is lost.");
+            // Wo do not panic here.
+            Ok(0)
+        }
+        #[cfg(feature = "apfs_write")]
+        compile_error!("write is currently unsupported.");
     }
 
     fn poll(&self) -> rcore_fs::vfs::Result<rcore_fs::vfs::PollStatus> {
@@ -325,14 +345,11 @@ impl INode for AppleFileSystemInode {
     }
 
     fn as_any_ref(&self) -> &dyn core::any::Any {
-        todo!()
+        self
     }
 }
 
-pub fn read_omap(
-    device: &Arc<dyn Device>,
-    oid: Oid,
-) -> KResult<(ObjectMap, BTreeNodePhysical, BTreeInfo)> {
+fn do_read_btree(device: &Arc<dyn Device>, oid: Oid) -> KResult<(BTreeInfo, BTreeNodePhysical)> {
     let buf = read_object(device, oid)?;
     let omap_phys = unsafe { &*(buf.as_ptr() as *const ObjectMapPhysical) };
 
@@ -364,10 +381,30 @@ pub fn read_omap(
 
     // Parse the information.
     let btree_info = unsafe { &*(btree_info.as_ptr() as *const BTreeInfo) }.clone();
-    kinfo!("loaded BTree information: {:#x?}", btree_info);
-    let omap = root_node.parse_as_object_map()?;
 
-    Ok((omap, root_node, btree_info))
+    Ok((btree_info, root_node))
+}
+
+/// Reads the object map for a given container/volumn into the memory.
+pub fn read_omap(device: &Arc<dyn Device>, oid: Oid) -> KResult<Omap> {
+    let (btree_info, root_node) = do_read_btree(device, oid)?;
+    kinfo!("loaded BTree information: {:#x?}", btree_info);
+
+    let omap = root_node.parse_as_object_map(device)?;
+
+    Ok(Omap {
+        omap,
+        root_node,
+        btree_info,
+    })
+}
+
+/// Reads the filesystem map for a given container/volumn into the memory.
+pub fn read_fs_tree(device: &Arc<dyn Device>, oid: Oid) -> KResult<FsMap> {
+    let (btree_info, root_node) = do_read_btree(device, oid)?;
+    kinfo!("loaded BTree information: {:#x?}", btree_info);
+
+    todo!()
 }
 
 /// Reads a file object from the disk at a given address.

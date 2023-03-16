@@ -2,6 +2,7 @@
 
 use alloc::sync::Arc;
 use log::debug;
+use rcore_fs::dev::{BlockDevice, DevError, self};
 
 use crate::{
     error::{Errno, KResult},
@@ -116,5 +117,28 @@ pub fn init_ahci(header: usize, size: usize) -> KResult<Arc<AhciDriver>> {
         }
         // No device!
         None => Err(Errno::EACCES),
+    }
+}
+
+pub struct BlockDriverWrapper(pub Arc<dyn BlockDriver>);
+
+impl BlockDevice for BlockDriverWrapper {
+    const BLOCK_SIZE_LOG2: u8 = 9; // 512
+    fn read_at(&self, block_id: usize, buf: &mut [u8]) -> dev::Result<()> {
+        match self.0.read_block(block_id, buf) {
+            true => Ok(()),
+            false => Err(DevError),
+        }
+    }
+
+    fn write_at(&self, block_id: usize, buf: &[u8]) -> dev::Result<()> {
+        match self.0.write_block(block_id, buf) {
+            true => Ok(()),
+            false => Err(DevError),
+        }
+    }
+
+    fn sync(&self) -> dev::Result<()> {
+        Ok(())
     }
 }

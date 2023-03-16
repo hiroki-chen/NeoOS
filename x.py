@@ -45,3 +45,11 @@ if shutil.which('cargo') is None:
     toolchain_version = f.read().strip('\n')
     subprocess.run(
         'rustup component add rust-src --toolchain {}-x86_64-unknown-linux-gnu'.format(toolchain_version).split())
+
+if shutil.which('rcore-fs-fuse') is None:
+      # For creating the SFS image.
+      subprocess.run(
+          'cargo install --git https://github.com/rcore-os/rcore-fs.git --rev 7f5eeac --force'
+      )
+
+print('Done!')

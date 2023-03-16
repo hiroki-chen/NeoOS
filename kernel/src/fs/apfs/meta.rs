@@ -2,7 +2,11 @@
 
 use core::cmp::Ordering;
 
-use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+    vec::Vec,
+};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +16,7 @@ use crate::{
     function, kerror,
 };
 
-use super::{read_omap, Device};
+use super::{read_fs_tree, read_object, read_omap, Device};
 
 // Some type alias.
 
@@ -62,8 +66,46 @@ pub const J_DREC_LEN_MASK: u32 = 0x000003ff;
 pub const J_DREC_HASH_MASK: u32 = 0xfffff400;
 pub const J_DREC_HASH_SHIFT: u32 = 10;
 
+// Key types.
+
+pub const APFS_TYPE_ANY: u8 = 0;
+pub const APFS_TYPE_SNAP_METADATA: u8 = 1;
+pub const APFS_TYPE_EXTENT: u8 = 2;
+pub const APFS_TYPE_INODE: u8 = 3;
+pub const APFS_TYPE_XATTR: u8 = 4;
+pub const APFS_TYPE_SIBLING_LINK: u8 = 5;
+pub const APFS_TYPE_DSTREAM_ID: u8 = 6;
+pub const APFS_TYPE_CRYPTO_STATE: u8 = 7;
+pub const APFS_TYPE_FILE_EXTENT: u8 = 8;
+pub const APFS_TYPE_DIR_REC: u8 = 9;
+pub const APFS_TYPE_DIR_STATS: u8 = 10;
+pub const APFS_TYPE_SNAP_NAME: u8 = 11;
+pub const APFS_TYPE_SIBLING_MAP: u8 = 12;
+pub const APFS_TYPE_FILE_INFO: u8 = 13;
+pub const APFS_TYPE_MAX_VALID: u8 = 13;
+pub const APFS_TYPE_MAX: u8 = 15;
+pub const APFS_TYPE_INVALID: u8 = 15;
+
 /// Defines how a b-tree key should behave.
-pub trait BTreeKey: Eq + Ord + PartialEq + PartialOrd + Sized {}
+pub trait BTreeKey: Clone + Eq + Ord + PartialEq + PartialOrd + Sized {
+    /// Imports a raw byte array into `self`.
+    fn import(buf: &[u8]) -> Self {
+        // todo: check header.
+        unsafe { &*(buf.as_ptr() as *const Self) }.clone()
+    }
+
+    /// Checks the type.
+    fn check(&self) -> bool {
+        true
+    }
+}
+
+pub trait BTreeValue: Clone + Sized {
+    fn import(buf: &[u8]) -> Self {
+        // todo: check header? => dispatch to each implementation.
+        unsafe { &*(buf.as_ptr() as *const Self) }.clone()
+    }
+}
 
 bitflags! {
     /// Values used as types and subtypes by the obj_phys_t structure.
@@ -366,8 +408,8 @@ impl Ord for ObjectMapKey {
         match self.ok_oid.cmp(&other.ok_oid) {
             Ordering::Equal => match self.ok_xid.cmp(&other.ok_xid) {
                 // Ensures that we always read the latest record.
-                Ordering::Less | Ordering::Equal => Ordering::Equal,
-                Ordering::Greater => Ordering::Greater,
+                Ordering::Greater | Ordering::Equal => Ordering::Equal,
+                Ordering::Less => Ordering::Less,
             },
             res => res,
         }
@@ -418,6 +460,7 @@ pub struct ObjectMapPhysical {
 ///
 /// All file-system objects have a key that begins with this information. The key for some object types have additional
 /// fields that follow this header, and other object types use [`JKey`] as their entire key.
+#[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct JKey {
     /// The objectʼs identifier is a pub value accessed as obj_id_and_type & OBJ_ID_MASK. The objectʼs type is a uint8_: u64,
@@ -426,7 +469,15 @@ pub struct JKey {
     pub obj_id_and_type: u64,
 }
 
+impl JKey {
+    #[inline]
+    pub fn get_type(&self) -> u8 {
+        ((self.obj_id_and_type & OBJ_ID_MASK) >> OBJ_TYPE_SHIFT) as _
+    }
+}
+
 /// The key half of a directory-information record.
+#[derive(Debug, Clone)]
 #[repr(C, packed)]
 pub struct JInodeKey {
     /// The object identifier in the header is the file-system objectʼs identifier, also known as its inode number. The
@@ -435,32 +486,53 @@ pub struct JInodeKey {
 }
 
 /// The key half of a directory entry record.
+#[derive(Debug, Clone)]
 #[repr(C, packed)]
 pub struct JDrecKey {
     pub hdr: JKey,
     pub name_len: u16,
     /// The length is undetermined.
-    pub name: [u8],
+    pub name: [u8; 4000],
 }
 
 /// The key half of a directory entry record hashed.
-/// 
+///
 /// Not sure if we really need this thing, but we keep it here for future usage (perhaps)?
+#[derive(Clone)]
 #[repr(C, packed)]
 pub struct JDrecHashedKey {
     pub hdr: JKey,
-    pub name_len_and_hash: u16,
+    pub name_len_and_hash: u32,
     /// The length is undetermined.
-    pub name: [u8],
+    pub name: [u8; 255],
+}
+
+impl core::fmt::Debug for JDrecHashedKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name_len_and_hash = self.name_len_and_hash;
+        f.debug_struct("JDrecHashedKey")
+            .field("hdr", &self.hdr)
+            .field("name_len_and_hash", &name_len_and_hash)
+            .field(
+                "name",
+                &alloc::string::String::from_utf8(
+                    self.name[..(self.name_len_and_hash & J_DREC_LEN_MASK) as usize].to_vec(),
+                )
+                .unwrap(),
+            )
+            .finish()
+    }
 }
 
 /// The value half of a directory entry record.
+#[derive(Debug, Clone)]
 #[repr(C, packed)]
 pub struct JDrecVal {
     pub file_id: u64,
     pub date_added: u64,
     pub flags: u16,
-    pub xfields: [u8],
+    /// Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
+    pub xfields: [u8; BLOCK_SIZE - 24],
 }
 
 impl PartialEq for JKey {
@@ -483,7 +555,7 @@ impl Ord for JKey {
         // rules are used:
         // 1. Compare the object identifiers numerically
         let obj_lhs = self.obj_id_and_type & OBJ_ID_MASK;
-        let obj_rhs = other.obj_id_and_type & OBJ_ID_MASK;
+        let obj_rhs = self.obj_id_and_type & OBJ_ID_MASK;
 
         if obj_lhs.cmp(&obj_rhs) == Ordering::Equal {
             return Ordering::Equal;
@@ -542,7 +614,71 @@ impl Ord for JDrecKey {
     }
 }
 
+impl PartialEq for JDrecHashedKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for JDrecHashedKey {}
+
+impl PartialOrd for JDrecHashedKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JDrecHashedKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.hdr.cmp(&other.hdr) {
+            Ordering::Equal => self.name.cmp(&other.name),
+            res => res,
+        }
+    }
+}
+
+// TODO: Need to perform a check on the header.
+impl BTreeKey for ObjectMapKey {}
+impl BTreeKey for JDrecKey {
+    fn check(&self) -> bool {
+        self.hdr.get_type() == APFS_TYPE_DIR_REC
+    }
+}
+impl BTreeKey for JInodeKey {
+    fn check(&self) -> bool {
+        self.hdr.get_type() == APFS_TYPE_INODE
+    }
+}
+impl BTreeKey for JDrecHashedKey {
+    fn check(&self) -> bool {
+        self.hdr.get_type() == APFS_TYPE_DIR_REC
+    }
+}
+impl BTreeKey for u64 {}
+
+impl BTreeValue for ObjectMapValue {}
+impl BTreeValue for JInodeVal {}
+impl BTreeValue for JDrecVal {}
+impl BTreeValue for u64 {}
+
+#[derive(Debug, Clone)]
+#[repr(C, align(8))]
+pub struct XfBlob {
+    pub xf_num_exts: u16,
+    pub xf_used_data: u16,
+    pub xf_data: [u8; 1000],
+}
+
+#[derive(Debug, Clone)]
+#[repr(C, align(8))]
+pub struct Xfields {
+    pub x_type: u8,
+    pub x_flags: u8,
+    pub x_size: u16,
+}
+
 /// The value half of an inode record.
+#[derive(Debug, Clone)]
 #[repr(C, packed)]
 pub struct JInodeVal {
     pub parent_id: u64,
@@ -554,6 +690,7 @@ pub struct JInodeVal {
     pub internal_flags: u64,
     pub nchildren: i32,
     pub nlink: i32,
+    pub default_protection_class: u32,
     pub write_generation_counter: u32,
     pub bsd_flags: u32,
     pub owner: u32,
@@ -562,8 +699,8 @@ pub struct JInodeVal {
     _pad1: u16,
     // Perhaps we won't use it at all because we do not want to do compression for the time being.
     pub uncompressed_size: u64,
-    // DISABLED.
-    pub xfields: [u8],
+    /// Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
+    pub xfields: [u8; BLOCK_SIZE - 92],
 }
 
 #[derive(Clone)]
@@ -713,8 +850,57 @@ pub struct BTreeNodePhysical {
 }
 
 impl BTreeNodePhysical {
+    /// Traverses the B-Tree level by level.
+    pub fn level_traverse<K, V>(&self, device: &Arc<dyn Device>) -> KResult<BTreeMap<K, V>>
+    where
+        K: BTreeKey,
+        V: BTreeValue,
+    {
+        let mut queue = VecDeque::new();
+        let mut map = BTreeMap::<K, V>::new();
+        queue.push_back(self.clone());
+
+        while let Some(node) = queue.pop_front() {
+            if !BTreeNodeFlags::from_bits_truncate(node.btn_flags)
+                .contains(BTreeNodeFlags::BTNODE_LEAF)
+                && node.btn_level != 0
+            {
+                let values = self.interpret_as_values::<Oid>()?;
+                // Insert the next-level nodes.
+                values.iter().for_each(|value| {
+                    let node_oid = *value;
+                    let node_buf = read_object(device, node_oid).unwrap();
+                    let node_cur =
+                        unsafe { &*(node_buf.as_ptr() as *const BTreeNodePhysical) }.clone();
+                    if ObjectTypes::from_bits_truncate((self.btn_o.o_type & 0xff) as _).intersects(
+                        ObjectTypes::OBJECT_TYPE_BTREE_NODE | ObjectTypes::OBJECT_TYPE_BTREE,
+                    ) {
+                        queue.push_back(node_cur.clone());
+                    }
+                });
+            } else {
+                let keys = self.interpret_as_keys::<K>()?;
+                let values = self.interpret_as_values::<V>()?;
+
+                if keys.len() != values.len() {
+                    log::error!("keys and values have different lengths?!");
+                    return Err(Errno::EINVAL);
+                }
+                let kv = keys.into_iter().zip(values).collect::<Vec<_>>();
+                // It is the leaf node. We read into the memory.
+                kv.iter().cloned().for_each(|(key, value)| {
+                    if key.check() {
+                        map.insert(key, value);
+                    }
+                });
+            }
+        }
+
+        Ok(map)
+    }
+
     /// Reads the root node and construct a B-Tree in the memory.
-    pub fn parse_as_object_map(&self) -> KResult<ObjectMap> {
+    pub fn parse_as_object_map(&self, device: &Arc<dyn Device>) -> KResult<ObjectMap> {
         // Check if we are using object map root node.
         if !ObjectTypeFlags::from_bits_truncate(self.btn_o.o_type)
             .contains(ObjectTypeFlags::OBJ_PHYSICAL)
@@ -725,70 +911,83 @@ impl BTreeNodePhysical {
         if !ObjectTypes::from_bits_truncate((self.btn_o.o_type & 0xff) as _)
             .intersects(ObjectTypes::OBJECT_TYPE_BTREE_NODE | ObjectTypes::OBJECT_TYPE_BTREE)
         {
-            kerror!("cannot parse object map because this is not a B-Tree");
+            kerror!("cannot parse object map because this is not a B-Tree.");
             return Err(Errno::EINVAL);
         }
         if !ObjectTypes::from_bits_truncate((self.btn_o.o_subtype & 0xff) as _)
             .contains(ObjectTypes::OBJECT_TYPE_OMAP)
         {
-            kerror!("cannot parse object map because this is not a omap");
+            kerror!("cannot parse object map because this is not a omap.");
             return Err(Errno::EINVAL);
         }
 
-        let keys = self.interpret_as_omap_keys()?;
-        let values = self.interpret_as_omap_values()?;
-
-        if keys.len() != values.len() {
-            kerror!("keys and values have different lengths?!");
-            return Err(Errno::EINVAL);
-        }
-
-        let mut omap = ObjectMap::new();
-        keys.into_iter().zip(values).for_each(|(k, v)| {
-            omap.insert(k, v);
-        });
-
-        Ok(omap)
+        self.level_traverse(device)
     }
 
     /// Interprets the u8 array and returns a human-readable array of toc.
-    pub fn interpret_as_toc(&self) -> KResult<Vec<KvOff>> {
+    pub fn interpret_as_toc(&self) -> KResult<Vec<TocEntry>> {
+        let fixed = BTreeNodeFlags::BTNODE_FIXED_KV_SIZE
+            .intersects(BTreeNodeFlags::from_bits_truncate(self.btn_flags));
+
         let mut toc = Vec::new();
         let toc_off = self.btn_table_space.off as u32;
         // The real length, not the capacity.
         let toc_len = self.btn_nkeys;
-        let entry_size = core::mem::size_of::<KvOff>();
+        let key_size = if fixed {
+            core::mem::size_of::<KvOff>()
+        } else {
+            core::mem::size_of::<KvLoc>()
+        };
 
-        for i in (toc_off..toc_off + toc_len * entry_size as u32).step_by(entry_size) {
-            let kv_off = unsafe { &*(self.btn_data.as_ptr().add(i as _) as *const KvOff) }.clone();
-            toc.push(kv_off);
+        for i in (toc_off..toc_off + toc_len * key_size as u32).step_by(key_size) {
+            let entry = unsafe {
+                if fixed {
+                    TocEntry::Off((&*(self.btn_data.as_ptr().add(i as _) as *const KvOff)).clone())
+                } else {
+                    TocEntry::Loc((&*(self.btn_data.as_ptr().add(i as _) as *const KvLoc)).clone())
+                }
+            };
+            toc.push(entry);
         }
 
         Ok(toc)
     }
 
-    /// Extacts the map keys as a vector.
-    pub fn interpret_as_omap_keys(&self) -> KResult<Vec<ObjectMapKey>> {
+    /// Extracts the tree keys as a vector.
+    pub fn interpret_as_keys<K>(&self) -> KResult<Vec<K>>
+    where
+        K: BTreeKey,
+    {
+        let toc = self.interpret_as_toc()?;
         let key_off = self.btn_table_space.off + self.btn_table_space.len;
-        let key_len = self.btn_nkeys as u16;
+        // Need to first check the key header.
+        let mut vec = Vec::new();
+        for entry in toc.iter() {
+            let key = match entry {
+                TocEntry::Off(kv) => {
+                    let start = (key_off + kv.k) as usize;
+                    // Because this is fixed, we do not need to give a size.
+                    let end = start + core::mem::size_of::<K>();
+                    K::import(&self.btn_data[start..end])
+                }
+                TocEntry::Loc(kv) => {
+                    let start = (key_off + kv.k.off) as usize;
+                    let end = start + kv.k.len as usize;
+                    K::import(&self.btn_data[start..end])
+                }
+            };
 
-        let mut keys = Vec::new();
-        let key_size = core::mem::size_of::<ObjectMapKey>() as u16;
-
-        for i in 0..key_len {
-            let key = unsafe {
-                let off = key_off + i * key_size;
-                &*(self.btn_data.as_ptr().add(off as _) as *const ObjectMapKey)
-            }
-            .clone();
-            keys.push(key);
+            vec.push(key);
         }
 
-        Ok(keys)
+        Ok(vec)
     }
 
     /// Extacts the map values as a vector.
-    pub fn interpret_as_omap_values(&self) -> KResult<Vec<ObjectMapValue>> {
+    pub fn interpret_as_values<V>(&self) -> KResult<Vec<V>>
+    where
+        V: BTreeValue,
+    {
         let toc = self.interpret_as_toc()?;
         let mut values = Vec::new();
         let data_rev = self.btn_data.iter().copied().rev().collect::<Vec<_>>();
@@ -801,15 +1000,19 @@ impl BTreeNodePhysical {
             0
         };
 
-        for v in toc.iter() {
+        for entry in toc.iter() {
+            let offset = match entry {
+                TocEntry::Loc(kv) => kv.v.off,
+                TocEntry::Off(kv) => kv.v,
+            };
             // Convert the endianess.
-            let slice = data_rev[value_off..value_off + v.v as usize]
+            let slice = data_rev[value_off..value_off + offset as usize]
                 .iter()
                 .copied()
                 .rev()
                 .collect::<Vec<_>>();
-            let value = unsafe { &*(slice.as_ptr() as *const ObjectMapValue) }.clone();
-            values.push(value);
+
+            values.push(V::import(&slice));
         }
         Ok(values)
     }
@@ -858,27 +1061,62 @@ pub struct KvLoc {
     pub v: Nloc,
 }
 
-/// A simpler wrapper for the volumn.
-#[derive(Debug, Clone)]
+/// The toc entry.
+pub enum TocEntry {
+    Off(KvOff),
+    Loc(KvLoc),
+}
+
+/// This is the in-memory representation of the object map.
+#[derive(Debug)]
+pub struct Omap {
+    pub omap: ObjectMap,
+    pub root_node: BTreeNodePhysical,
+    pub btree_info: BTreeInfo,
+}
+
+/// This is the in-memory representation of the fs map.
+#[derive(Debug)]
+pub struct FsMap {
+    pub inode_map: InodeMap,
+    pub dir_record_map: DirRecordMap,
+    pub root_node: BTreeNodePhysical,
+    pub btree_info: BTreeInfo,
+}
+
+/// A simple wrapper for the volumn.
+#[derive(Debug)]
 pub struct ApfsVolumn {
     pub superblock: ApfsSuperblock,
-    pub object_map: ObjectMap,
-    // Not determined.
-    pub root_tree: (),
+    pub omap: Omap,
+    pub fs_map: FsMap,
 }
 
 impl ApfsVolumn {
     /// Parses the raw `apfs_superblock` struct and constructs a Self.
     pub fn from_raw(device: &Arc<dyn Device>, apfs_superblock: ApfsSuperblock) -> KResult<Self> {
         let apfs_omap_oid = apfs_superblock.apfs_omap_oid;
+        // Note that this is the *virtual object identifier*.
+        let apfs_root_tree_oid = apfs_superblock.apfs_root_tree_oid;
         // Read omap.
-        let (apfs_omap, root_node, root_info) = read_omap(device, apfs_omap_oid)?;
-        // Read root tree?
+        let omap = read_omap(device, apfs_omap_oid)?;
+        // Read root node's oid.
+        let apfs_root_addr = omap
+            .omap
+            .get(&ObjectMapKey {
+                ok_oid: apfs_root_tree_oid,
+                ok_xid: 0x0,
+            })
+            .ok_or(Errno::ENOENT)?
+            .ov_paddr;
+
+        // Read the file system tree.
+        let fs_map = read_fs_tree(device, apfs_root_addr)?;
 
         Ok(Self {
             superblock: apfs_superblock,
-            object_map: todo!(),
-            root_tree: todo!(),
+            omap,
+            fs_map,
         })
     }
 }

@@ -5,13 +5,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["multiprocessor", "x2apic", "sfs", "apfs"]
+default = ["multiprocessor", "x2apic", "sfs", "apfs", "mount_sfs"]
 # TODO: separate as a single library.
 apfs = []
 # Allow write to the APFS (needs BTree support).
 apfs_write = []
 # Simple file system.
 sfs = []
+mount_apfs = []
+mount_sfs = []
 multiprocessor = []
 x2apic = []
 xapic = []
@@ -35,6 +37,7 @@ pci = { git = "https://github.com/hiroki-chen/pci-rs.git" }
 pc-keyboard = "0.6.1"
 raw-cpuid = "10.6.0"
 rcore-fs = { git = "https://github.com/rcore-os/rcore-fs.git" }
+rcore-fs-mountfs = { git = "https://github.com/rcore-os/rcore-fs.git" }
 spin = { version = "0.9.5", default-features = false, features = [
   'rwlock',
   'once',
