@@ -2,13 +2,17 @@
 
 use alloc::sync::Arc;
 use log::debug;
-use rcore_fs::dev::{BlockDevice, DevError, self};
+use rcore_fs::dev::{self, BlockDevice, DevError};
 
 use crate::{
     error::{Errno, KResult},
+    function, kerror,
     memory::{allocate_frame_contiguous, deallocate_frame, phys_to_virt, virt_to_phys},
     sync::mutex::SpinLock as Mutex,
 };
+
+#[cfg(feature = "apfs")]
+use crate::fs::apfs::Device;
 
 use super::{
     isomorphic_drivers::{
@@ -122,6 +126,7 @@ pub fn init_ahci(header: usize, size: usize) -> KResult<Arc<AhciDriver>> {
 
 pub struct BlockDriverWrapper(pub Arc<dyn BlockDriver>);
 
+#[cfg(feature = "sfs")]
 impl BlockDevice for BlockDriverWrapper {
     const BLOCK_SIZE_LOG2: u8 = 9; // 512
     fn read_at(&self, block_id: usize, buf: &mut [u8]) -> dev::Result<()> {
@@ -139,6 +144,44 @@ impl BlockDevice for BlockDriverWrapper {
     }
 
     fn sync(&self) -> dev::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "apfs")]
+impl Device for BlockDriverWrapper {
+    fn read_buf_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
+        // Note that the block_size for AHCI driver is 512 bytes.
+        let start = offset / BLOCK_SIZE;
+        // How many AHCI blocks to be read.
+        let nblocks = buf.len() / BLOCK_SIZE;
+
+        for i in 0..nblocks {
+            // The buf range.
+            let range_start = i * BLOCK_SIZE;
+            let range_end = (range_start + BLOCK_SIZE).min(buf.len());
+
+            if !self
+                .0
+                .read_block(i + start, &mut buf[range_start..range_end])
+            {
+                kerror!("read AHCI block error.");
+                return Err(Errno::ENODEV);
+            }
+        }
+
+        Ok(buf.len())
+    }
+
+    fn write_buf_at(&self, offset: usize, buf: &[u8]) -> KResult<usize> {
+        #[cfg(feature = "apfs_write")]
+        unimplemented!();
+
+        #[cfg(not(feature = "apfs_write"))]
+        panic!("cannot write to a read-only partition!");
+    }
+
+    fn sync(&self) -> KResult<()> {
         Ok(())
     }
 }

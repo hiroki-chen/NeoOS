@@ -18,6 +18,7 @@
 BACKTRACE	?= 5
 OS_LOG_LEVEL	?= info
 TEST_KERNEL	?= ./test_jump.S
+FILE_SYSTEM ?= sfs
 WORK_DIR 	?= ./test
 BOOT_DIR 	:= $(WORK_DIR)/esp/efi/boot
 EFI_TARGET	?= target/x86_64-unknown-uefi/debug/boot.efi
@@ -45,13 +46,23 @@ endif
 all: kernel
 
 # Creates virtual hard disk.
-# TODO: Add APFS support
 hard_disk:
 	@echo 'Building the hard disk with a given filesystem... This may take a while.'
+ifeq ($(FILE_SYSTEM), sfs)
 	@cd $(WORK_DIR) && mkdir -p fs && echo 'test data' >> fs/foo
 	@cd $(WORK_DIR) && rcore-fs-fuse $(DISK) fs zip
 	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
 	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)
+else
+	@cd $(WORK_DIR) && dd if=/dev/zero bs=1M count=400 > $(DISK) && mkfs.apfs $(DISK)
+	@cd $(WORK_DIR) && sudo mount -o loop,readwrite $(DISK) /mnt
+# TODO: Add meaningful files/directories.
+	@mkdir -p /mnt/foo && touch /mnt/bar && mkdir -p baz
+	@sudo umount /mnt
+	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
+	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)
+endif
+
 
 debug: kernel
 	@$(QEMU_COMMAND) -s S &

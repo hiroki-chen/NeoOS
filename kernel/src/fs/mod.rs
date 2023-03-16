@@ -6,16 +6,11 @@
 
 use alloc::{sync::Arc, vec::Vec};
 use lazy_static::lazy_static;
-use rcore_fs::vfs::{FileSystem, INode};
-use rcore_fs_mountfs::MountFS;
 
 use crate::{
     drivers::{block::BlockDriverWrapper, BLOCK_DRIVERS},
     error::KResult,
-    fs::sfs::SimpleFileSystem,
 };
-
-use self::apfs::Device;
 
 pub mod devfs;
 pub mod file;
@@ -33,8 +28,9 @@ compile_error!("You cannot mount both filesystems!");
 
 pub const MAXIMUM_FOLLOW: usize = 0x4;
 
+#[cfg(feature = "apfs")]
 // A debugging implementation.
-impl Device for Vec<u8> {
+impl apfs::Device for Vec<u8> {
     fn read_buf_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
         buf.copy_from_slice(&self[offset..offset + buf.len()]);
         Ok(buf.len())
@@ -51,6 +47,10 @@ impl Device for Vec<u8> {
 
 #[cfg(feature = "mount_sfs")]
 lazy_static! {
+    use rcore_fs::vfs::{FileSystem, INode};
+    use rcore_fs_mountfs::MountFS;
+
+    use crate::fs::sfs::SimpleFileSystem;
     /// Mounts the simple filesystem and returns a root inode.
     pub static ref ROOT_INODE: Arc<dyn INode> = {
         let device = Arc::new( BlockDriverWrapper(BLOCK_DRIVERS.read().iter().next().unwrap().clone()));
@@ -64,5 +64,14 @@ lazy_static! {
 
 #[cfg(feature = "mount_apfs")]
 lazy_static! {
-    // to be implemented.
+    pub static ref ROOT_FS: Arc<apfs::AppleFileSystem> = {
+        let device = Arc::new(BlockDriverWrapper(
+            BLOCK_DRIVERS.read().iter().next().unwrap().clone(),
+        ));
+        let apfs = apfs::AppleFileSystem::mount_container(device).unwrap();
+        apfs.load_nx_object_map().unwrap();
+        apfs.mount_volumns_all().unwrap();
+
+        apfs
+    };
 }

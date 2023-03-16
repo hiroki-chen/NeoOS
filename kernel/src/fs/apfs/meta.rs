@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
-    function, kerror,
+    function, kerror, kinfo,
 };
 
 use super::{read_fs_tree, read_object, read_omap, Device};
@@ -43,13 +43,13 @@ pub type Xid = u64;
 pub type ObjectMap = BTreeMap<ObjectMapKey, ObjectMapValue>;
 /// The filesystem inode tree.
 pub type InodeMap = BTreeMap<JInodeKey, JInodeVal>;
-pub type DirRecordMap = BTreeMap<JDrecKey, JDrecVal>;
+pub type DirRecordMap = BTreeMap<JDrecHashedKey, JDrecVal>;
 
 // Some important constants.
 
 pub const BLOCK_SIZE: usize = 0x1000;
-pub const NX_MAGIC: &[u8; 4] = b"BSXN";
-pub const APFS_MAGIC: &[u8; 4] = b"BSPA";
+pub const NX_MAGIC: &[u8; 4] = b"NXSB";
+pub const APFS_MAGIC: &[u8; 4] = b"APSB";
 pub const OBJECT_HDR_SIZE: usize = core::mem::size_of::<ObjectPhysical>();
 pub const MAX_ALLOWED_CHECKPOINT_MAP_SIZE: usize = 100;
 
@@ -368,12 +368,6 @@ impl NxSuperBlock {
         // Check the magic number.
         &self.nx_magic == NX_MAGIC
     }
-
-    /// Do some post-processing like endianness conversions.
-    pub fn post_process(&mut self) {
-        // Convert the endianess of the magic.
-        self.nx_magic.reverse();
-    }
 }
 
 /// A key used to access an entry in the object map.
@@ -472,7 +466,7 @@ pub struct JKey {
 impl JKey {
     #[inline]
     pub fn get_type(&self) -> u8 {
-        ((self.obj_id_and_type & OBJ_ID_MASK) >> OBJ_TYPE_SHIFT) as _
+        ((self.obj_id_and_type & OBJ_TYPE_MASK) >> OBJ_TYPE_SHIFT) as _
     }
 }
 
@@ -531,8 +525,9 @@ pub struct JDrecVal {
     pub file_id: u64,
     pub date_added: u64,
     pub flags: u16,
-    /// Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
-    pub xfields: [u8; BLOCK_SIZE - 24],
+    // Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
+    // We currently disable it.
+    // pub xfields: [u8; BLOCK_SIZE - 24],
 }
 
 impl PartialEq for JKey {
@@ -699,8 +694,8 @@ pub struct JInodeVal {
     _pad1: u16,
     // Perhaps we won't use it at all because we do not want to do compression for the time being.
     pub uncompressed_size: u64,
-    /// Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
-    pub xfields: [u8; BLOCK_SIZE - 92],
+    // Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
+    // pub xfields: [u8; BLOCK_SIZE - 92],
 }
 
 #[derive(Clone)]
@@ -1016,6 +1011,10 @@ impl BTreeNodePhysical {
         }
         Ok(values)
     }
+
+    pub fn parse_as_fs_tree(&self, device: &Arc<dyn Device>) -> KResult<(InodeMap, DirRecordMap)> {
+        Ok((self.level_traverse(device)?, self.level_traverse(device)?))
+    }
 }
 
 /// Static information about a B-tree
@@ -1062,6 +1061,7 @@ pub struct KvLoc {
 }
 
 /// The toc entry.
+#[derive(Clone, Debug)]
 pub enum TocEntry {
     Off(KvOff),
     Loc(KvLoc),
@@ -1075,23 +1075,15 @@ pub struct Omap {
     pub btree_info: BTreeInfo,
 }
 
-/// This is the in-memory representation of the fs map.
-#[derive(Debug)]
-pub struct FsMap {
-    pub inode_map: InodeMap,
-    pub dir_record_map: DirRecordMap,
-    pub root_node: BTreeNodePhysical,
-    pub btree_info: BTreeInfo,
-}
-
-/// A simple wrapper for the volumn.
+/// A simpler wrapper for the volumn.
 #[derive(Debug)]
 pub struct ApfsVolumn {
     pub superblock: ApfsSuperblock,
-    pub omap: Omap,
-    pub fs_map: FsMap,
-}
+    pub object_map: ObjectMap,
 
+    pub root_tree: InodeMap,
+    pub drec_tree: DirRecordMap,
+}
 impl ApfsVolumn {
     /// Parses the raw `apfs_superblock` struct and constructs a Self.
     pub fn from_raw(device: &Arc<dyn Device>, apfs_superblock: ApfsSuperblock) -> KResult<Self> {
@@ -1099,24 +1091,27 @@ impl ApfsVolumn {
         // Note that this is the *virtual object identifier*.
         let apfs_root_tree_oid = apfs_superblock.apfs_root_tree_oid;
         // Read omap.
-        let omap = read_omap(device, apfs_omap_oid)?;
+        let apfs_omap = read_omap(device, apfs_omap_oid)?;
         // Read root node's oid.
-        let apfs_root_addr = omap
+        let apfs_root_addr = apfs_omap
             .omap
             .get(&ObjectMapKey {
                 ok_oid: apfs_root_tree_oid,
-                ok_xid: 0x0,
+                ok_xid: Xid::MAX,
             })
             .ok_or(Errno::ENOENT)?
             .ov_paddr;
 
         // Read the file system tree.
-        let fs_map = read_fs_tree(device, apfs_root_addr)?;
+        let apfs_tree = read_fs_tree(device, apfs_root_addr)?;
+
+        kinfo!("apfs tree: {:x?}", apfs_tree);
 
         Ok(Self {
             superblock: apfs_superblock,
-            omap,
-            fs_map,
+            object_map: apfs_omap.omap,
+            root_tree: apfs_tree.0,
+            drec_tree: apfs_tree.1,
         })
     }
 }

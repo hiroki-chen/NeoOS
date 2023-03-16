@@ -16,14 +16,15 @@ use spin::RwLock;
 use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
-    fs::apfs::meta::{ApfsVolumn, BTreeInfo, BLOCK_SIZE},
+    fs::apfs::meta::{ApfsVolumn, BTreeInfo, Xid, BLOCK_SIZE},
     function, kerror, kinfo, kwarn,
     utils::calc_fletcher64,
 };
 
 use self::meta::{
-    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, FsMap, NxSuperBlock,
-    ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid, Omap,
+    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, DirRecordMap,
+    InodeMap, NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical,
+    ObjectTypes, Oid, Omap,
 };
 
 use rcore_fs::{
@@ -66,7 +67,14 @@ pub trait BlockLike: Device {
             let checksum = calc_fletcher64(&buf[QWORD_LEN..])?;
             match checksum.to_le_bytes() == header.o_cksum {
                 true => Ok(object.clone()),
-                false => Err(Errno::EINVAL),
+                false => {
+                    kerror!(
+                        "checksum mismatch. Expecting: {:x?}, got: {:x}",
+                        header.o_cksum,
+                        checksum
+                    );
+                    Err(Errno::EINVAL)
+                }
             }
         }
     }
@@ -205,7 +213,7 @@ impl AppleFileSystem {
             }
         }
 
-        kinfo!("mounted the superblock: {:#x?}", nx_superblock);
+        kinfo!("mounted the superblock: {:x?}", nx_superblock);
         Ok(Arc::new(Self {
             superblock: RwLock::new(MaybeDirty::new(nx_superblock)),
             device: device.clone(),
@@ -231,7 +239,7 @@ impl AppleFileSystem {
             let key = ObjectMapKey {
                 ok_oid: oid,
                 // TODO: There is no transaction id currently.
-                ok_xid: 0,
+                ok_xid: Xid::MAX,
             };
 
             kinfo!("mounting {:x?}", key);
@@ -289,6 +297,7 @@ impl AppleFileSystem {
     pub fn load_nx_object_map(&self) -> KResult<()> {
         let omap_phys_oid = self.superblock.read().nx_omap_oid;
         let omap = read_omap(&self.device, omap_phys_oid)?;
+
         self.nx_omap_root
             .write()
             .replace((omap.root_node.clone(), omap.btree_info.clone()));
@@ -300,7 +309,7 @@ impl AppleFileSystem {
 
 impl FileSystem for AppleFileSystem {
     fn sync(&self) -> rcore_fs::vfs::Result<()> {
-        todo!()
+        Ok(())
     }
 
     fn root_inode(&self) -> Arc<dyn INode> {
@@ -388,7 +397,7 @@ fn do_read_btree(device: &Arc<dyn Device>, oid: Oid) -> KResult<(BTreeInfo, BTre
 /// Reads the object map for a given container/volumn into the memory.
 pub fn read_omap(device: &Arc<dyn Device>, oid: Oid) -> KResult<Omap> {
     let (btree_info, root_node) = do_read_btree(device, oid)?;
-    kinfo!("loaded BTree information: {:#x?}", btree_info);
+    kinfo!("loaded BTree information: {:x?}", btree_info);
 
     let omap = root_node.parse_as_object_map(device)?;
 
@@ -400,11 +409,12 @@ pub fn read_omap(device: &Arc<dyn Device>, oid: Oid) -> KResult<Omap> {
 }
 
 /// Reads the filesystem map for a given container/volumn into the memory.
-pub fn read_fs_tree(device: &Arc<dyn Device>, oid: Oid) -> KResult<FsMap> {
-    let (btree_info, root_node) = do_read_btree(device, oid)?;
-    kinfo!("loaded BTree information: {:#x?}", btree_info);
+pub fn read_fs_tree(device: &Arc<dyn Device>, oid: Oid) -> KResult<(InodeMap, DirRecordMap)> {
+    let buf = read_object(device, oid)?;
+    let fs_tree = unsafe { &*(buf.as_ptr() as *const BTreeNodePhysical) }.clone();
+    let map = fs_tree.parse_as_fs_tree(device)?;
 
-    todo!()
+    Ok((map.0, map.1))
 }
 
 /// Reads a file object from the disk at a given address.
@@ -416,7 +426,6 @@ pub fn read_object(device: &Arc<dyn Device>, addr: u64) -> KResult<Vec<u8>> {
     let cs = calc_fletcher64(&buf[QWORD_LEN..])?.to_le_bytes();
 
     if cs != hdr.o_cksum {
-        kerror!("corrupted block.");
         Err(Errno::EINVAL)
     } else {
         Ok(buf)

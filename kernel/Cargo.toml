@@ -5,7 +5,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["multiprocessor", "x2apic", "sfs", "apfs", "mount_sfs"]
+default = ["multiprocessor", "x2apic", "sfs", "apfs", "mount_apfs"]
 # TODO: separate as a single library.
 apfs = []
 # Allow write to the APFS (needs BTree support).
