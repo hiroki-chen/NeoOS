@@ -607,7 +607,7 @@ pub enum ValueType {
 }
 
 /// A wrapped struct for the filesystem maps.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct FsMap {
     pub inode_map: InodeMap,
     pub dir_record_map: DirRecordMap,
@@ -1144,22 +1144,24 @@ pub struct BTreeNodePhysical {
 }
 
 impl BTreeNodePhysical {
-    /// Traverses the B-Tree level by level.
-    pub fn level_traverse<K, V>(&self, device: &Arc<dyn Device>) -> KResult<BTreeMap<K, V>>
+    /// Traverses the B-Tree level by level. `insert_func` indicates how the caller inserts into a map.
+    pub fn level_traverse<F>(&self, device: &Arc<dyn Device>, mut insert_func: F) -> KResult<()>
     where
-        K: BTreeKey,
-        V: BTreeValue,
+        F: FnMut(&Vec<u8>, &Vec<u8>),
     {
         let mut queue = VecDeque::new();
-        let mut map = BTreeMap::<K, V>::new();
-        queue.push_back(self.clone());
 
+        queue.push_back(self.clone());
         while let Some(node) = queue.pop_front() {
             if !BTreeNodeFlags::from_bits_truncate(node.btn_flags)
                 .contains(BTreeNodeFlags::BTNODE_LEAF)
                 && node.btn_level != 0
             {
-                let values = self.interpret_as_values::<Oid>()?;
+                let values = self
+                    .interpret_as_values()?
+                    .iter()
+                    .map(|elem| Oid::from_le_bytes(elem.as_slice().try_into().unwrap()))
+                    .collect::<Vec<_>>();
                 // Insert the next-level nodes.
                 values.iter().for_each(|value| {
                     let node_oid = *value;
@@ -1173,24 +1175,23 @@ impl BTreeNodePhysical {
                     }
                 });
             } else {
-                let keys = self.interpret_as_keys::<K>()?;
-                let values = self.interpret_as_values::<V>()?;
+                let keys = self.interpret_as_keys()?;
+                let values = self.interpret_as_values()?;
 
                 if keys.len() != values.len() {
                     kerror!("keys and values have different lengths?!");
                     return Err(Errno::EINVAL);
                 }
+
                 let kv = keys.into_iter().zip(values).collect::<Vec<_>>();
                 // It is the leaf node. We read into the memory.
                 kv.iter().cloned().for_each(|(key, value)| {
-                    if key.check() {
-                        map.insert(key, value);
-                    }
+                    insert_func(&key, &value);
                 });
             }
         }
 
-        Ok(map)
+        Ok(())
     }
 
     /// Reads the root node and construct a B-Tree in the memory.
@@ -1215,7 +1216,14 @@ impl BTreeNodePhysical {
             return Err(Errno::EINVAL);
         }
 
-        self.level_traverse(device)
+        let mut omap = ObjectMap::new();
+        self.level_traverse(device, |key, val| unsafe {
+            let key_obj = (&*(key.as_ptr() as *const ObjectMapKey)).clone();
+            let val_obj = (&*(val.as_ptr() as *const ObjectMapValue)).clone();
+            omap.insert(key_obj, val_obj);
+        })?;
+
+        Ok(omap)
     }
 
     /// Interprets the u8 array and returns a human-readable array of toc.
@@ -1248,10 +1256,7 @@ impl BTreeNodePhysical {
     }
 
     /// Extracts the tree keys as a vector.
-    pub fn interpret_as_keys<K>(&self) -> KResult<Vec<K>>
-    where
-        K: BTreeKey,
-    {
+    pub fn interpret_as_keys(&self) -> KResult<Vec<Vec<u8>>> {
         let toc = self.interpret_as_toc()?;
         let key_off = self.btn_table_space.off + self.btn_table_space.len;
         // Need to first check the key header.
@@ -1261,13 +1266,13 @@ impl BTreeNodePhysical {
                 TocEntry::Off(kv) => {
                     let start = (key_off + kv.k) as usize;
                     // Because this is fixed, we do not need to give a size.
-                    let end = start + core::mem::size_of::<K>();
-                    K::import(&self.btn_data[start..end])
+                    let end = start + core::mem::size_of::<ObjectMapKey>();
+                    self.btn_data[start..end].to_vec()
                 }
                 TocEntry::Loc(kv) => {
                     let start = (key_off + kv.k.off) as usize;
                     let end = start + kv.k.len as usize;
-                    K::import(&self.btn_data[start..end])
+                    self.btn_data[start..end].to_vec()
                 }
             };
 
@@ -1278,10 +1283,7 @@ impl BTreeNodePhysical {
     }
 
     /// Extacts the map values as a vector.
-    pub fn interpret_as_values<V>(&self) -> KResult<Vec<V>>
-    where
-        V: BTreeValue,
-    {
+    pub fn interpret_as_values(&self) -> KResult<Vec<Vec<u8>>> {
         let toc = self.interpret_as_toc()?;
         let mut values = Vec::new();
         let data_rev = self.btn_data.iter().copied().rev().collect::<Vec<_>>();
@@ -1306,20 +1308,48 @@ impl BTreeNodePhysical {
                 .rev()
                 .collect::<Vec<_>>();
 
-            values.push(V::import(&slice));
+            values.push(slice);
         }
+
         Ok(values)
     }
 
     pub fn parse_as_fs_tree(&self, device: &Arc<dyn Device>) -> KResult<FsMap> {
-        // TODO: Inefficient.
-        Ok(FsMap {
-            inode_map: self.level_traverse(device)?,
-            dir_record_map: self.level_traverse(device)?,
-            phys_ext_map: self.level_traverse(device)?,
-            file_extent_map: self.level_traverse(device)?,
-            dir_stat_map: self.level_traverse(device)?,
-        })
+        let mut fs_map = FsMap::default();
+
+        self.level_traverse(device, |key, val| unsafe {
+            let ty = &*(key.as_ptr() as *const JKey);
+            match ty.get_type() {
+                APFS_TYPE_DIR_REC => {
+                    let key_obj = (&*(key.as_ptr() as *const JDrecHashedKey)).clone();
+                    let val_obj = (&*(val.as_ptr() as *const JDrecVal)).clone();
+                    fs_map.dir_record_map.insert(key_obj, val_obj);
+                }
+                APFS_TYPE_INODE => {
+                    let key_obj = (&*(key.as_ptr() as *const JInodeKey)).clone();
+                    let val_obj = (&*(val.as_ptr() as *const JInodeVal)).clone();
+                    fs_map.inode_map.insert(key_obj, val_obj);
+                }
+                APFS_TYPE_EXTENT => {
+                    let key_obj = (&*(key.as_ptr() as *const JPhysExtKey)).clone();
+                    let val_obj = (&*(val.as_ptr() as *const JPhysExtVal)).clone();
+                    fs_map.phys_ext_map.insert(key_obj, val_obj);
+                }
+                APFS_TYPE_FILE_EXTENT => {
+                    let key_obj = (&*(key.as_ptr() as *const JFileExtentKey)).clone();
+                    let val_obj = (&*(val.as_ptr() as *const JFileExtentVal)).clone();
+                    fs_map.file_extent_map.insert(key_obj, val_obj);
+                }
+                APFS_TYPE_DIR_STATS => {
+                    let key_obj = (&*(key.as_ptr() as *const JDirStatKey)).clone();
+                    let val_obj = (&*(val.as_ptr() as *const JDirStatVal)).clone();
+                    fs_map.dir_stat_map.insert(key_obj, val_obj);
+                }
+                _ => (),
+            }
+        })?;
+
+        Ok(fs_map)
     }
 }
 
