@@ -10,7 +10,14 @@
 //!
 //! Most implementations are directly taken from Apple's Developer Manual for APFS.
 
-use alloc::{string::String, sync::Arc, vec, vec::Vec};
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+    sync::{Arc, Weak},
+    vec,
+    vec::Vec,
+};
+use core::{ffi::CStr, fmt::Debug};
 use spin::RwLock;
 
 use crate::{
@@ -22,9 +29,9 @@ use crate::{
 };
 
 use self::meta::{
-    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, DirRecordMap,
-    InodeMap, NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical,
-    ObjectTypes, Oid, Omap,
+    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, FsMap, JInodeKey,
+    JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical,
+    ObjectTypes, Oid, Omap, APFS_TYPE_INODE, OBJ_TYPE_SHIFT,
 };
 
 use rcore_fs::{
@@ -136,7 +143,8 @@ impl BlockLike for dyn Device {}
 ///
 /// All members should be guarded with a wrapper like [`Arc`] or [`RwLock`] to prevent self mutablility issues.
 pub struct AppleFileSystem {
-    // TODO: What should be included here?
+    /// A pointer to self.
+    self_ptr: Weak<AppleFileSystem>,
     /// The container's superblock.
     superblock: RwLock<MaybeDirty<NxSuperBlock>>,
     /// The block driver (e.g., AHCI controller).
@@ -147,6 +155,8 @@ pub struct AppleFileSystem {
     nx_omap_root: RwLock<Option<(BTreeNodePhysical, BTreeInfo)>>,
     /// The object map (in-memory).
     nx_omap: RwLock<Option<ObjectMap>>,
+    /// The inode map. Volumn name to inode.
+    inodes: RwLock<BTreeMap<String, BTreeMap<u64, Weak<AppleFileSystemInode>>>>,
 }
 
 impl AppleFileSystem {
@@ -215,11 +225,13 @@ impl AppleFileSystem {
 
         kinfo!("mounted the superblock: {:x?}", nx_superblock);
         Ok(Arc::new(Self {
+            self_ptr: Weak::default(),
             superblock: RwLock::new(MaybeDirty::new(nx_superblock)),
             device: device.clone(),
             volumn_lists: RwLock::new(Vec::new()),
             nx_omap_root: RwLock::new(None),
             nx_omap: RwLock::new(None),
+            inodes: RwLock::new(BTreeMap::new()),
         }))
     }
 
@@ -239,7 +251,7 @@ impl AppleFileSystem {
             let key = ObjectMapKey {
                 ok_oid: oid,
                 // TODO: There is no transaction id currently.
-                ok_xid: Xid::MAX,
+                ok_xid: Xid::MIN,
             };
 
             kinfo!("mounting {:x?}", key);
@@ -305,6 +317,57 @@ impl AppleFileSystem {
 
         Ok(())
     }
+
+    /// Reads an Inode from the disk and converts to `Arc<AppleFileSystemInode>`.
+    ///
+    /// If there does not exist such Inodes indicated by `inode_id`, an error `ENOENT` will be reported.
+    pub fn get_inode(
+        &self,
+        inode_id: u64,
+        volumn_name: &str,
+    ) -> KResult<Arc<AppleFileSystemInode>> {
+        if let Some(inode) = self.inodes.read().get(&volumn_name.to_string()) {
+            if let Some(inode) = inode.get(&inode_id) {
+                if let Some(inode) = inode.upgrade() {
+                    return Ok(inode);
+                }
+            }
+        }
+
+        // Otherwise, we create a new one from the volumn list's map.
+        match self.volumn_lists.read().iter().find(|&volumn| {
+            let name = CStr::from_bytes_with_nul(&volumn.superblock.apfs_volname)
+                .unwrap_or_default()
+                .to_str()
+                .unwrap_or_default();
+            name == volumn_name
+        }) {
+            Some(volumn) => {
+                let key = JInodeKey {
+                    hdr: JKey {
+                        obj_id_and_type: ((APFS_TYPE_INODE as u64) << OBJ_TYPE_SHIFT) | inode_id,
+                    },
+                };
+                // FIXME: May need to ask JDirRecordMap first.
+                let inode_val = match volumn.fs_map.inode_map.get(&key) {
+                    Some(inode_val) => inode_val,
+                    None => return Err(Errno::ENOENT),
+                };
+
+                Ok(Arc::new(AppleFileSystemInode {
+                    id: inode_id,
+                    apfs: self.self_ptr.upgrade().unwrap(),
+                    inode_inner: RwLock::new(MaybeDirty::new(inode_val.clone())),
+                }))
+            }
+            None => Err(Errno::ENODEV),
+        }
+    }
+
+    pub fn get_root_inode(&self, volumn_name: &str) -> Arc<dyn INode> {
+        self.get_inode(1, volumn_name)
+            .expect("No root inode found.")
+    }
 }
 
 impl FileSystem for AppleFileSystem {
@@ -329,8 +392,24 @@ impl Drop for AppleFileSystem {
 }
 
 pub struct AppleFileSystemInode {
-    // TODO: What should be included here?
-    fs: Arc<AppleFileSystem>,
+    /// The Inode Id.
+    id: u64,
+    /// Reference to the filesystem wrapper by an atomic reference counter.
+    ///
+    /// This is needed because Inode depends on the existence of the filesystem so we must prevent the
+    /// filesystem from dropping accidentally..
+    apfs: Arc<AppleFileSystem>,
+    /// The raw INode.
+    inode_inner: RwLock<MaybeDirty<JInodeVal>>,
+}
+
+impl Debug for AppleFileSystemInode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AppleFileSystemInode")
+            .field("id", &self.id)
+            .field("inode_inner", &self.inode_inner.read())
+            .finish()
+    }
 }
 
 impl INode for AppleFileSystemInode {
@@ -409,12 +488,10 @@ pub fn read_omap(device: &Arc<dyn Device>, oid: Oid) -> KResult<Omap> {
 }
 
 /// Reads the filesystem map for a given container/volumn into the memory.
-pub fn read_fs_tree(device: &Arc<dyn Device>, oid: Oid) -> KResult<(InodeMap, DirRecordMap)> {
+pub fn read_fs_tree(device: &Arc<dyn Device>, oid: Oid) -> KResult<FsMap> {
     let buf = read_object(device, oid)?;
     let fs_tree = unsafe { &*(buf.as_ptr() as *const BTreeNodePhysical) }.clone();
-    let map = fs_tree.parse_as_fs_tree(device)?;
-
-    Ok((map.0, map.1))
+    fs_tree.parse_as_fs_tree(device)
 }
 
 /// Reads a file object from the disk at a given address.

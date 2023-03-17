@@ -1,14 +1,17 @@
 //! Defines some important metadata.
 
-use core::cmp::Ordering;
+use core::{any::Any, cmp::Ordering, panic};
 
 use alloc::{
     collections::{BTreeMap, VecDeque},
+    string::String,
     sync::Arc,
     vec::Vec,
 };
 use bitflags::bitflags;
+use crc::{Crc, CRC_32_ISCSI};
 use serde::{Deserialize, Serialize};
+use unicode_normalization::char::decompose_canonical;
 
 use crate::{
     arch::QWORD_LEN,
@@ -41,9 +44,12 @@ pub type Xid = u64;
 ///
 /// We may need to serialize this thing. virtual -> physical;
 pub type ObjectMap = BTreeMap<ObjectMapKey, ObjectMapValue>;
-/// The filesystem inode tree.
+/// The filesystem trees.
 pub type InodeMap = BTreeMap<JInodeKey, JInodeVal>;
 pub type DirRecordMap = BTreeMap<JDrecHashedKey, JDrecVal>;
+pub type PhysExtMap = BTreeMap<JPhysExtKey, JPhysExtVal>;
+pub type FileExtentMap = BTreeMap<JFileExtentKey, JFileExtentVal>;
+pub type DirStatMap = BTreeMap<JDirStatKey, JDirStatVal>;
 
 // Some important constants.
 
@@ -66,6 +72,16 @@ pub const J_DREC_LEN_MASK: u32 = 0x000003ff;
 pub const J_DREC_HASH_MASK: u32 = 0xfffff400;
 pub const J_DREC_HASH_SHIFT: u32 = 10;
 
+pub const PEXT_LEN_MASK: u64 = 0x0fffffffffffffff;
+pub const PEXT_KIND_MASK: u64 = 0xf000000000000000;
+pub const PEXT_KIND_SHIFT: u64 = 60;
+
+pub const J_FILE_EXTENT_LEN_MASK: u64 = 0x00ffffffffffffff;
+pub const J_FILE_EXTENT_FLAG_MASK: u64 = 0xff00000000000000;
+pub const J_FILE_EXTENT_FLAG_SHIFT: u64 = 56;
+
+pub const DREC_TYPE_MASK: u16 = 0xf;
+
 // Key types.
 
 pub const APFS_TYPE_ANY: u8 = 0;
@@ -86,13 +102,18 @@ pub const APFS_TYPE_MAX_VALID: u8 = 13;
 pub const APFS_TYPE_MAX: u8 = 15;
 pub const APFS_TYPE_INVALID: u8 = 15;
 
+pub const CASTAGNOLI: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+
 /// Defines how a b-tree key should behave.
 pub trait BTreeKey: Clone + Eq + Ord + PartialEq + PartialOrd + Sized {
     /// Imports a raw byte array into `self`.
     fn import(buf: &[u8]) -> Self {
-        // todo: check header.
         unsafe { &*(buf.as_ptr() as *const Self) }.clone()
     }
+
+    fn as_any(&self) -> &dyn Any;
+
+    fn ty(&self) -> KeyType;
 
     /// Checks the type.
     fn check(&self) -> bool {
@@ -402,8 +423,9 @@ impl Ord for ObjectMapKey {
         match self.ok_oid.cmp(&other.ok_oid) {
             Ordering::Equal => match self.ok_xid.cmp(&other.ok_xid) {
                 // Ensures that we always read the latest record.
-                Ordering::Greater | Ordering::Equal => Ordering::Equal,
-                Ordering::Less => Ordering::Less,
+                // The BTreemap's comparison is other.cmp(self); so we must reverse the order here.
+                Ordering::Less | Ordering::Equal => Ordering::Equal,
+                Ordering::Greater => Ordering::Greater,
             },
             res => res,
         }
@@ -468,6 +490,11 @@ impl JKey {
     pub fn get_type(&self) -> u8 {
         ((self.obj_id_and_type & OBJ_TYPE_MASK) >> OBJ_TYPE_SHIFT) as _
     }
+
+    #[inline]
+    pub fn get_oid(&self) -> u64 {
+        self.obj_id_and_type & OBJ_ID_MASK
+    }
 }
 
 /// The key half of a directory-information record.
@@ -499,6 +526,94 @@ pub struct JDrecHashedKey {
     pub name_len_and_hash: u32,
     /// The length is undetermined.
     pub name: [u8; 255],
+}
+
+/// The key half of a physical extent record.
+///
+/// Short pieces of information like a fileʼs name are stored inside the data structures that contain metadata. Data
+/// thatʼs too large to store inline is stored separately, in a data stream. This includes the contents of files, and
+/// the value of some attributes.
+#[derive(Clone, Debug)]
+#[repr(C, packed)]
+pub struct JPhysExtKey {
+    /// The object identifier in the header is the physical block address of the start of the extent.
+    pub hdr: JKey,
+}
+
+/// The value half of a physical extent record.
+#[derive(Clone, Debug)]
+#[repr(C, packed)]
+pub struct JPhysExtVal {
+    pub len_and_kind: u64,
+    pub owning_obj_id: u64,
+    pub refcnt: i32,
+}
+
+/// The key half of a file extent record.
+#[derive(Clone, Debug)]
+#[repr(C, packed)]
+pub struct JFileExtentKey {
+    pub hdr: JKey,
+    pub logical_addr: u64,
+}
+
+/// The value half of a file extent record.
+#[derive(Clone, Debug)]
+#[repr(C, packed)]
+pub struct JFileExtentVal {
+    pub len_and_flags: u64,
+    pub phys_block_num: u64,
+    pub crypto_id: u64,
+}
+
+/// The key half of a directory-information record.
+#[derive(Clone, Debug)]
+#[repr(C, packed)]
+pub struct JDirStatKey {
+    pub hdr: JKey,
+}
+
+/// The value half of a directory-information record.
+#[derive(Clone, Debug)]
+#[repr(C, packed)]
+pub struct JDirStatVal {
+    pub num_children: u64,
+    pub total_size: u64,
+    pub chained_key: u64,
+    pub gen_count: u64,
+}
+
+/// Key types.
+#[derive(Debug)]
+pub enum KeyType {
+    OmapKey,
+    JInodeKey,
+    JDrecKey,
+    JDrecHashedKey,
+    JPhysExtKey,
+    JFileExtentKey,
+    JDirStatKey,
+}
+
+/// Value types.
+#[derive(Debug)]
+pub enum ValueType {
+    OmapVal,
+    JInodeVal,
+    JDrecVal,
+    JPhysExtVal,
+    JFileExtentVal,
+    JDirStatVal,
+}
+
+/// A wrapped struct for the filesystem maps.
+#[derive(Debug)]
+pub struct FsMap {
+    pub inode_map: InodeMap,
+    pub dir_record_map: DirRecordMap,
+    pub phys_ext_map: PhysExtMap,
+    pub file_extent_map: FileExtentMap,
+    pub dir_stat_map: DirStatMap,
 }
 
 impl core::fmt::Debug for JDrecHashedKey {
@@ -550,15 +665,17 @@ impl Ord for JKey {
         // rules are used:
         // 1. Compare the object identifiers numerically
         let obj_lhs = self.obj_id_and_type & OBJ_ID_MASK;
-        let obj_rhs = self.obj_id_and_type & OBJ_ID_MASK;
+        let obj_rhs = other.obj_id_and_type & OBJ_ID_MASK;
 
-        if obj_lhs.cmp(&obj_rhs) == Ordering::Equal {
-            return Ordering::Equal;
+        let id_ordering = obj_lhs.cmp(&obj_rhs);
+
+        if id_ordering != Ordering::Equal {
+            return id_ordering;
         }
 
         // 2. Compare the object types numerically.
-        let type_lhs = obj_lhs >> OBJ_TYPE_SHIFT;
-        let type_rhs = obj_rhs >> OBJ_TYPE_SHIFT;
+        let type_lhs = (self.obj_id_and_type & OBJ_TYPE_MASK) >> OBJ_TYPE_SHIFT;
+        let type_rhs = (other.obj_id_and_type & OBJ_TYPE_MASK) >> OBJ_TYPE_SHIFT;
 
         type_lhs.cmp(&type_rhs)
         // 3. For extended attribute records and directory entry records, compare the names lexicographically.
@@ -632,28 +749,210 @@ impl Ord for JDrecHashedKey {
     }
 }
 
-// TODO: Need to perform a check on the header.
-impl BTreeKey for ObjectMapKey {}
+impl PartialEq for JPhysExtKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for JPhysExtKey {}
+
+impl PartialOrd for JPhysExtKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JPhysExtKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.hdr.cmp(&other.hdr)
+    }
+}
+
+impl PartialEq for JFileExtentKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for JFileExtentKey {}
+
+impl PartialOrd for JFileExtentKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JFileExtentKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.hdr.cmp(&other.hdr)
+    }
+}
+
+impl Ord for JDirStatKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.hdr.cmp(&other.hdr)
+    }
+}
+
+impl PartialEq for JDirStatKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for JDirStatKey {}
+
+impl PartialOrd for JDirStatKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl BTreeKey for ObjectMapKey {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn ty(&self) -> KeyType {
+        KeyType::OmapKey
+    }
+}
+
 impl BTreeKey for JDrecKey {
     fn check(&self) -> bool {
         self.hdr.get_type() == APFS_TYPE_DIR_REC
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn ty(&self) -> KeyType {
+        KeyType::JDrecKey
+    }
 }
+
 impl BTreeKey for JInodeKey {
     fn check(&self) -> bool {
         self.hdr.get_type() == APFS_TYPE_INODE
     }
-}
-impl BTreeKey for JDrecHashedKey {
-    fn check(&self) -> bool {
-        self.hdr.get_type() == APFS_TYPE_DIR_REC
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn ty(&self) -> KeyType {
+        KeyType::JInodeKey
     }
 }
-impl BTreeKey for u64 {}
+
+impl BTreeKey for JDrecHashedKey {
+    fn check(&self) -> bool {
+        if self.hdr.get_type() != APFS_TYPE_DIR_REC {
+            return false;
+        }
+
+        // We need to check the hash value.
+        // The hash is an unsigned 22-bit integer, accessed as
+        //    (name_len_and_hash & J_DREC_HASH_MASK) >> J_DREC_HASH_SHIFT.
+        let hash = (self.name_len_and_hash & J_DREC_HASH_MASK) >> J_DREC_HASH_SHIFT;
+        // 1. Start with the filename, represented as a null-terminated UTF-8 string.
+        let name_len = self.name_len_and_hash & J_DREC_LEN_MASK;
+        // 2. Normalize it with a canonical decomposition.
+        let mut nfd_name = String::new();
+        let name = match String::from_utf8(self.name[..name_len as usize].to_vec()) {
+            Ok(name) => name,
+            Err(_) => return false,
+        };
+
+        // 3. Represent it in a UTF-32 string.
+        name.chars().for_each(|c| {
+            decompose_canonical(c, |c| {
+                nfd_name.push(c);
+            })
+        });
+
+        // 4. Compute the CRC-32C hash of the UTF-32 string.
+        let nfd_name = nfd_name
+            .chars()
+            .map(|c| (c as u32).to_be_bytes())
+            .flatten()
+            .collect::<Vec<_>>();
+        let hash_res = !CASTAGNOLI.checksum(nfd_name.as_slice()) & 0x7fffff;
+
+        // FIXME: The checksum is always incorrect?...
+        kinfo!("hash_res = {hash_res}, hash = {hash}");
+        true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn ty(&self) -> KeyType {
+        KeyType::JDrecHashedKey
+    }
+}
+
+impl BTreeKey for JPhysExtKey {
+    fn check(&self) -> bool {
+        self.hdr.get_type() == APFS_TYPE_EXTENT
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn ty(&self) -> KeyType {
+        KeyType::JPhysExtKey
+    }
+}
+
+impl BTreeKey for JFileExtentKey {
+    fn check(&self) -> bool {
+        self.hdr.get_type() == APFS_TYPE_FILE_EXTENT
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn ty(&self) -> KeyType {
+        KeyType::JFileExtentKey
+    }
+}
+
+impl BTreeKey for JDirStatKey {
+    fn check(&self) -> bool {
+        self.hdr.get_type() == APFS_TYPE_DIR_STATS
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn ty(&self) -> KeyType {
+        KeyType::JDirStatKey
+    }
+}
+
+impl BTreeKey for u64 {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn ty(&self) -> KeyType {
+        panic!("u64 is not a valid fs key.")
+    }
+}
 
 impl BTreeValue for ObjectMapValue {}
 impl BTreeValue for JInodeVal {}
 impl BTreeValue for JDrecVal {}
+impl BTreeValue for JPhysExtVal {}
+impl BTreeValue for JFileExtentVal {}
+impl BTreeValue for JDirStatVal {}
 impl BTreeValue for u64 {}
 
 #[derive(Debug, Clone)]
@@ -878,7 +1177,7 @@ impl BTreeNodePhysical {
                 let values = self.interpret_as_values::<V>()?;
 
                 if keys.len() != values.len() {
-                    log::error!("keys and values have different lengths?!");
+                    kerror!("keys and values have different lengths?!");
                     return Err(Errno::EINVAL);
                 }
                 let kv = keys.into_iter().zip(values).collect::<Vec<_>>();
@@ -1012,8 +1311,15 @@ impl BTreeNodePhysical {
         Ok(values)
     }
 
-    pub fn parse_as_fs_tree(&self, device: &Arc<dyn Device>) -> KResult<(InodeMap, DirRecordMap)> {
-        Ok((self.level_traverse(device)?, self.level_traverse(device)?))
+    pub fn parse_as_fs_tree(&self, device: &Arc<dyn Device>) -> KResult<FsMap> {
+        // TODO: Inefficient.
+        Ok(FsMap {
+            inode_map: self.level_traverse(device)?,
+            dir_record_map: self.level_traverse(device)?,
+            phys_ext_map: self.level_traverse(device)?,
+            file_extent_map: self.level_traverse(device)?,
+            dir_stat_map: self.level_traverse(device)?,
+        })
     }
 }
 
@@ -1080,10 +1386,9 @@ pub struct Omap {
 pub struct ApfsVolumn {
     pub superblock: ApfsSuperblock,
     pub object_map: ObjectMap,
-
-    pub root_tree: InodeMap,
-    pub drec_tree: DirRecordMap,
+    pub fs_map: FsMap,
 }
+
 impl ApfsVolumn {
     /// Parses the raw `apfs_superblock` struct and constructs a Self.
     pub fn from_raw(device: &Arc<dyn Device>, apfs_superblock: ApfsSuperblock) -> KResult<Self> {
@@ -1097,7 +1402,7 @@ impl ApfsVolumn {
             .omap
             .get(&ObjectMapKey {
                 ok_oid: apfs_root_tree_oid,
-                ok_xid: Xid::MAX,
+                ok_xid: Xid::MIN,
             })
             .ok_or(Errno::ENOENT)?
             .ov_paddr;
@@ -1110,8 +1415,28 @@ impl ApfsVolumn {
         Ok(Self {
             superblock: apfs_superblock,
             object_map: apfs_omap.omap,
-            root_tree: apfs_tree.0,
-            drec_tree: apfs_tree.1,
+            fs_map: apfs_tree,
         })
+    }
+}
+
+/// The Inode types.
+#[derive(Ord, PartialEq, PartialOrd, Eq, Clone, Debug)]
+#[repr(u8)]
+pub enum INodeType {
+    DtUnknown = 0,
+    DtFifo = 1,
+    DtChr = 2,
+    DtDir = 4,
+    DtBlk = 6,
+    DtReg = 8,
+    DtLnk = 10,
+    DtSock = 12,
+    DtWht = 14,
+}
+
+impl INodeType {
+    pub fn from_u8(other: u8) -> Self {
+        unsafe { core::mem::transmute::<u8, Self>(other) }
     }
 }

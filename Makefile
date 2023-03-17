@@ -33,7 +33,7 @@ QEMU_COMMAND	?= qemu-system-x86_64 -enable-kvm \
 			-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
 			-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
 			-drive format=raw,file=fat:rw:esp \
-			-nographic -smp cores=4 -no-reboot -m 4G -rtc clock=vm \
+			-nographic -smp cores=4 -no-reboot -m 8G -rtc clock=vm \
 			-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
 			-device ahci,id=ahci0 \
 			-device ide-hd,drive=sfsimg,bus=ahci0.0 \
@@ -57,7 +57,7 @@ else
 	@cd $(WORK_DIR) && dd if=/dev/zero bs=1M count=400 > $(DISK) && mkfs.apfs $(DISK)
 	@cd $(WORK_DIR) && sudo mount -o loop,readwrite $(DISK) /mnt
 # TODO: Add meaningful files/directories.
-	@mkdir -p /mnt/foo && touch /mnt/bar && mkdir -p baz
+	@mkdir -p /mnt/foo && mkdir -p /mnt/baz && echo 'abcd' > /mnt/baz/bar && echo 'dcba' > /mnt/okay
 	@sudo umount /mnt
 	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
 	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)

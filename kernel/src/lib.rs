@@ -62,7 +62,7 @@ use crate::{
     arch::cpu::{cpu_id, BSP_ID},
     debug::{Frame, UNWIND_DEPTH},
     logging::print_banner,
-    memory::ELF_DEFAULT_ENTRY,
+    memory::ELF_DEFAULT_ENTRY, fs::ROOT_FS,
 };
 
 lazy_static! {
@@ -97,6 +97,9 @@ pub fn kmain() -> ! {
         info!("kmain(): kernel main procedure started.");
         print_banner();
         crate::process::thread::debug_threading(ELF_DEFAULT_ENTRY);
+
+        // Test.
+        let apfs = ROOT_FS.clone();
     }
 
     loop {

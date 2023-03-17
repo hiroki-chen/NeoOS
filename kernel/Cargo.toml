@@ -54,6 +54,8 @@ serde = { version = "1.0.155", default-features = false, features = [
   "alloc",
   "derive",
 ] }
+unicode-normalization = { version = "0.1.22", default-features = false }
+crc = "3.0.1"
 
 [build-dependencies]
 cc = "1.0"
