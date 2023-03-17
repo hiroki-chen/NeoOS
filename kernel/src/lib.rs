@@ -53,7 +53,6 @@ pub mod f64;
 use alloc::string::String;
 use core::panic::PanicInfo;
 use lazy_static::lazy_static;
-use log::{error, info};
 use process::scheduler;
 // We do not want OOM to cause kernel crash.
 use buddy_system_allocator::LockedHeapWithRescue;
@@ -61,8 +60,9 @@ use buddy_system_allocator::LockedHeapWithRescue;
 use crate::{
     arch::cpu::{cpu_id, BSP_ID},
     debug::{Frame, UNWIND_DEPTH},
+    fs::ROOT_FS,
     logging::print_banner,
-    memory::ELF_DEFAULT_ENTRY, fs::ROOT_FS,
+    memory::ELF_DEFAULT_ENTRY,
 };
 
 lazy_static! {
@@ -87,14 +87,14 @@ pub fn kmain() -> ! {
         // Test IPI.
         crate::arch::interrupt::ipi::send_ipi(
             || {
-                info!("Hello from the other side ^^");
+                kinfo!("Hello from the other side ^^");
             },
             None,
             true,
             crate::arch::interrupt::ipi::IpiType::Others,
         );
 
-        info!("kmain(): kernel main procedure started.");
+        kinfo!("kmain(): kernel main procedure started.");
         print_banner();
         crate::process::thread::debug_threading(ELF_DEFAULT_ENTRY);
 
@@ -131,7 +131,7 @@ extern "C" fn eh_personality() {}
 /// `eh_personality` work.
 #[panic_handler]
 pub fn panic_unwind(info: &PanicInfo<'_>) -> ! {
-    error!("{}", info);
+    kerror!("{}", info);
     let frame = Frame::new();
     frame.unwind(*UNWIND_DEPTH);
     arch::cpu::die();
@@ -139,7 +139,7 @@ pub fn panic_unwind(info: &PanicInfo<'_>) -> ! {
 
 #[alloc_error_handler]
 pub fn alloc_error(layout: alloc::alloc::Layout) -> ! {
-    error!("allocator: allocation failed in {:?}", layout);
+    kerror!("allocator: allocation failed in {:?}", layout);
     arch::cpu::die();
 }
 

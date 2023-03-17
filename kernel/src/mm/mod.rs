@@ -10,7 +10,6 @@ pub mod callback;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use bitflags::bitflags;
 use core::{future::Future, ops::Range, pin::Pin};
-use log::{debug, error, info};
 use x86_64::{structures::paging::Page, VirtAddr};
 
 use crate::{
@@ -142,11 +141,11 @@ impl Arena {
     /// Maps itself into `page_table`.
     pub fn map(&self, page_table: &mut dyn PageTableBehaviors) -> KResult<()> {
         if !is_page_aligned(self.range.start) {
-            error!("map(): arena not aligned to 4 KB.");
+            kerror!("map(): arena not aligned to 4 KB.");
             return Err(Errno::EINVAL);
         }
         if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
-            error!("map(): corrupted arena size");
+            kerror!("map(): corrupted arena size");
             return Err(Errno::EINVAL);
         }
 
@@ -163,11 +162,11 @@ impl Arena {
     /// Unmaps itself.
     pub fn unmap(&self, page_table: &mut dyn PageTableBehaviors) -> KResult<()> {
         if !is_page_aligned(self.range.start) {
-            error!("map(): arena not aligned to 4 KB.");
+            kerror!("map(): arena not aligned to 4 KB.");
             return Err(Errno::EINVAL);
         }
         if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
-            error!("map(): corrupted arena size");
+            kerror!("map(): corrupted arena size");
             return Err(Errno::EINVAL);
         }
 
@@ -222,7 +221,7 @@ impl Arena {
     /// Returns `Errno::EPERM` to indicate a non-writable memory address.
     pub fn check_write<T>(&self, ptr: *mut T, size: usize) -> KResult<usize> {
         if !self.flags.writable {
-            debug!(
+            kdebug!(
                 "checked_write(): error writing {:#x} with size {:#x}",
                 ptr as u64, size
             );
@@ -273,7 +272,7 @@ where
                 arena.callback.handle_page_fault(&mut self.page_table, addr)
             }
             None => {
-                error!(
+                kerror!(
                     "handle_page_fault(): cannot find arena for this address @ {:#x}.",
                     addr
                 );
@@ -284,7 +283,7 @@ where
 
     pub fn clear(&mut self) {
         for arena in self.arena.iter_mut() {
-            debug!("clear(): dropping arena {:?}", arena.range);
+            kdebug!("clear(): dropping arena {:?}", arena.range);
             arena.unmap(&mut self.page_table).unwrap();
         }
 
@@ -345,13 +344,13 @@ where
 
     /// Extends this memory space.
     pub fn add(&mut self, other: Arena) {
-        info!("add(): adding {:#x?} to vm...", other.range);
+        kinfo!("add(): adding {:#x?} to vm...", other.range);
 
         let start_addr = page_frame_number(other.range.start);
         let end_addr = page_frame_number(other.range.end + PAGE_SIZE as u64);
 
         // Performs sanity check: we must ensure that `other` is valid.
-		// Also note that the range is exclusive on the right side.
+        // Also note that the range is exclusive on the right side.
         if start_addr > end_addr {
             panic!(
               "add(): cannot add this arena into the vm because the memory region is invalid. Address: {:#x} >= {:#x}!",

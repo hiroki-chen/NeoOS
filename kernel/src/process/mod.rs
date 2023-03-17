@@ -16,7 +16,6 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::lazy_static;
-use log::info;
 use spin::RwLock;
 
 use event::EventBus;
@@ -130,7 +129,7 @@ impl Process {
         }
         self.threads.clear();
 
-        info!("process {} exit with {}", self.process_id, self.exit_code);
+        kinfo!("process {} exit with {}", self.process_id, self.exit_code);
     }
 }
 

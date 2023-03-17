@@ -2,7 +2,6 @@ use core::{sync::atomic::Ordering, time::Duration};
 
 use atomic_enum::atomic_enum;
 use lazy_static::lazy_static;
-use log::{error, info};
 use x86::msr::{
     rdmsr, wrmsr, IA32_X2APIC_CUR_COUNT, IA32_X2APIC_DIV_CONF, IA32_X2APIC_INIT_COUNT,
     IA32_X2APIC_LVT_TIMER,
@@ -80,7 +79,7 @@ pub fn init_apic_timer() -> KResult<()> {
 
     match timer_source {
         TimerSource::Hpet => {
-            error!("init_apic_timer(): The timer source is at higher priority!");
+            kerror!("init_apic_timer(): The timer source is at higher priority!");
             Err(Errno::EINVAL)
         }
         _ => {
@@ -107,7 +106,7 @@ pub fn init_apic_timer() -> KResult<()> {
                     wrmsr(IA32_X2APIC_DIV_CONF, 0x3);
                     wrmsr(IA32_X2APIC_INIT_COUNT, apic_timer_current);
 
-                    info!("init_apic_timer(): successfully initialized APIC timer.");
+                    kinfo!("init_apic_timer(): successfully initialized APIC timer.");
 
                     // Disable the old PIT and switches to APIC timer.
                     // This time, IRQ 0 is automatically reigstered for APIC timer.

@@ -5,7 +5,6 @@ use core::{
     hint::spin_loop,
     sync::atomic::{AtomicBool, Ordering},
 };
-use log::{info, warn};
 
 use crate::{
     arch::{
@@ -43,9 +42,9 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     // Initialize the serial port for logging.
     init_all_serial_ports();
 
-    warn!("_start(): logger started!");
-    info!("_start(): logging level is {}", *LOG_LEVEL);
-    info!("_start(): heap starts at {:#x}", heap);
+    kwarn!("_start(): logger started!");
+    kinfo!("_start(): logging level is {}", *LOG_LEVEL);
+    kinfo!("_start(): heap starts at {:#x}", heap);
 
     if let Err(errno) = init_kernel_page_table() {
         panic!(
@@ -53,10 +52,10 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
             errno
         );
     }
-    info!("_start(): initialized kernel page tables");
+    kinfo!("_start(): initialized kernel page tables");
 
     // Print boot header.
-    info!("_start(): boot header:\n{:#x?}", header);
+    kinfo!("_start(): boot header:\n{:#x?}", header);
     // Initialize the memory management (paging).
     if let Err(errno) = init_mm(header) {
         panic!(
@@ -64,7 +63,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
             errno
         );
     }
-    info!("_start(): initialized memory management.");
+    kinfo!("_start(): initialized memory management.");
 
     // Initialize the interrupt-related data structures and handlers.
     if let Err(errno) = init_interrupt_all() {
@@ -73,22 +72,22 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
             errno
         );
     }
-    info!("_start(): initialized traps, syscalls and interrupts.");
+    kinfo!("_start(): initialized traps, syscalls and interrupts.");
 
     if let Err(errno) = init_cpu() {
         panic!("_start(): failed to initialize CPU #0. Errno: {:?}", errno);
     }
-    info!("_start(): initialized x2APIC.");
+    kinfo!("_start(): initialized x2APIC.");
 
     print_cpu_topology();
 
     if let Err(errno) = init_pci() {
         panic!("_start(): failed to initialize PCI. Errno: {:?}", errno);
     }
-    info!("_start(): initialized PCI devices.");
+    kinfo!("_start(): initialized PCI devices.");
 
     init_keyboard();
-    info!("_start(): initialized keyboard.");
+    kinfo!("_start(): initialized keyboard.");
 
     if let Err(errno) = init_acpi(header) {
         panic!(
@@ -96,7 +95,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
             errno
         );
     }
-    info!("_start(): initialized ACPI.");
+    kinfo!("_start(): initialized ACPI.");
 
     measure_frequency();
 
@@ -130,7 +129,7 @@ pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
     }
 
     let header = ApHeader::from_raw(ap_header);
-    info!("_start_ap(): reading header: {:#x?}", header);
+    kinfo!("_start_ap(): reading header: {:#x?}", header);
 
     // Setup interrupt and related data structures.
     if let Err(errno) = init_interrupt_all() {
@@ -139,7 +138,7 @@ pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
             errno
         );
     }
-    info!("_start(): initialized traps, syscalls and interrupts.");
+    kinfo!("_start(): initialized traps, syscalls and interrupts.");
 
     if let Err(errno) = init_cpu() {
         let cpu_id = cpu_id();

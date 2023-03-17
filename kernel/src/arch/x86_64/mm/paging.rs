@@ -4,8 +4,6 @@ use core::{fmt::Debug, mem::ManuallyDrop};
 
 use alloc::boxed::Box;
 use boot_header::{Header, MemoryDescriptor, MemoryType};
-
-use log::{debug, error, info, trace, warn};
 use x86_64::{
     instructions::tlb::flush,
     registers::control::{Cr0, Cr0Flags, Cr2, Cr3, Cr3Flags},
@@ -32,7 +30,7 @@ unsafe impl FrameAllocator<Size4KiB> for PTFrameAllocator {
         match allocate_frame() {
             Ok(f) => Some(PhysFrame::containing_address(f)),
             Err(errno) => {
-                error!(
+                kerror!(
                     "allocate_frame(): failed to allocate frame! Errno: {:?}",
                     errno
                 );
@@ -45,9 +43,10 @@ unsafe impl FrameAllocator<Size4KiB> for PTFrameAllocator {
 impl FrameDeallocator<Size4KiB> for PTFrameAllocator {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
         if let Err(errno) = deallocate_frame(frame.start_address().as_u64()) {
-            error!(
+            kerror!(
                 "deallocate_frame(): failed to deallocate the frame {:#x?}! Errno: {:?}",
-                frame, errno
+                frame,
+                errno
             );
             panic!();
         }
@@ -59,7 +58,7 @@ pub fn handle_page_fault(addr: u64) -> bool {
     let thread = match current() {
         Ok(thread) => thread,
         Err(errno) => {
-            error!(
+            kerror!(
                 "handle_page_fault(): cannot get the current thread. Errno: {:?}",
                 errno
             );
@@ -67,7 +66,7 @@ pub fn handle_page_fault(addr: u64) -> bool {
         }
     };
 
-    trace!(
+    ktrace!(
         "handle_page_fault(): page fault @ {:#x} handled by {:#x}",
         addr,
         thread.id
@@ -177,14 +176,14 @@ pub trait PageTableMoreBehaviors: Sized + PageTableBehaviors {
         let cur = get_page_table() as *const _ as u64;
         let new = self.cr3();
 
-        debug!("with(): switch from {:#x} to {:#x}", cur, new);
+        kdebug!("with(): switch from {:#x} to {:#x}", cur, new);
         if cur != new {
             set_page_table(new);
         }
 
         let ans = f();
 
-        debug!("with(): switch back.");
+        kdebug!("with(): switch back.");
         if cur != new {
             set_page_table(cur);
         }
@@ -362,10 +361,10 @@ impl KernelPageTable {
     /// This print function requires the compilatio time environment variable `LOG_LEVEL` to be
     /// set to `DEBUG` or `TRACE`.
     pub fn print(&mut self) {
-        debug!("================= Kernel Page Table =================");
+        kdebug!("================= Kernel Page Table =================");
         for (index, entry) in self.page_table.level_4_table().iter().enumerate() {
             if entry.flags().contains(PageTableFlags::PRESENT) {
-                debug!(
+                kdebug!(
                     "Entry #{:0>4x} | Address: {:0>16x}, flags: {:<?}",
                     index,
                     entry.addr().as_u64(),
@@ -374,14 +373,14 @@ impl KernelPageTable {
             }
         }
 
-        debug!("================= Kernel Page Table =================");
+        kdebug!("================= Kernel Page Table =================");
     }
 }
 
 impl Drop for KernelPageTable {
     /// If you want to invalidate this page table, call this function `manually`.
     fn drop(&mut self) {
-        info!(
+        kinfo!(
             "drop(): dropping page table at {:#x?}",
             self.page_table_frame
         );
@@ -391,7 +390,7 @@ impl Drop for KernelPageTable {
 
 impl PageTableBehaviors for KernelPageTable {
     fn remap_kernel(&mut self) {
-        debug!("remap_kernel(): remapping the kernel...");
+        kdebug!("remap_kernel(): remapping the kernel...");
 
         let page_table = get_page_table();
 
@@ -410,7 +409,7 @@ impl PageTableBehaviors for KernelPageTable {
             physical_space.flags() | PageTableFlags::GLOBAL,
         );
 
-        debug!("remap_kernel(): finished.");
+        kdebug!("remap_kernel(): finished.");
     }
 
     fn map(&mut self, addr: VirtAddr, target: PhysAddr) -> &mut dyn EntryBehaviors {
@@ -447,7 +446,7 @@ impl PageTableBehaviors for KernelPageTable {
         addr: VirtAddr,
         f: Box<dyn Fn(&mut PageTableEntry)>,
     ) -> KResult<&mut dyn EntryBehaviors> {
-        trace!(
+        ktrace!(
             "get_entry(): getting entry for {:#x} with current page table located at {:#x}",
             addr.as_u64(),
             self.page_table_frame.start_address().as_u64()
@@ -473,7 +472,7 @@ impl PageTableBehaviors for KernelPageTable {
                 return Err(Errno::EEXIST);
             }
 
-            trace!("get_entry(): visiting {:#x?}", entry);
+            ktrace!("get_entry(): visiting {:#x?}", entry);
 
             // Retrive page table at the current level.
             page_table = frame_to_page_table(entry.frame().unwrap());
@@ -489,7 +488,7 @@ impl PageTableBehaviors for KernelPageTable {
 
             Ok(slice)
         } else {
-            error!("get_page_slice_mut(): invalid operation at {:#x}", addr);
+            kerror!("get_page_slice_mut(): invalid operation at {:#x}", addr);
             Err(Errno::EINVAL)
         }
     }
@@ -500,16 +499,17 @@ impl PageTableBehaviors for KernelPageTable {
         let new_page_table = self.page_table_frame.start_address().as_u64();
 
         if old_page_table == new_page_table {
-            warn!(
+            kwarn!(
                 "validate(): duplicate page table found: {:#x}",
                 new_page_table
             );
             return;
         }
 
-        debug!(
+        kdebug!(
             "validate(): page table from {:#x} to {:#x}",
-            old_page_table, new_page_table
+            old_page_table,
+            new_page_table
         );
         set_page_table(new_page_table);
     }
@@ -576,7 +576,7 @@ pub fn init_mm(header: &'static Header) -> KResult<()> {
     };
 
     for descriptor in mmap.iter() {
-        log::debug!("init_mm(): {:x?}", descriptor);
+        kdebug!("init_mm(): {:x?}", descriptor);
 
         if descriptor.ty == MemoryType::CONVENTIONAL {
             let start_frame = descriptor.phys_start as usize / PAGE_SIZE;

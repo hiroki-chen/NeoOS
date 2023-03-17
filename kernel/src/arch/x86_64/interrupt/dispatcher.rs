@@ -1,7 +1,6 @@
 //! This module implementes the interrupt handlers.
 
 use alloc::sync::Arc;
-use log::{debug, error, info, trace};
 use x86_64::instructions::tlb::flush_all;
 
 use crate::{
@@ -27,7 +26,7 @@ use super::{TrapFrame, INVALID_OPCODE_INTERRUPT, SYSCALL};
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
 #[no_mangle]
 pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
-    trace!(
+    ktrace!(
         "__trap_dispatcher(): trap frame number: {:#x?}",
         tf.trap_num
     );
@@ -36,12 +35,12 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
     match tf.trap_num {
         BREAKPOINT_INTERRUPT => dump_all(tf),
         GENERAL_PROTECTION_INTERRUPT => {
-            error!("__trap_dispatcher(): segmentation fault!");
+            kerror!("__trap_dispatcher(): segmentation fault!");
             arch::cpu::die()
         }
         PAGE_FAULT_INTERRUPT => page_fault(tf),
         DOUBLE_FAULT_INTERRUPT => {
-            error!("__trap_dispatcher(): interrupt cannot be handled! CPU is dead.");
+            kerror!("__trap_dispatcher(): interrupt cannot be handled! CPU is dead.");
             arch::cpu::die()
         }
         IRQ_MIN..=IRQ_MAX => {
@@ -70,23 +69,24 @@ pub async fn trap_dispatcher_user(
     let tf = ctx.get_trapno();
     match tf {
         BREAKPOINT_INTERRUPT => {
-            info!("spawn(): breakpoint!");
+            kinfo!("spawn(): breakpoint!");
             true
         }
 
         INVALID_OPCODE_INTERRUPT => {
-            error!("spawn(): invalid opcode.");
+            kerror!("spawn(): invalid opcode.");
             false
         }
         GENERAL_PROTECTION_INTERRUPT => {
-            error!("spawn(): illegal instruction.");
+            kerror!("spawn(): illegal instruction.");
             false
         }
         PAGE_FAULT_INTERRUPT => {
             let cr2 = get_pf_addr();
-            info!(
+            kinfo!(
                 "spawn(): thread {:#x} triggered page fault @ {:#x}",
-                thread.id, cr2
+                thread.id,
+                cr2
             );
 
             if !handle_page_fault(cr2) {
@@ -100,7 +100,7 @@ pub async fn trap_dispatcher_user(
         IRQ_MIN..IRQ_MAX => handle_irq(tf as _, true, Some(should_yield)),
         SYSCALL => handle_syscall(thread, ctx).await,
         tf => {
-            error!("spawn(): not supported {:#x}.", tf);
+            kerror!("spawn(): not supported {:#x}.", tf);
             false
         }
     }
@@ -138,10 +138,10 @@ fn handle_irq(trapno: u8, user: bool, should_yield: Option<&mut bool>) -> bool {
     } else {
         // Dispatch.
         if let Err(errno) = IRQ_MANAGER.read().dispatch_irq(irq as u64) {
-            error!("__trap_dispatcher(): IRQ manager returned {:?}", errno);
+            kerror!("__trap_dispatcher(): IRQ manager returned {:?}", errno);
             false
         } else {
-            trace!("__trap_dispatcher() IRQ handled.");
+            ktrace!("__trap_dispatcher() IRQ handled.");
             true
         }
     }
@@ -170,13 +170,13 @@ fn handle_ipi(ipi: u8) -> bool {
 /// Simply dumps the tf.
 #[inline(always)]
 fn dump_all(tf: &mut TrapFrame) {
-    info!("dump_all(): dumped tf (Not TensorFlow :)) as\n{:#x?}", tf);
+    kinfo!("dump_all(): dumped tf (Not TensorFlow :)) as\n{:#x?}", tf);
 }
 
 /// Handles page fault.
 fn page_fault(tf: &mut TrapFrame) {
     let pf_addr = arch::mm::paging::get_pf_addr();
-    debug!(
+    kdebug!(
         "page_fault(): detected page fault interrupt @ {:#x}. Layout:",
         pf_addr
     );
@@ -186,7 +186,7 @@ fn page_fault(tf: &mut TrapFrame) {
     let thread = match current() {
         Ok(t) => t,
         Err(errno) => {
-            error!(
+            kerror!(
                 "page_fault(): no current thread running! Errno: {:?}",
                 errno
             );
@@ -196,7 +196,7 @@ fn page_fault(tf: &mut TrapFrame) {
 
     let mut vm = thread.vm.lock();
     if !vm.handle_page_fault(pf_addr) {
-        error!("page_fault(): this thread cannot handle page fault!");
+        kerror!("page_fault(): this thread cannot handle page fault!");
         arch::cpu::die();
     }
 }

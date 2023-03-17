@@ -16,7 +16,6 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::lazy_static;
-use log::{error, info, trace};
 use spin::RwLock;
 
 use crate::{
@@ -332,7 +331,7 @@ impl ThreadContext {
     pub fn get_user_context(&mut self) -> &mut Box<Context> {
         &mut self.user_context
     }
-  }
+}
 
 impl Debug for ThreadContext {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -380,7 +379,7 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
             // syscall / trap: anyway, a context switch happens here.
             if !trap_dispatcher_user(&thread, &mut ctx, &mut should_yield).await {
-                error!(
+                kerror!(
                     "spawn(): cannot handle context switch. Dumped context is {:#x?}",
                     ctx.user_context
                 );
@@ -394,12 +393,12 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
             thread.restore(ctx);
             if exited {
-                info!("spawn(): thread {:#x} ended.", thread.id);
+                kinfo!("spawn(): thread {:#x} ended.", thread.id);
                 break;
             }
             if should_yield {
                 // Suspend execution until is ready.
-                trace!("spawn(): thread {:#x} yields the CPU.", thread.id);
+                ktrace!("spawn(): thread {:#x} yields the CPU.", thread.id);
                 Yield::default().await
             }
         }
@@ -416,7 +415,7 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading(entry: u64) {
-    info!(
+    kinfo!(
         "debug_threading(): creating a dummy thread. RIP @ {:#x}",
         __debug_thread as u64
     );

@@ -12,8 +12,6 @@ cfg_if::cfg_if! {
     }
 }
 
-use log::info;
-
 use crate::{
     arch::{
         apic::ioapic::{IoApic, DEFAULT_IOAPIC_ADDR},
@@ -46,7 +44,7 @@ pub fn get_gsi(irq: u64) -> u8 {
 
 /// Registers the interrupt request into IOAPIC.
 pub fn enable_irq(irq: u64) {
-    info!("enable_irq(): enabling {irq}");
+    kinfo!("enable_irq(): enabling {irq}");
 
     let ioapic = IoApic::new(phys_to_virt(DEFAULT_IOAPIC_ADDR));
     let apic_pin = get_gsi(irq);
@@ -55,7 +53,7 @@ pub fn enable_irq(irq: u64) {
 }
 
 pub fn disable_irq(irq: u64) {
-    info!("disable_irq(): disabling {irq}");
+    kinfo!("disable_irq(): disabling {irq}");
 
     let ioapic = IoApic::new(phys_to_virt(DEFAULT_IOAPIC_ADDR));
     let apic_pin = get_gsi(irq);

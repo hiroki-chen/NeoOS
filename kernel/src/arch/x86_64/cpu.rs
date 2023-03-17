@@ -7,7 +7,6 @@ use core::{
 
 use alloc::{boxed::Box, format, string::String, vec::Vec};
 
-use log::info;
 use raw_cpuid::{CpuId, CpuIdResult, FeatureInfo};
 use spin::Once;
 use x86::random::rdrand64;
@@ -328,7 +327,7 @@ pub fn print_cpu_topology() {
         .or(cpuid().get_extended_topology_info())
     {
         info.for_each(|topo| {
-            log::info!("print_cpu_topology(): {:?}", topo);
+            kinfo!("print_cpu_topology(): {:?}", topo);
         });
     }
 }
@@ -342,7 +341,7 @@ pub fn init_cpu() -> KResult<()> {
 
     let lapic = X2Apic {};
     lapic.init();
-    log::info!("init_cpu(): {:#x?}", lapic.get_info());
+    kinfo!("init_cpu(): {:#x?}", lapic.get_info());
 
     unsafe {
         enable_float_processing_unit();
@@ -366,7 +365,7 @@ pub fn measure_frequency() {
 
             let estimated_frequency = (end - begin) as f64 / 10_000_000f64;
             CPU_FREQUENCY.call_once(|| estimated_frequency);
-            info!("measure_frequency(): estimated frequency is {estimated_frequency} GHz.");
+            kinfo!("measure_frequency(): estimated frequency is {estimated_frequency} GHz.");
         }
     });
 }

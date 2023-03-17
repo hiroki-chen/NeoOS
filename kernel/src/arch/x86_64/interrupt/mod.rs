@@ -95,7 +95,6 @@ use core::{
 
 use alloc::collections::BTreeMap;
 use lazy_static::lazy_static;
-use log::info;
 use spin::RwLock;
 
 use crate::{
@@ -301,18 +300,18 @@ impl Context {
 pub unsafe fn init_interrupt_all() -> KResult<()> {
     // Step 1: This operation should be atomic, so no other interrupts could happten.
     let flags = disable_and_store();
-    info!("init_interrupt_all(): disabled interrupts.");
+    kinfo!("init_interrupt_all(): disabled interrupts.");
     // Step 2: Set up the global descriptor table.
     init_gdt()?;
-    info!("init_interrupt_all(): initialized gdt.");
+    kinfo!("init_interrupt_all(): initialized gdt.");
     // Step 3: Set up the interrupt descriptor table.
     init_idt()?;
-    info!("init_interrupt_all(): initialized idt.");
-    info!("init_interrupt_all(): try `int 0x3`. You will see the trap frame.");
+    kinfo!("init_interrupt_all(): initialized idt.");
+    kinfo!("init_interrupt_all(): try `int 0x3`. You will see the trap frame.");
     asm!("int 0x3");
     // Step 4: Set up the syscall handlers.
     init_syscall()?;
-    info!("init_interrupt_all(): initialized syscall handlers.");
+    kinfo!("init_interrupt_all(): initialized syscall handlers.");
     // Step 5: Restore the interrupt.
     restore(flags);
 

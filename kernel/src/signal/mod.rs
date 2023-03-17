@@ -11,7 +11,6 @@ use core::mem::MaybeUninit;
 
 use alloc::sync::Arc;
 use bitflags::bitflags;
-use log::{error, info, warn};
 
 use crate::{
     arch::{interrupt::Context, signal::SigContext},
@@ -371,7 +370,7 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
                     }
 
                     Signal::SIGCHLD => {
-                        info!("handle_signal(): SIGCHILD is ignored by default.");
+                        kinfo!("handle_signal(): SIGCHILD is ignored by default.");
                         continue;
                     }
 
@@ -381,13 +380,13 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
             // A signal may be ignored if the process has set its handler to SIG_IGN.
             SIG_IGN => {
                 // Do nothing.
-                info!("handle_signal(): signal {:?} is ignored.", signal);
+                kinfo!("handle_signal(): signal {:?} is ignored.", signal);
                 continue;
             }
 
             SIG_ERR => {
                 // Error occurred. Exit the program.
-                error!("handle_signal(): error occurred.");
+                kerror!("handle_signal(): error occurred.");
                 // Find an error code.
                 process.exit((SIG_ERR as u8) as _);
             }
@@ -395,7 +394,7 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
             _ => {
                 // Must set up a new CPU context for the signal handler to use.
 
-                info!("handle_signal(): use user handler.");
+                kinfo!("handle_signal(): use user handler.");
                 // We can override how the signal is being processed by specifying a new action handler.
                 let mut inner = thread.inner.lock();
                 let sig_mask = inner.sigmask;
@@ -432,7 +431,7 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
                     sig_frame.pretcode = sig_frame.retcode.as_ptr() as _;
 
                     if sig_frame.retcode.len() <= SYSRETURN.len() {
-                        warn!("handle_signal(): the return code length is insufficient. This should be reported.");
+                        kwarn!("handle_signal(): the return code length is insufficient. This should be reported.");
                     }
                     sig_frame.retcode.copy_from_slice(SYSRETURN);
                 }

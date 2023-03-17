@@ -3,14 +3,14 @@
 //!
 //! This module probes devices on the BUS and initialize them.
 
-use log::{debug, info};
 use pci::{CSpaceAccessMethod, Location, PCIDevice, PortOps, BAR};
 use x86_64::instructions::port::Port;
 
 use crate::{
     drivers::{block::init_ahci, PCI_DRIVERS},
     error::{Errno, KResult},
-    memory::phys_to_virt,
+    function, kinfo,
+    memory::phys_to_virt, kdebug,
 };
 
 pub const PCI_COMMAND: u16 = 0x04;
@@ -58,7 +58,7 @@ pub fn init_pci() -> KResult<()> {
     let devices_connected = unsafe { pci::scan_bus(&Ops, CSpaceAccessMethod::IO) };
 
     for device in devices_connected.into_iter() {
-        info!(
+        kinfo!(
             "init_pci(): {:02x}:{:02x}.{} {:#x} {:#x} ({} {}) irq: {}:{:?}",
             device.loc.bus,
             device.loc.device,
@@ -83,9 +83,10 @@ fn init_device(device: &PCIDevice) -> KResult<()> {
         // Mass storage class
         // SATA subclass
         if let Some(BAR::Memory(addr, len, _, _)) = device.bars[5] {
-            info!(
+            kinfo!(
                 "init_device(): Found AHCI dev {:?} BAR5 {:x?}",
-                device, addr
+                device,
+                addr
             );
             let _irq = unsafe { enable_irq(device.loc) };
 
@@ -138,16 +139,17 @@ unsafe fn enable_irq(loc: Location) -> KResult<usize> {
 
             // enable MSI interrupt, assuming 64bit for now
             am.write32(ops, loc, cap_ptr + PCI_MSI_CTRL_CAP, orig_ctrl | 0x10000);
-            debug!(
+            kdebug!(
                 "enable_irq(): MSI control {:#b}, enabling MSI interrupt {}",
                 orig_ctrl >> 16,
                 irq
             );
             msi_found = true;
         }
-        debug!(
+        kdebug!(
             "enable_irq(): PCI device has cap id {} at {:#X}",
-            cap_id, cap_ptr
+            cap_id,
+            cap_ptr
         );
         cap_ptr = am.read8(ops, loc, cap_ptr + 1) as u16;
     }
@@ -156,10 +158,10 @@ unsafe fn enable_irq(loc: Location) -> KResult<usize> {
         // Use PCI legacy interrupt instead
         // IO Space | MEM Space | Bus Mastering | Special Cycles
         am.write32(ops, loc, PCI_COMMAND, (orig | 0xf) as u32);
-        debug!("enable_irq(): MSI not found, using PCI interrupt");
+        kdebug!("enable_irq(): MSI not found, using PCI interrupt");
     }
 
-    info!("enable_irq(): pci device enable done");
+    kinfo!("enable_irq(): pci device enable done");
 
     match assigned_irq {
         Some(irq) => Ok(irq),

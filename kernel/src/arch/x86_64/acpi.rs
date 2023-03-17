@@ -10,7 +10,6 @@ use acpi::{
 };
 
 use boot_header::Header;
-use log::{debug, error, info};
 use x86_64::instructions::port::Port;
 
 use crate::{
@@ -42,7 +41,7 @@ impl AcpiHandler for AcpiHandlerImpl {
         physical_address: usize,
         size: usize,
     ) -> PhysicalMapping<Self, T> {
-        debug!(
+        kdebug!(
             "map_physical_region(): map {:#x} into {:#x}",
             physical_address,
             PHYSICAL_MEMORY_START + physical_address as u64
@@ -59,7 +58,7 @@ impl AcpiHandler for AcpiHandlerImpl {
     }
 
     fn unmap_physical_region<T>(_: &PhysicalMapping<Self, T>) {
-        debug!("unmap_physical_region(): unmap");
+        kdebug!("unmap_physical_region(): unmap");
     }
 }
 
@@ -68,17 +67,17 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
     let table = match unsafe { AcpiTables::from_rsdp(handler, header.acpi2_rsdp_addr as usize) } {
         Ok(table) => table,
         Err(e) => {
-            error!("init_acpi(): acpi parse error: {:?}", e);
+            kerror!("init_acpi(): acpi parse kerror: {:?}", e);
             return Err(Errno::EINVAL);
         }
     };
 
-    debug!("init_acpi(): revision: {:#x}", table.revision);
+    kdebug!("init_acpi(): revision: {:#x}", table.revision);
 
     // Check IoAPIC information.
     if let Ok(platform_info) = PlatformInfo::new(&table) {
-        info!("init_acpi(): showing platform information!");
-        info!("Interrupt model: {:#x?}", platform_info.interrupt_model);
+        kinfo!("init_acpi(): showing platform information!");
+        kinfo!("Interrupt model: {:#x?}", platform_info.interrupt_model);
 
         // Set the BSP.
         BSP_ID.call_once(|| {
@@ -104,7 +103,7 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
     if let Ok(hpet_table) = HpetInfo::new(&table) {
         // Initialize the HPET timer.
         if let Err(errno) = init_hpet(&hpet_table) {
-            log::error!("init_acpi(): cannot initialize HPET due to {:?}.", errno);
+            kerror!("init_acpi(): cannot initialize HPET due to {:?}.", errno);
             // Ignore this and fall back to `Acpi` timer.
             TIMER_SOURCE.store(TimerSource::Apic, Ordering::Release);
         }
@@ -135,7 +134,7 @@ fn collect_irq_mapping(apic_information: &Apic) {
 }
 
 /// In modern versions of qemu, in order to terminate the VM from inside, we have to run qemu with
-/// `-device isa-debug-exit` and write a message (0x31) to a port (0x501). Port I/O is a weird kernel-y
+/// `-device isa-kdebug-exit` and write a message (0x31) to a port (0x501). Port I/O is a weird kernel-y
 /// thing, but just realize that:
 /// * ioperm gives us permission to write to port 0x501
 /// * outb writes a byte (0x31) to that port
@@ -146,7 +145,7 @@ fn collect_irq_mapping(apic_information: &Apic) {
 ///
 /// This function is marked as `unsafe` because writing to arbitrary port is dangerous.
 pub unsafe fn shutdown<T>(res: KResult<T>) -> ! {
-    info!("shuwdown(): The system is about to shutdown...");
+    kinfo!("shuwdown(): The system is about to shutdown...");
     match res {
         Ok(_) => {
             Port::new(0xb004).write(0x0u8);

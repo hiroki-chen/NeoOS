@@ -78,9 +78,9 @@ pub unsafe fn init_ap_gdt(gdt_addr: u64) {
     let gdt_size = AP_TRAMPOLINE_GDT.len() * u16_len;
     // Fill the data for `gdtr`.
     let gdtr_addr = gdt_addr + gdt_size as u64;
-    log::info!("gdtr addr = {:#x}", gdtr_addr);
-    log::info!("gdt addr = {:#x}", gdt_addr);
-    log::info!("gdt size = {:#x}", gdt_size);
+    kinfo!("gdtr addr = {:#x}", gdtr_addr);
+    kinfo!("gdt addr = {:#x}", gdt_addr);
+    kinfo!("gdt size = {:#x}", gdt_size);
     core::intrinsics::atomic_store_seqcst(gdtr_addr as *mut u32, gdt_size as u32 - 1);
     core::intrinsics::atomic_store_seqcst(
         (gdtr_addr as *mut u32).add(1) as *mut u16,
@@ -106,7 +106,7 @@ pub unsafe fn init_gdt() -> KResult<()> {
     let gdt_ptr = sgdt();
     // Align to 8 bytes.
     let gdt_len = (gdt_ptr.limit + 1) as usize / core::mem::size_of::<u64>();
-    log::info!("init_gdt(): gdt_ptr: {:?}, len: {}", gdt_ptr, gdt_len);
+    kinfo!("init_gdt(): gdt_ptr: {:?}, len: {}", gdt_ptr, gdt_len);
 
     let gdt = core::slice::from_raw_parts(gdt_ptr.base.as_ptr() as *const u64, gdt_len);
     // Step 1: Memory allocation. The GDT is typically stored in a fixed location in memory.

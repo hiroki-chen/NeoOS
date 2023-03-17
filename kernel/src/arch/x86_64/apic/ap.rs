@@ -2,7 +2,6 @@ use acpi::{madt::Madt, AcpiHandler, PhysicalMapping};
 use core::{ffi::c_void, sync::atomic::Ordering};
 
 use acpi::madt::{EntryHeader, LocalApicEntry, MadtEntry};
-use log::{debug, error, info};
 
 use crate::{
     arch::{
@@ -21,7 +20,7 @@ pub fn init_aps<H>(madt: &PhysicalMapping<H, Madt>) -> KResult<()>
 where
     H: AcpiHandler,
 {
-    info!("init_aps(): initializing APs.");
+    kinfo!("init_aps(): initializing APs.");
 
     // Fill data into that address.
     unsafe {
@@ -55,10 +54,10 @@ where
                 let p_lapic = lapic as *const LocalApicEntry as *const c_void;
                 let offset = core::mem::size_of::<EntryHeader>();
                 let apic_id = read_at::<u8>(p_lapic, offset);
-                info!("init_aps(): parsing CPU {:#x}", apic_id);
+                kinfo!("init_aps(): parsing CPU {:#x}", apic_id);
 
                 if *apic_id == 0x0 {
-                    info!("init_aps(): it is BSP; skip.");
+                    kinfo!("init_aps(): it is BSP; skip.");
                 } else {
                     // Initialize the AP.
                     let ap_header_addr =
@@ -69,7 +68,7 @@ where
 
                     // Check header.
                     if !ap_header.sanity_check() {
-                        error!("init_aps(): AP {:#x} contains corrupted header!", *apic_id);
+                        kerror!("init_aps(): AP {:#x} contains corrupted header!", *apic_id);
                         continue;
                     }
 
@@ -104,7 +103,7 @@ where
                         page_table,
                     );
 
-                    debug!("init_aps(): filled {:#x?}", ap_header);
+                    kdebug!("init_aps(): filled {:#x?}", ap_header);
 
                     // Send init IPI.
                     send_init_ipi(*apic_id as _);
@@ -120,7 +119,7 @@ where
             }
         }
     }
-    info!("init_aps(): successfully initialized APs.");
+    kinfo!("init_aps(): successfully initialized APs.");
 
     Ok(())
 }

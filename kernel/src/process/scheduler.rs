@@ -8,7 +8,6 @@ use core::{future::Future, pin::Pin, task::Context};
 
 use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
 use lazy_static::lazy_static;
-use log::{info, warn};
 use woke::{waker_ref, Woke};
 
 use crate::sync::mutex::SpinLock as Mutex;
@@ -125,7 +124,7 @@ impl Fifo {
 impl SchedAlgorithm for Fifo {
     fn add_task(&self, task: Arc<Task>, task_info: Option<TaskInfo>) {
         if task_info.is_some() {
-            warn!("add_task(): FIFO ignores the `task_info` struct. You are feeding the algorithm the wrong input.");
+            kwarn!("add_task(): FIFO ignores the `task_info` struct. You are feeding the algorithm the wrong input.");
         }
 
         self.task_list.lock().push_back(task);
@@ -194,7 +193,7 @@ impl Scheduler {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        info!(
+        kinfo!(
             "spawn(): the scheduler {:?} is spawning new thread!",
             self.algorithm.ty()
         );

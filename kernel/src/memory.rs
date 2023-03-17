@@ -50,7 +50,6 @@ use alloc::{
 };
 
 use buddy_system_allocator::Heap;
-use log::{info, warn};
 use x86_64::{PhysAddr, VirtAddr};
 
 pub const USER_STACK_SIZE: usize = 0x0040_0000;
@@ -401,7 +400,7 @@ pub fn init_heap() -> usize {
 
 /// When OOM occurs, we try to grow the heap to prevent the kernel from panicking.
 pub fn grow_heap_on_oom(mem: &mut Heap<32>, layout: &core::alloc::Layout) {
-    info!(
+    kinfo!(
         "grow_heap_on_oom(): Heap is OOM at {:?}. Trying to grow the heap.",
         layout
     );
@@ -418,9 +417,10 @@ pub fn grow_heap_on_oom(mem: &mut Heap<32>, layout: &core::alloc::Layout) {
     // TODO: Need an OOM killer for this function so that the kernel won't panic.
 
     for (addr, len) in addrs[..addr_len].iter() {
-        info!(
+        kinfo!(
             "grow_heap_on_oom(): created {:#x} with length {:#x}",
-            addr, len
+            addr,
+            len
         );
         unsafe {
             mem.init(*addr as usize, *len);
@@ -668,7 +668,7 @@ where
     T: 'static + Sized,
 {
     if ptr as usize % core::mem::size_of::<u64>() != 0 {
-        warn!(
+        kwarn!(
             "read_at(): trying to read pointer address at {:#x} because it is not aligned; this may cause unwanted results.",
             ptr as u64
         );

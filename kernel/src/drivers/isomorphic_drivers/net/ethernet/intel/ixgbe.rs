@@ -3,6 +3,7 @@
 
 use super::super::structs::EthernetAddress;
 use crate::drivers::isomorphic_drivers::provider::Provider;
+use crate::{function, kinfo};
 use alloc::vec::Vec;
 use bit_field::*;
 use bitflags::*;
@@ -201,10 +202,10 @@ impl<P: Provider> IXGBE<P> {
                 let status = ixgbe[IXGBE_LINKS].read();
                 if status.get_bit(7) {
                     // link up
-                    info!("ixgbe: interface link up");
+                    kinfo!("ixgbe: interface link up");
                 } else {
                     // link down
-                    info!("ixgbe: interface link down");
+                    kinfo!("ixgbe: interface link down");
                 }
             }
             true
@@ -305,7 +306,7 @@ impl<P: Provider> IXGBE<P> {
         assert_eq!(size_of::<IXGBESendDesc>(), 16);
         assert_eq!(size_of::<IXGBERecvDesc>(), 16);
 
-        info!("ixgbe: interface setup begin");
+        kinfo!("ixgbe: interface setup begin");
 
         let (recv_queue_va, recv_queue_pa) = P::alloc_dma(IXGBE_RECV_QUEUE_SIZE);
         let mut recv_queue = unsafe {
@@ -564,7 +565,7 @@ impl<P: Provider> IXGBE<P> {
             IXGBEStatus::from_bits_truncate(ixgbe[IXGBE_STATUS].read())
         );
 
-        info!("ixgbe: interface setup done");
+        kinfo!("ixgbe: interface setup done");
 
         IXGBE {
             provider: PhantomData,
@@ -625,6 +626,6 @@ impl<P: Provider> Drop for IXGBE<P> {
             P::dealloc_dma(recv_buffer, IXGBE_BUFFER_SIZE);
         }
 
-        info!("ixgbe: interface detached");
+        kinfo!("ixgbe: interface detached");
     }
 }

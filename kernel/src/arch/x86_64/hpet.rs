@@ -4,7 +4,6 @@
 //! using ACPI.
 
 use acpi::HpetInfo;
-use log::{info, warn};
 
 use crate::{
     error::{Errno, KResult},
@@ -72,8 +71,8 @@ impl Hpet {
 /// 4. Initialize comparators.
 /// 5. Set ENABLE_CNF bit.
 pub fn init_hpet(hpet_info: &HpetInfo) -> KResult<()> {
-    info!("init_hpet(): detected hpet_table!");
-    info!("init_hpet(): HPET information:\n{:#x?}", hpet_info);
+    kinfo!("init_hpet(): detected hpet_table!");
+    kinfo!("init_hpet(): HPET information:\n{:#x?}", hpet_info);
 
     let hpet = Hpet::new(hpet_info.base_address as u64);
     // Disable it first.
@@ -81,7 +80,7 @@ pub fn init_hpet(hpet_info: &HpetInfo) -> KResult<()> {
 
     let cap = hpet.read(CAPABILITY_OFFSET);
     if cap & LEG_RT_CAP == 0 {
-        warn!("init_hpet(): missing capability LEG_RT_CAP.");
+        kwarn!("init_hpet(): missing capability LEG_RT_CAP.");
         return Err(Errno::EINVAL);
     }
 
@@ -93,7 +92,7 @@ pub fn init_hpet(hpet_info: &HpetInfo) -> KResult<()> {
 
     let t0_cap = hpet.read(T0_CONFIG_CAPABILITY_OFFSET);
     if t0_cap & PER_INT_CAP == 0 {
-        warn!("init_hpet(): T0 missing capability PER_INT_CAP {t0_cap}");
+        kwarn!("init_hpet(): T0 missing capability PER_INT_CAP {t0_cap}");
         return Err(Errno::EINVAL);
     }
 
@@ -107,6 +106,6 @@ pub fn init_hpet(hpet_info: &HpetInfo) -> KResult<()> {
     // Enable.
     hpet.toggle(true);
 
-    info!("init_hpet(): successfully initialized HPET.");
+    kinfo!("init_hpet(): successfully initialized HPET.");
     Ok(())
 }

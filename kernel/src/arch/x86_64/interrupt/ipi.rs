@@ -87,7 +87,7 @@ where
 
     match target {
         Some(target) => unsafe {
-            log::info!("send_ipi(): sending IPI to target {:#x}", target);
+            kinfo!("send_ipi(): sending IPI to target {:#x}", target);
             let finished_cloned = finished.clone();
 
             if ipi_type == IpiType::Others {
