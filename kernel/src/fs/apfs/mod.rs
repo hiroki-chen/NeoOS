@@ -29,9 +29,10 @@ use crate::{
 };
 
 use self::meta::{
-    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, FsMap, JInodeKey,
-    JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical,
-    ObjectTypes, Oid, Omap, APFS_TYPE_INODE, OBJ_TYPE_SHIFT,
+    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, FsMap,
+    JDrecHashedKey, JInodeKey, JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey,
+    ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC, APFS_TYPE_INODE,
+    OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID,
 };
 
 use rcore_fs::{
@@ -150,7 +151,7 @@ pub struct AppleFileSystem {
     /// The block driver (e.g., AHCI controller).
     device: Arc<dyn Device>,
     /// Read-only volumn list. Should be a list of root node?
-    volumn_lists: RwLock<Vec<ApfsVolumn>>,
+    volumn_lists: RwLock<Vec<Arc<ApfsVolumn>>>,
     /// The root node of the object map.
     nx_omap_root: RwLock<Option<(BTreeNodePhysical, BTreeInfo)>>,
     /// The object map (in-memory).
@@ -160,6 +161,17 @@ pub struct AppleFileSystem {
 }
 
 impl AppleFileSystem {
+    /// Cast `self` into atomic reference counter.
+    fn as_arc(self) -> KResult<Arc<Self>> {
+        let fs = Arc::new(self);
+        let weak = Arc::downgrade(&fs);
+        let ptr = Arc::into_raw(fs) as *mut Self;
+        unsafe {
+            (*ptr).self_ptr = weak;
+            Ok(Arc::from_raw(ptr))
+        }
+    }
+
     /// Mounts the APFS container via a device driver (AHCI SATA) and returns a arc-ed instance. One may need to call
     /// `self.mount_volumns` to make other volumns present.
     pub fn mount_container(device: Arc<dyn Device>) -> KResult<Arc<Self>> {
@@ -224,7 +236,7 @@ impl AppleFileSystem {
         }
 
         kinfo!("mounted the superblock: {:x?}", nx_superblock);
-        Ok(Arc::new(Self {
+        Self {
             self_ptr: Weak::default(),
             superblock: RwLock::new(MaybeDirty::new(nx_superblock)),
             device: device.clone(),
@@ -232,7 +244,8 @@ impl AppleFileSystem {
             nx_omap_root: RwLock::new(None),
             nx_omap: RwLock::new(None),
             inodes: RwLock::new(BTreeMap::new()),
-        }))
+        }
+        .as_arc()
     }
 
     /// Mounts all volumns
@@ -318,6 +331,35 @@ impl AppleFileSystem {
         Ok(())
     }
 
+    /// Get the inode id from a directory record id. The APFS manages all the objects at the same level with a same id.
+    pub fn get_inode_id(&self, drec_id: u64, dir_name: &str, volumn_name: &str) -> KResult<u64> {
+        let obj_id_and_type = ((APFS_TYPE_DIR_REC as u64) << OBJ_TYPE_SHIFT) | drec_id;
+        let mut name = [0u8; 255];
+        // Null terminated.
+        name[..dir_name.len()].copy_from_slice(dir_name.as_bytes());
+
+        let drec_key = JDrecHashedKey {
+            hdr: JKey { obj_id_and_type },
+            name_len_and_hash: u32::default(),
+            name,
+        };
+
+        // Search the map.
+        match self.volumn_lists.read().iter().find(|&volumn| {
+            let name = CStr::from_bytes_until_nul(&volumn.superblock.apfs_volname)
+                .unwrap_or_default()
+                .to_str()
+                .unwrap_or_default();
+            name == volumn_name
+        }) {
+            Some(volumn) => match volumn.fs_map.dir_record_map.get(&drec_key) {
+                Some(e) => Ok(e.file_id),
+                None => return Err(Errno::ENOENT),
+            },
+            None => return Err(Errno::ENOENT),
+        }
+    }
+
     /// Reads an Inode from the disk and converts to `Arc<AppleFileSystemInode>`.
     ///
     /// If there does not exist such Inodes indicated by `inode_id`, an error `ENOENT` will be reported.
@@ -336,7 +378,7 @@ impl AppleFileSystem {
 
         // Otherwise, we create a new one from the volumn list's map.
         match self.volumn_lists.read().iter().find(|&volumn| {
-            let name = CStr::from_bytes_with_nul(&volumn.superblock.apfs_volname)
+            let name = CStr::from_bytes_until_nul(&volumn.superblock.apfs_volname)
                 .unwrap_or_default()
                 .to_str()
                 .unwrap_or_default();
@@ -348,7 +390,7 @@ impl AppleFileSystem {
                         obj_id_and_type: ((APFS_TYPE_INODE as u64) << OBJ_TYPE_SHIFT) | inode_id,
                     },
                 };
-                // FIXME: May need to ask JDirRecordMap first.
+
                 let inode_val = match volumn.fs_map.inode_map.get(&key) {
                     Some(inode_val) => inode_val,
                     None => return Err(Errno::ENOENT),
@@ -356,6 +398,7 @@ impl AppleFileSystem {
 
                 Ok(Arc::new(AppleFileSystemInode {
                     id: inode_id,
+                    volumn: volumn.clone(),
                     apfs: self.self_ptr.upgrade().unwrap(),
                     inode_inner: RwLock::new(MaybeDirty::new(inode_val.clone())),
                 }))
@@ -365,8 +408,13 @@ impl AppleFileSystem {
     }
 
     pub fn get_root_inode(&self, volumn_name: &str) -> Arc<dyn INode> {
-        self.get_inode(1, volumn_name)
-            .expect("No root inode found.")
+        // Before we locate the real root, we need to walk the JDirRecordMap to find 'root' inode because
+        // APFS always creates two 'virtual' directories, namely, 'private-dir\0' and 'root\0'.
+        let inode_id = self
+            .get_inode_id(ROOT_DIR_RECORD_ID, "root", volumn_name)
+            .expect("No root directory record. APFS is mounted incorrectly");
+        self.get_inode(inode_id, volumn_name)
+            .expect("No root inode found")
     }
 }
 
@@ -376,7 +424,8 @@ impl FileSystem for AppleFileSystem {
     }
 
     fn root_inode(&self) -> Arc<dyn INode> {
-        todo!()
+        // FIXME: Better choice?
+        self.get_root_inode("untitled")
     }
 
     fn info(&self) -> FsInfo {
@@ -394,6 +443,8 @@ impl Drop for AppleFileSystem {
 pub struct AppleFileSystemInode {
     /// The Inode Id.
     id: u64,
+    /// The volumn to which this inode belongs.
+    volumn: Arc<ApfsVolumn>,
     /// Reference to the filesystem wrapper by an atomic reference counter.
     ///
     /// This is needed because Inode depends on the existence of the filesystem so we must prevent the

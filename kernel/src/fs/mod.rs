@@ -6,6 +6,7 @@
 
 use alloc::{sync::Arc, vec::Vec};
 use lazy_static::lazy_static;
+use rcore_fs::vfs::{FileSystem, INode};
 
 use crate::{
     drivers::{block::BlockDriverWrapper, BLOCK_DRIVERS},
@@ -47,7 +48,6 @@ impl apfs::Device for Vec<u8> {
 
 #[cfg(feature = "mount_sfs")]
 lazy_static! {
-    use rcore_fs::vfs::{FileSystem, INode};
     use rcore_fs_mountfs::MountFS;
 
     use crate::fs::sfs::SimpleFileSystem;
@@ -64,14 +64,13 @@ lazy_static! {
 
 #[cfg(feature = "mount_apfs")]
 lazy_static! {
-    pub static ref ROOT_FS: Arc<apfs::AppleFileSystem> = {
+    pub static ref ROOT_FS: Arc<dyn INode> = {
         let device = Arc::new(BlockDriverWrapper(
             BLOCK_DRIVERS.read().iter().next().unwrap().clone(),
         ));
         let apfs = apfs::AppleFileSystem::mount_container(device).unwrap();
         apfs.load_nx_object_map().unwrap();
         apfs.mount_volumns_all().unwrap();
-
-        apfs
+        apfs.root_inode()
     };
 }

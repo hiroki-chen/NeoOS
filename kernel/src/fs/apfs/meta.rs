@@ -1,6 +1,6 @@
 //! Defines some important metadata.
 
-use core::{any::Any, cmp::Ordering, panic};
+use core::{any::Any, cmp::Ordering, ffi::CStr, panic};
 
 use alloc::{
     collections::{BTreeMap, VecDeque},
@@ -58,6 +58,7 @@ pub const NX_MAGIC: &[u8; 4] = b"NXSB";
 pub const APFS_MAGIC: &[u8; 4] = b"APSB";
 pub const OBJECT_HDR_SIZE: usize = core::mem::size_of::<ObjectPhysical>();
 pub const MAX_ALLOWED_CHECKPOINT_MAP_SIZE: usize = 100;
+pub const ROOT_DIR_RECORD_ID: u64 = 0x1;
 
 // B-Tree constants.
 pub const BTREE_STORAGE_SIZE: usize =
@@ -720,7 +721,11 @@ impl PartialOrd for JDrecKey {
 impl Ord for JDrecKey {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.hdr.cmp(&other.hdr) {
-            Ordering::Equal => self.name.cmp(&other.name),
+            Ordering::Equal => {
+                let self_name = CStr::from_bytes_until_nul(&self.name).unwrap_or_default();
+                let other_name = CStr::from_bytes_until_nul(&other.name).unwrap_or_default();
+                self_name.cmp(other_name)
+            }
             res => res,
         }
     }
@@ -743,7 +748,11 @@ impl PartialOrd for JDrecHashedKey {
 impl Ord for JDrecHashedKey {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.hdr.cmp(&other.hdr) {
-            Ordering::Equal => self.name.cmp(&other.name),
+            Ordering::Equal => {
+                let self_name = CStr::from_bytes_until_nul(&self.name).unwrap_or_default();
+                let other_name = CStr::from_bytes_until_nul(&other.name).unwrap_or_default();
+                self_name.cmp(other_name)
+            }
             res => res,
         }
     }
@@ -1421,7 +1430,10 @@ pub struct ApfsVolumn {
 
 impl ApfsVolumn {
     /// Parses the raw `apfs_superblock` struct and constructs a Self.
-    pub fn from_raw(device: &Arc<dyn Device>, apfs_superblock: ApfsSuperblock) -> KResult<Self> {
+    pub fn from_raw(
+        device: &Arc<dyn Device>,
+        apfs_superblock: ApfsSuperblock,
+    ) -> KResult<Arc<Self>> {
         let apfs_omap_oid = apfs_superblock.apfs_omap_oid;
         // Note that this is the *virtual object identifier*.
         let apfs_root_tree_oid = apfs_superblock.apfs_root_tree_oid;
@@ -1442,11 +1454,11 @@ impl ApfsVolumn {
 
         kinfo!("apfs tree: {:x?}", apfs_tree);
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             superblock: apfs_superblock,
             object_map: apfs_omap.omap,
             fs_map: apfs_tree,
-        })
+        }))
     }
 }
 
