@@ -24,7 +24,7 @@ use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
     fs::apfs::meta::{ApfsVolumn, BTreeInfo, Xid, BLOCK_SIZE},
-    function, kerror, kinfo, kwarn,
+    function, kdebug, kerror, kinfo, kwarn,
     utils::calc_fletcher64,
 };
 
@@ -33,7 +33,7 @@ use self::meta::{
     DrecFlags, FsMap, JDrecHashedKey, JDrecVal, JFileExtentKey, JFileExtentVal, JInodeKey,
     JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical,
     ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC, APFS_TYPE_FILE_EXTENT, APFS_TYPE_INODE,
-    OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID, S_IFCHR, S_IFLNK, S_IFREG,
+    OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID,
 };
 
 use rcore_fs::{
@@ -236,7 +236,7 @@ impl AppleFileSystem {
             }
         }
 
-        kinfo!("mounted the superblock: {:x?}", nx_superblock);
+        kdebug!("mounted the superblock: {:x?}", nx_superblock);
         Self {
             self_ptr: Weak::default(),
             superblock: RwLock::new(MaybeDirty::new(nx_superblock)),
@@ -268,7 +268,7 @@ impl AppleFileSystem {
                 ok_xid: Xid::MIN,
             };
 
-            kinfo!("mounting {:x?}", key);
+            kdebug!("mounting {:x?}", key);
             self.mount_volumn(&key)?;
         }
 
@@ -354,7 +354,7 @@ impl AppleFileSystem {
                 .unwrap_or_default();
             name == volumn_name
         }) {
-            Some(volumn) => match volumn.fs_map.dir_record_map.get(&drec_key) {
+            Some(volumn) => match volumn.fs_map.read().dir_record_map.get(&drec_key) {
                 Some(e) => Ok(e.clone()),
                 None => return Err(Errno::ENOENT),
             },
@@ -367,7 +367,7 @@ impl AppleFileSystem {
     /// If there does not exist such Inodes indicated by `inode_id`, an error `ENOENT` will be reported.
     pub fn get_inode(
         &self,
-        drec: JDrecVal,
+        drec: &JDrecVal,
         volumn_name: &str,
     ) -> KResult<Arc<AppleFileSystemInode>> {
         if let Some(inode) = self.inodes.read().get(&volumn_name.to_string()) {
@@ -395,13 +395,15 @@ impl AppleFileSystem {
                     },
                 };
 
-                let inode_val = match volumn.fs_map.inode_map.get(&key) {
+                let inode_val = match volumn.fs_map.read().inode_map.get(&key) {
                     Some(inode_val) => inode_val,
                     None => return Err(Errno::ENOENT),
-                };
+                }
+                .clone();
 
                 let file_extent = volumn
                     .fs_map
+                    .read()
                     .file_extent_map
                     .get(&JFileExtentKey {
                         hdr: JKey {
@@ -418,7 +420,7 @@ impl AppleFileSystem {
                     apfs: self.self_ptr.upgrade().unwrap(),
                     inode_inner: RwLock::new(MaybeDirty::new(inode_val.clone())),
                     file_extent,
-                    dir_record: RwLock::new(MaybeDirty::new(drec)),
+                    dir_record: RwLock::new(MaybeDirty::new(drec.clone())),
                 }))
             }
             None => Err(Errno::ENODEV),
@@ -431,8 +433,11 @@ impl AppleFileSystem {
         let drec = self
             .get_drec(ROOT_DIR_RECORD_ID, "root", volumn_name)
             .expect("No root directory record. APFS is mounted incorrectly");
-        self.get_inode(drec, volumn_name)
-            .expect("No root inode found")
+        let root = self
+            .get_inode(&drec, volumn_name)
+            .expect("No root inode found");
+        root.init_dir();
+        root
     }
 }
 
@@ -477,7 +482,26 @@ pub struct AppleFileSystemInode {
 }
 
 impl AppleFileSystemInode {
-    /// Gets all the directory records under this directory.
+    /// When a new directory INode is created or mounted from the disk, we need to manually insert two special
+    /// directories (`.` and `..`)into it. Note that one cannot call `init_dir` on a file INode because this
+    /// is meaningless.
+    /// 
+    /// This function must be called *before* the directory INode is used.
+    fn init_dir(&self) {
+        let ty = DrecFlags::from_bits_truncate(self.dir_record.read().flags);
+
+        if !ty.contains(DrecFlags::DT_DIR) {
+            // We do nothing here.
+            kwarn!("trying to init a non-directory INode.");
+            return;
+        }
+
+        let parent = self.inode_inner.read().parent_id;
+        let current = self.id;
+        let parent_name = "..".as_bytes().to_vec();
+        let current_name = ".".as_bytes().to_vec();
+    }
+    /// Gets all the directory records under this directory, but they do not contain `.` and `..`.
     fn get_all(&self) -> KResult<Vec<(JDrecHashedKey, JDrecVal)>> {
         if !DrecFlags::from_bits_truncate(self.dir_record.read().flags).contains(DrecFlags::DT_DIR)
         {
@@ -511,6 +535,7 @@ impl AppleFileSystemInode {
         Ok(self
             .volumn
             .fs_map
+            .read()
             .dir_record_map
             .range(all_keys_begin..all_keys_end)
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -528,10 +553,40 @@ impl Debug for AppleFileSystemInode {
 }
 
 impl INode for AppleFileSystemInode {
+    fn find(&self, name: &str) -> rcore_fs::vfs::Result<Arc<dyn INode>> {
+        // Check the Inode type.
+        let dir_record = self.dir_record.read();
+        let ty = DrecFlags::from_bits_truncate(dir_record.flags);
+        if !ty.contains(DrecFlags::DT_DIR) {
+            kerror!("cannot find INode in a non-directory Inode");
+            return Err(FsError::NotDir);
+        }
+
+        let (key, value) = self
+            .get_all()
+            .map_err(|_| FsError::NotDir)?
+            .into_iter()
+            .find(|(k, v)| {
+                let cur = CStr::from_bytes_until_nul(&k.name)
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default();
+                cur == name
+            })
+            .ok_or(FsError::EntryNotFound)?;
+
+        // Read the INode from the map.
+        let inode = self
+            .apfs
+            .get_inode(&value, &self.volumn.name)
+            .map_err(|_| FsError::EntryNotFound)?;
+        Ok(inode)
+    }
+
     fn read_at(&self, offset: usize, buf: &mut [u8]) -> rcore_fs::vfs::Result<usize> {
-        let inode_inner = self.inode_inner.read();
-        match inode_inner.mode {
-            S_IFREG | S_IFLNK => {
+        let dir_record = self.dir_record.read();
+        match DrecFlags::from_bits_truncate(dir_record.flags) {
+            DrecFlags::DT_LNK | DrecFlags::DT_REG => {
                 // Read the file extent map first to locate the data stream of this file.
                 let file_extent = self
                     .file_extent
@@ -547,7 +602,7 @@ impl INode for AppleFileSystemInode {
 
                 // Calculate the block number to be read.
                 let buf_len = buf.len().min(file_extent.len());
-                let block_len = buf_len / BLOCK_SIZE;
+                let block_len = file_extent.block_len();
                 let file_start = file_extent.phys_block_num + (offset / BLOCK_SIZE) as u64;
 
                 for i in 0..block_len {
@@ -563,7 +618,7 @@ impl INode for AppleFileSystemInode {
                 Ok(buf.len())
             }
 
-            S_IFCHR => {
+            DrecFlags::DT_CHR => {
                 todo!()
             }
 
@@ -660,6 +715,10 @@ impl INode for AppleFileSystemInode {
             rdev: 0,
         })
     }
+
+    fn fs(&self) -> Arc<dyn FileSystem> {
+        self.apfs.clone()
+    }
 }
 
 fn do_read_btree(device: &Arc<dyn Device>, oid: Oid) -> KResult<(BTreeInfo, BTreeNodePhysical)> {
@@ -701,7 +760,7 @@ fn do_read_btree(device: &Arc<dyn Device>, oid: Oid) -> KResult<(BTreeInfo, BTre
 /// Reads the object map for a given container/volumn into the memory.
 pub fn read_omap(device: &Arc<dyn Device>, oid: Oid) -> KResult<Omap> {
     let (btree_info, root_node) = do_read_btree(device, oid)?;
-    kinfo!("loaded BTree information: {:x?}", btree_info);
+    kdebug!("loaded BTree information: {:x?}", btree_info);
 
     let omap = root_node.parse_as_object_map(device)?;
 

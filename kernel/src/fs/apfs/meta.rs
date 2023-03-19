@@ -3,15 +3,19 @@
 use core::{any::Any, cmp::Ordering, ffi::CStr, panic, time::Duration};
 
 use alloc::{
-    collections::{BTreeMap, VecDeque},
-    string::String,
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    string::{String, ToString},
     sync::Arc,
     vec::Vec,
 };
 use bitflags::bitflags;
 use crc::{Crc, CRC_32_ISCSI};
-use rcore_fs::vfs::{FileType, Timespec};
+use rcore_fs::{
+    dirty::Dirty as MaybeDirty,
+    vfs::{FileType, Timespec},
+};
 use serde::{Deserialize, Serialize};
+use spin::RwLock;
 use unicode_normalization::char::decompose_canonical;
 
 use crate::{
@@ -595,10 +599,17 @@ pub struct JFileExtentVal {
 }
 
 impl JFileExtentVal {
-    /// Gets the length of blocks of this data stream.
+    /// Gets the length of bytes of this data stream.
     #[inline]
     pub fn len(&self) -> usize {
-        (self.len_and_flags & PEXT_KIND_MASK) as _
+        (self.len_and_flags & J_FILE_EXTENT_LEN_MASK) as _
+    }
+
+    /// Gets the block number of this data stream.
+    #[inline]
+    pub fn block_len(&self) -> usize {
+        // Should be multiple of `BLOCK_SIZE`.
+        (self.len_and_flags & J_FILE_EXTENT_LEN_MASK) as usize / BLOCK_SIZE
     }
 }
 
@@ -1458,9 +1469,11 @@ pub struct Omap {
 /// A simpler wrapper for the volumn.
 #[derive(Debug)]
 pub struct ApfsVolumn {
+    pub name: String,
     pub superblock: ApfsSuperblock,
     pub object_map: ObjectMap,
-    pub fs_map: FsMap,
+    pub fs_map: RwLock<MaybeDirty<FsMap>>,
+    pub occupied_inode_numbers: RwLock<BTreeSet<u64>>,
 }
 
 impl ApfsVolumn {
@@ -1489,10 +1502,24 @@ impl ApfsVolumn {
 
         kinfo!("apfs tree: {:x?}", apfs_tree);
 
+        // Get occupied INode numbers.
+        let occupied_inode_numbers = apfs_tree
+            .inode_map
+            .keys()
+            .map(|k| k.hdr.get_oid())
+            .collect::<BTreeSet<_>>();
+
+        let name = CStr::from_bytes_until_nul(&apfs_superblock.apfs_volname)
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default()
+            .to_string();
         Ok(Arc::new(Self {
+            name,
             superblock: apfs_superblock,
             object_map: apfs_omap.omap,
-            fs_map: apfs_tree,
+            fs_map: RwLock::new(MaybeDirty::new(apfs_tree)),
+            occupied_inode_numbers: RwLock::new(occupied_inode_numbers),
         }))
     }
 }

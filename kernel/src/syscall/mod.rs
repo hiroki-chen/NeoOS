@@ -13,6 +13,8 @@ use self::signal::{sys_rt_sigaction, sys_rt_sigreturn};
 
 mod signal;
 
+pub mod fs;
+
 // System call numbers for x86_64.
 
 pub const SYS_READ: u64 = 0;

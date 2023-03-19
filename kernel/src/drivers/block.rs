@@ -154,7 +154,7 @@ impl Device for BlockDriverWrapper {
         // Note that the block_size for AHCI driver is 512 bytes.
         let start = offset / BLOCK_SIZE;
         // How many AHCI blocks to be read.
-        let nblocks = buf.len() / BLOCK_SIZE;
+        let nblocks = (buf.len() as f64 / BLOCK_SIZE as f64).ceil() as usize;
 
         for i in 0..nblocks {
             // The buf range.
