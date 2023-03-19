@@ -1,6 +1,6 @@
 //! Defines some important metadata.
 
-use core::{any::Any, cmp::Ordering, ffi::CStr, panic};
+use core::{any::Any, cmp::Ordering, ffi::CStr, panic, time::Duration};
 
 use alloc::{
     collections::{BTreeMap, VecDeque},
@@ -10,13 +10,14 @@ use alloc::{
 };
 use bitflags::bitflags;
 use crc::{Crc, CRC_32_ISCSI};
+use rcore_fs::vfs::{FileType, Timespec};
 use serde::{Deserialize, Serialize};
 use unicode_normalization::char::decompose_canonical;
 
 use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
-    function, kerror, kinfo,
+    function, kerror, kinfo, kwarn,
 };
 
 use super::{read_fs_tree, read_object, read_omap, Device};
@@ -102,6 +103,16 @@ pub const APFS_TYPE_FILE_INFO: u8 = 13;
 pub const APFS_TYPE_MAX_VALID: u8 = 13;
 pub const APFS_TYPE_MAX: u8 = 15;
 pub const APFS_TYPE_INVALID: u8 = 15;
+
+pub const S_IFMT: u16 = 0o170000;
+pub const S_IFIFO: u16 = 0o010000;
+pub const S_IFCHR: u16 = 0o020000;
+pub const S_IFDIR: u16 = 0o040000;
+pub const S_IFBLK: u16 = 0o060000;
+pub const S_IFREG: u16 = 0o100000;
+pub const S_IFLNK: u16 = 0o120000;
+pub const S_IFSOCK: u16 = 0o140000;
+pub const S_IFWHT: u16 = 0o160000;
 
 pub const CASTAGNOLI: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 
@@ -266,6 +277,20 @@ bitflags! {
       const DT_SOCK = 12;
       const DT_WHT = 14;
   }
+}
+
+impl DrecFlags {
+    pub fn get_type(&self) -> FileType {
+        match *self {
+            DrecFlags::DT_BLK => FileType::BlockDevice,
+            DrecFlags::DT_CHR => FileType::CharDevice,
+            DrecFlags::DT_DIR => FileType::Dir,
+            DrecFlags::DT_FIFO => FileType::NamedPipe,
+            DrecFlags::DT_SOCK => FileType::Socket,
+            DrecFlags::DT_LNK => FileType::SymLink,
+            _ => panic!("unknown type"),
+        }
+    }
 }
 
 /// A range of physical addresses.
@@ -562,9 +587,19 @@ pub struct JFileExtentKey {
 #[derive(Clone, Debug)]
 #[repr(C, packed)]
 pub struct JFileExtentVal {
+    /// The extentʼs length is a `uint64_t` value, accessed as `len_and_kind & PEXT_LEN_MASK`, and measured in blocks.
+    /// The extentʼs kind is a `j_obj_kinds` value, accessed as `(len_and_kind & PEXT_KIND_MASK) >> PEXT_KIND_SHIFT`.
     pub len_and_flags: u64,
     pub phys_block_num: u64,
     pub crypto_id: u64,
+}
+
+impl JFileExtentVal {
+    /// Gets the length of blocks of this data stream.
+    #[inline]
+    pub fn len(&self) -> usize {
+        (self.len_and_flags & PEXT_KIND_MASK) as _
+    }
 }
 
 /// The key half of a directory-information record.
@@ -1354,7 +1389,7 @@ impl BTreeNodePhysical {
                     let val_obj = (&*(val.as_ptr() as *const JDirStatVal)).clone();
                     fs_map.dir_stat_map.insert(key_obj, val_obj);
                 }
-                _ => (),
+                other => kwarn!("unhandled type {:?}", other),
             }
         })?;
 
@@ -1480,5 +1515,14 @@ pub enum INodeType {
 impl INodeType {
     pub fn from_u8(other: u8) -> Self {
         unsafe { core::mem::transmute::<u8, Self>(other) }
+    }
+}
+
+#[inline]
+pub fn get_timespec(time: u64) -> Timespec {
+    let duration = Duration::from_nanos(time);
+    Timespec {
+        sec: duration.as_secs() as _,
+        nsec: duration.subsec_nanos() as _,
     }
 }

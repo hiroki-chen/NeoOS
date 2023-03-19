@@ -29,15 +29,16 @@ use crate::{
 };
 
 use self::meta::{
-    ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical, FsMap,
-    JDrecHashedKey, JInodeKey, JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey,
-    ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC, APFS_TYPE_INODE,
-    OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID,
+    get_timespec, ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical,
+    DrecFlags, FsMap, JDrecHashedKey, JDrecVal, JFileExtentKey, JFileExtentVal, JInodeKey,
+    JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical,
+    ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC, APFS_TYPE_FILE_EXTENT, APFS_TYPE_INODE,
+    OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID, S_IFCHR, S_IFLNK, S_IFREG,
 };
 
 use rcore_fs::{
     dirty::Dirty as MaybeDirty,
-    vfs::{FileSystem, FsInfo, INode},
+    vfs::{FileSystem, FsError, FsInfo, INode, Metadata, PollStatus},
 };
 
 pub mod meta;
@@ -331,8 +332,9 @@ impl AppleFileSystem {
         Ok(())
     }
 
-    /// Get the inode id from a directory record id. The APFS manages all the objects at the same level with a same id.
-    pub fn get_inode_id(&self, drec_id: u64, dir_name: &str, volumn_name: &str) -> KResult<u64> {
+    /// Get the directory record from a directory record id. The APFS manages all the objects at the same level
+    /// with a same id.
+    pub fn get_drec(&self, drec_id: u64, dir_name: &str, volumn_name: &str) -> KResult<JDrecVal> {
         let obj_id_and_type = ((APFS_TYPE_DIR_REC as u64) << OBJ_TYPE_SHIFT) | drec_id;
         let mut name = [0u8; 255];
         // Null terminated.
@@ -353,7 +355,7 @@ impl AppleFileSystem {
             name == volumn_name
         }) {
             Some(volumn) => match volumn.fs_map.dir_record_map.get(&drec_key) {
-                Some(e) => Ok(e.file_id),
+                Some(e) => Ok(e.clone()),
                 None => return Err(Errno::ENOENT),
             },
             None => return Err(Errno::ENOENT),
@@ -365,11 +367,12 @@ impl AppleFileSystem {
     /// If there does not exist such Inodes indicated by `inode_id`, an error `ENOENT` will be reported.
     pub fn get_inode(
         &self,
-        inode_id: u64,
+        drec: JDrecVal,
         volumn_name: &str,
     ) -> KResult<Arc<AppleFileSystemInode>> {
         if let Some(inode) = self.inodes.read().get(&volumn_name.to_string()) {
-            if let Some(inode) = inode.get(&inode_id) {
+            let id = drec.file_id;
+            if let Some(inode) = inode.get(&id) {
                 if let Some(inode) = inode.upgrade() {
                     return Ok(inode);
                 }
@@ -387,7 +390,8 @@ impl AppleFileSystem {
             Some(volumn) => {
                 let key = JInodeKey {
                     hdr: JKey {
-                        obj_id_and_type: ((APFS_TYPE_INODE as u64) << OBJ_TYPE_SHIFT) | inode_id,
+                        obj_id_and_type: ((APFS_TYPE_INODE as u64) << OBJ_TYPE_SHIFT)
+                            | drec.file_id,
                     },
                 };
 
@@ -396,11 +400,25 @@ impl AppleFileSystem {
                     None => return Err(Errno::ENOENT),
                 };
 
+                let file_extent = volumn
+                    .fs_map
+                    .file_extent_map
+                    .get(&JFileExtentKey {
+                        hdr: JKey {
+                            obj_id_and_type: ((APFS_TYPE_FILE_EXTENT as u64) << OBJ_TYPE_SHIFT)
+                                | inode_val.private_id,
+                        },
+                        logical_addr: inode_val.private_id,
+                    })
+                    .map(|val| RwLock::new(MaybeDirty::new(val.clone())));
+
                 Ok(Arc::new(AppleFileSystemInode {
-                    id: inode_id,
+                    id: drec.file_id,
                     volumn: volumn.clone(),
                     apfs: self.self_ptr.upgrade().unwrap(),
                     inode_inner: RwLock::new(MaybeDirty::new(inode_val.clone())),
+                    file_extent,
+                    dir_record: RwLock::new(MaybeDirty::new(drec)),
                 }))
             }
             None => Err(Errno::ENODEV),
@@ -410,10 +428,10 @@ impl AppleFileSystem {
     pub fn get_root_inode(&self, volumn_name: &str) -> Arc<dyn INode> {
         // Before we locate the real root, we need to walk the JDirRecordMap to find 'root' inode because
         // APFS always creates two 'virtual' directories, namely, 'private-dir\0' and 'root\0'.
-        let inode_id = self
-            .get_inode_id(ROOT_DIR_RECORD_ID, "root", volumn_name)
+        let drec = self
+            .get_drec(ROOT_DIR_RECORD_ID, "root", volumn_name)
             .expect("No root directory record. APFS is mounted incorrectly");
-        self.get_inode(inode_id, volumn_name)
+        self.get_inode(drec, volumn_name)
             .expect("No root inode found")
     }
 }
@@ -452,6 +470,52 @@ pub struct AppleFileSystemInode {
     apfs: Arc<AppleFileSystem>,
     /// The raw INode.
     inode_inner: RwLock<MaybeDirty<JInodeVal>>,
+    /// The directory record of this inode.
+    dir_record: RwLock<MaybeDirty<JDrecVal>>,
+    /// The file extent value (if any).
+    file_extent: Option<RwLock<MaybeDirty<JFileExtentVal>>>,
+}
+
+impl AppleFileSystemInode {
+    /// Gets all the directory records under this directory.
+    fn get_all(&self) -> KResult<Vec<(JDrecHashedKey, JDrecVal)>> {
+        if !DrecFlags::from_bits_truncate(self.dir_record.read().flags).contains(DrecFlags::DT_DIR)
+        {
+            kerror!("trying to read entry from a non-directory file");
+            return Err(Errno::EISDIR);
+        }
+
+        // Get the file id which points to all the directory records keys.
+        // This is done by constructing a range of `JDrecHashedKey`s.
+        let file_id = self.dir_record.read().file_id;
+        let obj_id_and_type = ((APFS_TYPE_DIR_REC as u64) << OBJ_TYPE_SHIFT) | file_id;
+
+        let all_keys_begin = JDrecHashedKey {
+            hdr: JKey { obj_id_and_type },
+            // Can be ignored because we invoke `*_until_nul`.
+            name_len_and_hash: 0,
+            name: [0u8; 255],
+        };
+
+        let all_keys_end = JDrecHashedKey {
+            hdr: JKey { obj_id_and_type },
+            // Can be ignored because we invoke `*_until_nul`.
+            name_len_and_hash: 0,
+            name: {
+                let mut buf = [u8::MAX; 255];
+                *buf.last_mut().unwrap() = 0;
+                buf
+            },
+        };
+
+        Ok(self
+            .volumn
+            .fs_map
+            .dir_record_map
+            .range(all_keys_begin..all_keys_end)
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect())
+    }
 }
 
 impl Debug for AppleFileSystemInode {
@@ -465,7 +529,46 @@ impl Debug for AppleFileSystemInode {
 
 impl INode for AppleFileSystemInode {
     fn read_at(&self, offset: usize, buf: &mut [u8]) -> rcore_fs::vfs::Result<usize> {
-        todo!()
+        let inode_inner = self.inode_inner.read();
+        match inode_inner.mode {
+            S_IFREG | S_IFLNK => {
+                // Read the file extent map first to locate the data stream of this file.
+                let file_extent = self
+                    .file_extent
+                    .as_ref()
+                    .ok_or(FsError::InvalidParam)?
+                    .read();
+
+                // Check if `offset` is valid.
+                if offset >= file_extent.len() {
+                    kerror!("`offset ` is larger than the file length!");
+                    return Err(FsError::InvalidParam);
+                }
+
+                // Calculate the block number to be read.
+                let buf_len = buf.len().min(file_extent.len());
+                let block_len = buf_len / BLOCK_SIZE;
+                let file_start = file_extent.phys_block_num + (offset / BLOCK_SIZE) as u64;
+
+                for i in 0..block_len {
+                    let blk = file_start as usize + i;
+                    let start = i * BLOCK_SIZE;
+                    let end = (start + BLOCK_SIZE).min(buf_len);
+                    self.apfs
+                        .device
+                        .read_block(blk as _, 0, &mut buf[start..end])
+                        .map_err(|_| FsError::InvalidParam)?;
+                }
+
+                Ok(buf.len())
+            }
+
+            S_IFCHR => {
+                todo!()
+            }
+
+            _ => Err(FsError::NotFile),
+        }
     }
 
     fn write_at(&self, offset: usize, buf: &[u8]) -> rcore_fs::vfs::Result<usize> {
@@ -479,12 +582,83 @@ impl INode for AppleFileSystemInode {
         compile_error!("write is currently unsupported.");
     }
 
-    fn poll(&self) -> rcore_fs::vfs::Result<rcore_fs::vfs::PollStatus> {
+    fn poll(&self) -> rcore_fs::vfs::Result<PollStatus> {
         todo!()
     }
 
     fn as_any_ref(&self) -> &dyn core::any::Any {
         self
+    }
+
+    fn get_entry(&self, id: usize) -> rcore_fs::vfs::Result<String> {
+        let values = self.get_all().map_err(|_| FsError::IsDir)?;
+        let name = values
+            .into_iter()
+            .find(|(k, v)| v.file_id == id as u64)
+            .ok_or(FsError::InvalidParam)?
+            .0
+            .name;
+
+        let name = CStr::from_bytes_until_nul(&name)
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default()
+            .to_string();
+
+        Ok(name)
+    }
+
+    fn list(&self) -> rcore_fs::vfs::Result<Vec<String>> {
+        Ok(self
+            .get_all()
+            .map_err(|_| FsError::IsDir)?
+            .iter()
+            .map(|(k, v)| {
+                CStr::from_bytes_until_nul(&k.name)
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect())
+    }
+
+    fn metadata(&self) -> rcore_fs::vfs::Result<Metadata> {
+        let inode_inner = self.inode_inner.read();
+        let drec = self.dir_record.read();
+
+        let ty = DrecFlags::from_bits_truncate(drec.flags);
+        let (size, blocks) = match ty {
+            DrecFlags::DT_REG | DrecFlags::DT_LNK => {
+                let file_extent = self.file_extent.as_ref().unwrap().read();
+                let size = file_extent.len() * BLOCK_SIZE;
+                (size, file_extent.len())
+            }
+            // The size of a directory is the number of its directory entries.
+            DrecFlags::DT_DIR => (inode_inner.nchildren as _, 1),
+            // todo: add other types.
+            _ => panic!("unknown file type"),
+        };
+
+        Ok(Metadata {
+            dev: 0,
+            inode: self.id as _,
+            size,
+            blk_size: BLOCK_SIZE,
+            blocks,
+            atime: get_timespec(inode_inner.access_time),
+            mtime: get_timespec(inode_inner.mod_time),
+            ctime: get_timespec(inode_inner.change_time),
+            type_: ty.get_type(),
+            // R/W/X
+            mode: inode_inner.mode,
+            // Meaningless for non-file objects (e.g., directories).
+            nlinks: inode_inner.nlink as _,
+            uid: inode_inner.owner as _,
+            gid: inode_inner.group as _,
+            // to be set.
+            rdev: 0,
+        })
     }
 }
 
