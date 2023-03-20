@@ -97,7 +97,7 @@ bitflags! {
         const NONE = 0b0001;
         const READ = 0b0010;
         const WRITE = 0b0100;
-        const EXECUTE= 0b01000;
+        const EXECUTE = 0b01000;
     }
 }
 
@@ -141,12 +141,10 @@ impl Arena {
     /// Maps itself into `page_table`.
     pub fn map(&self, page_table: &mut dyn PageTableBehaviors) -> KResult<()> {
         if !is_page_aligned(self.range.start) {
-            kerror!("map(): arena not aligned to 4 KB.");
-            return Err(Errno::EINVAL);
+            kwarn!("arena start point is not aligned to 4 KB.");
         }
         if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
-            kerror!("map(): corrupted arena size");
-            return Err(Errno::EINVAL);
+            kwarn!("arena size is not 4KB aligned.");
         }
 
         for mem in self.range.clone().step_by(PAGE_SIZE) {
@@ -223,7 +221,8 @@ impl Arena {
         if !self.flags.writable {
             kdebug!(
                 "checked_write(): error writing {:#x} with size {:#x}",
-                ptr as u64, size
+                ptr as u64,
+                size
             );
             Err(Errno::EPERM)
         } else {

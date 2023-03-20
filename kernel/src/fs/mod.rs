@@ -64,7 +64,7 @@ lazy_static! {
 
 #[cfg(feature = "mount_apfs")]
 lazy_static! {
-    pub static ref ROOT_FS: Arc<dyn INode> = {
+    pub static ref ROOT_INODE: Arc<dyn INode> = {
         let device = Arc::new(BlockDriverWrapper(
             BLOCK_DRIVERS.read().iter().next().unwrap().clone(),
         ));

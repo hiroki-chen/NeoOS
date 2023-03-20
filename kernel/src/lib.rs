@@ -28,6 +28,7 @@ pub mod debug;
 pub mod drivers;
 pub mod fs;
 pub mod irq;
+pub mod elf;
 
 #[macro_use]
 pub mod error;
@@ -60,7 +61,7 @@ use buddy_system_allocator::LockedHeapWithRescue;
 use crate::{
     arch::cpu::{cpu_id, BSP_ID},
     debug::{Frame, UNWIND_DEPTH},
-    fs::ROOT_FS,
+    fs::ROOT_INODE,
     logging::print_banner,
     memory::ELF_DEFAULT_ENTRY,
 };
@@ -99,7 +100,7 @@ pub fn kmain() -> ! {
         crate::process::thread::debug_threading(ELF_DEFAULT_ENTRY);
 
         // Test.
-        let apfs = ROOT_FS.clone();
+        let apfs = ROOT_INODE.clone();
         let foo = apfs.find("okay").unwrap();
         let mut buf = [0u8; 4];
         foo.read_at(0, &mut buf).unwrap();
@@ -135,6 +136,7 @@ extern "C" fn eh_personality() {}
 /// `eh_personality` work.
 #[panic_handler]
 pub fn panic_unwind(info: &PanicInfo<'_>) -> ! {
+    // TODO: Make backtrace more meaningful.
     kerror!("{}", info);
     let frame = Frame::new();
     frame.unwind(*UNWIND_DEPTH);

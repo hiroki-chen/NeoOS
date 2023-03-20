@@ -485,7 +485,7 @@ impl AppleFileSystemInode {
     /// When a new directory INode is created or mounted from the disk, we need to manually insert two special
     /// directories (`.` and `..`)into it. Note that one cannot call `init_dir` on a file INode because this
     /// is meaningless.
-    /// 
+    ///
     /// This function must be called *before* the directory INode is used.
     fn init_dir(&self) {
         let ty = DrecFlags::from_bits_truncate(self.dir_record.read().flags);
@@ -602,7 +602,9 @@ impl INode for AppleFileSystemInode {
 
                 // Calculate the block number to be read.
                 let buf_len = buf.len().min(file_extent.len());
-                let block_len = file_extent.block_len();
+                let block_len = file_extent
+                    .block_len()
+                    .min((buf_len as f64 / BLOCK_SIZE as f64).ceil() as usize);
                 let file_start = file_extent.phys_block_num + (offset / BLOCK_SIZE) as u64;
 
                 for i in 0..block_len {

@@ -371,7 +371,7 @@ pub fn map_kernel(
         if program::sanity_check(segment, &kernel.elf).is_err() {
             panic!();
         }
-        // FIXME: Something is wrong with this. => 0x8000 becomes invalid ?!
+
         map_segment(&segment, frame_allocator, page_tables, kernel_start);
     }
 }

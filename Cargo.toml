@@ -1,4 +1,4 @@
 [workspace]
-members = ["kernel", "mem", "boot", "boot_header"]
+members = ["boot", "boot_header", "kernel", "mem"]
 
 exclude = ["test"]

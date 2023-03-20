@@ -26,7 +26,9 @@ use crate::{
         pit::countdown,
         PAGE_SIZE,
     },
-    error::{Errno, KResult},
+    elf::load_elf_and_map,
+    error::{fserror_to_kerror, Errno, KResult},
+    fs::ROOT_INODE,
     memory::{
         allocate_frame, phys_to_virt, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START,
     },
@@ -233,6 +235,8 @@ impl Thread {
     pub unsafe fn from_raw(inst_addr: u64, size: usize) -> KResult<Arc<Thread>> {
         let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
         let stack_top = Self::prepare_user_stack(&mut vm)? as u64;
+        let elf_inode = ROOT_INODE.find("test").map_err(fserror_to_kerror)?;
+        load_elf_and_map(&mut vm, &elf_inode)?;
         let vm = Arc::new(Mutex::new(vm));
 
         // So we must pretend that 'interrupt' occurs here so that CPU allows to perform `IRETQ`.
@@ -420,7 +424,13 @@ pub fn debug_threading(entry: u64) {
         __debug_thread as u64
     );
 
-    let thread = unsafe { Thread::from_raw(entry, PAGE_SIZE) }.unwrap();
+    let thread = match unsafe { Thread::from_raw(entry, PAGE_SIZE) } {
+        Ok(thread) => thread,
+        Err(errno) => {
+            kerror!("spawning debug thread failed. Errno: {:?}", errno);
+            return;
+        }
+    };
 
     let thread_inst_frame = allocate_frame().unwrap();
     // Copy the instruction's memory to the physical frame where the process's virtual memory points to.
