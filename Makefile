@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-.phony: all clean test efi debug clippy
+.phony: all clean test efi debug clippy sample_program
 
 BACKTRACE	?= 5
 OS_LOG_LEVEL	?= info
@@ -45,8 +45,11 @@ endif
 
 all: kernel
 
+sample_program:
+	@$(MAKE) -C sample_programs/simple_c
+
 # Creates virtual hard disk.
-hard_disk:
+hard_disk: sample_program
 	@echo 'Building the hard disk with a given filesystem... This may take a while.'
 ifeq ($(FILE_SYSTEM), sfs)
 	@cd $(WORK_DIR) && mkdir -p fs && echo 'test data' >> fs/foo
@@ -58,6 +61,7 @@ else
 	@cd $(WORK_DIR) && sudo mount -o loop,readwrite $(DISK) /mnt
 # TODO: Add meaningful files/directories.
 	@mkdir -p /mnt/foo && mkdir -p /mnt/baz && echo 'abcd' > /mnt/baz/bar && echo 'dcba' > /mnt/okay
+	@cd $(WORK_DIR) && cp test /mnt
 	@sudo umount /mnt
 	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
 	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)
