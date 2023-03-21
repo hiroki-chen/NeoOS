@@ -123,6 +123,7 @@ pub const BOUND_RANGE_EXCEEDED_INTERRUPT: usize = 0x05;
 pub const INVALID_OPCODE_INTERRUPT: usize = 0x06;
 pub const DEVICE_NOT_AVAILABLE_INTERRUPT: usize = 0x07;
 pub const DOUBLE_FAULT_INTERRUPT: usize = 0x08;
+pub const STACK_SEGMENT_FAULT_INTERRUPT: usize = 0x0c;
 pub const GENERAL_PROTECTION_INTERRUPT: usize = 0x0d;
 pub const PAGE_FAULT_INTERRUPT: usize = 0x0e;
 pub const TIMER_INTERRUPT: usize = 0x00;

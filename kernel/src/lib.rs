@@ -26,9 +26,9 @@ extern crate alloc;
 
 pub mod debug;
 pub mod drivers;
+pub mod elf;
 pub mod fs;
 pub mod irq;
-pub mod elf;
 
 #[macro_use]
 pub mod error;
@@ -63,7 +63,6 @@ use crate::{
     debug::{Frame, UNWIND_DEPTH},
     fs::ROOT_INODE,
     logging::print_banner,
-    memory::ELF_DEFAULT_ENTRY,
 };
 
 lazy_static! {
@@ -97,7 +96,7 @@ pub fn kmain() -> ! {
 
         kinfo!("kmain(): kernel main procedure started.");
         print_banner();
-        crate::process::thread::debug_threading(ELF_DEFAULT_ENTRY);
+        crate::process::thread::debug_threading();
 
         // Test.
         let apfs = ROOT_INODE.clone();

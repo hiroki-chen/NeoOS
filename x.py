@@ -28,7 +28,8 @@ if shutil.which('nasm') is None:
 # Check if QEMU is installed.
 if shutil.which('qemu-system-x86_64') is None:
     print('Installing `qemu`, `OVMF` and KVM environment.')
-    subprocess.run('sudo apt install -y qemu-system ovmf qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils'.split())
+    subprocess.run(
+        'sudo apt install -y qemu-system ovmf qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils'.split())
     subprocess.run('sudo adduser `id -un` kvm'.split())
 
 # Check if rust is installed.
@@ -48,9 +49,14 @@ if shutil.which('cargo') is None:
     subprocess.run('cargo install cargo-binutils')
 
 if shutil.which('rcore-fs-fuse') is None:
-      # For creating the SFS image.
-      subprocess.run(
-          'cargo install --git https://github.com/rcore-os/rcore-fs.git --rev 7f5eeac --force'.split()
-      )
+    # For creating the SFS image.
+    subprocess.run(
+        'cargo install --git https://github.com/rcore-os/rcore-fs.git --rev 7f5eeac --force'.split()
+    )
+
+# Install musl.
+if shutil.which('musl-gcc') is None:
+    print('installing musl toolchain...')
+    subprocess.run('sudo apt install -y musl musl-tools'.split())
 
 print('Done!')

@@ -21,7 +21,7 @@ use crate::{
     syscall::handle_syscall,
 };
 
-use super::{TrapFrame, INVALID_OPCODE_INTERRUPT, SYSCALL};
+use super::{TrapFrame, INVALID_OPCODE_INTERRUPT, STACK_SEGMENT_FAULT_INTERRUPT, SYSCALL};
 
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
 #[no_mangle]
@@ -77,6 +77,10 @@ pub async fn trap_dispatcher_user(
             kerror!("spawn(): invalid opcode.");
             false
         }
+        STACK_SEGMENT_FAULT_INTERRUPT => {
+            kerror!("spawn(): cannot explicitly return from user process!");
+            false
+        }
         GENERAL_PROTECTION_INTERRUPT => {
             kerror!("spawn(): illegal instruction.");
             false
@@ -84,14 +88,15 @@ pub async fn trap_dispatcher_user(
         PAGE_FAULT_INTERRUPT => {
             let cr2 = get_pf_addr();
             kinfo!(
-                "spawn(): thread {:#x} triggered page fault @ {:#x}",
+                "spawn(): thread {:#x} triggered page fault @ {:#x}. Ctx was {:#x?}",
                 thread.id,
-                cr2
+                cr2,
+                ctx.get_user_context(),
             );
 
-            if !handle_page_fault(cr2) {
+            if !handle_page_fault(cr2, ctx.get_user_context().errno) {
                 // Report SEGSEV.
-                panic!("spawn(): Segmentation fault.");
+                kerror!("spawn(): Segmentation fault.");
                 false
             } else {
                 true

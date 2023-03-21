@@ -26,12 +26,10 @@ use crate::{
         pit::countdown,
         PAGE_SIZE,
     },
-    elf::load_elf_and_map,
+    elf::ElfFile,
     error::{fserror_to_kerror, Errno, KResult},
     fs::ROOT_INODE,
-    memory::{
-        allocate_frame, phys_to_virt, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START,
-    },
+    memory::{KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
     mm::{callback::SystemArenaCallback, Arena, ArenaFlags, FutureWithPageTable, MemoryManager},
     signal::{handle_signal, SigAction, SigSet, SigStack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
@@ -49,11 +47,13 @@ const DEBUG_PROC_ID: u64 = 0xbeefdead;
 /// Since we haven't implemented filesystem, we cannot load the program from the filesystem. So, the solution for
 /// the time being is, to simply load the instruction from the memory and make that memory user-accessible.
 #[naked]
+#[allow(unused)]
 unsafe extern "C" fn __debug_thread_invalid() {
     unsafe { core::arch::asm!("hlt", options(noreturn)) }
 }
 
 #[naked]
+#[allow(unused)]
 unsafe extern "C" fn __debug_thread() {
     unsafe { core::arch::asm!("int3; lea rax, [rip]; jmp rax", options(noreturn)) }
 }
@@ -126,7 +126,8 @@ impl Thread {
         // This is because the execution of the ELF file must requrie argc, argc, envp things.
         let flags = ArenaFlags {
             user_accessible: true,
-            non_executable: false,
+            non_executable: true,
+            writable: true,
             ..Default::default()
         };
 
@@ -232,11 +233,12 @@ impl Thread {
     /// # Safety
     ///
     /// This function is unsafe because `inst_addr` must be valid.
-    pub unsafe fn from_raw(inst_addr: u64, size: usize) -> KResult<Arc<Thread>> {
+    pub unsafe fn from_raw() -> KResult<Arc<Thread>> {
         let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
         let stack_top = Self::prepare_user_stack(&mut vm)? as u64;
         let elf_inode = ROOT_INODE.find("test").map_err(fserror_to_kerror)?;
-        load_elf_and_map(&mut vm, &elf_inode)?;
+        let elf = ElfFile::load(&elf_inode)?;
+        elf.load_elf_and_map(&mut vm)?;
         let vm = Arc::new(Mutex::new(vm));
 
         // So we must pretend that 'interrupt' occurs here so that CPU allows to perform `IRETQ`.
@@ -250,7 +252,13 @@ impl Thread {
         // error_code   <- error code / trap number / syscall number
         // blahblah     <- SS:RSP
         let mut context = Context::default();
-        context.set_rip(inst_addr);
+
+        kinfo!(
+            "the ELF entry point is 0x{:x}; stack top is 0x{:x}",
+            elf.entry_point(),
+            stack_top
+        );
+        context.set_rip(elf.entry_point());
         context.set_rsp(stack_top);
         // IOPL | IF | RSVD
         context.regs.rflags = 0x3202;
@@ -383,6 +391,7 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
             // syscall / trap: anyway, a context switch happens here.
             if !trap_dispatcher_user(&thread, &mut ctx, &mut should_yield).await {
+                // TODO: Elegantly kill the process and reclaim all the resources it occupies.
                 kerror!(
                     "spawn(): cannot handle context switch. Dumped context is {:#x?}",
                     ctx.user_context
@@ -418,40 +427,14 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 }
 
 /// Spawn a debug thread with in-memory instructions.
-pub fn debug_threading(entry: u64) {
-    kinfo!(
-        "debug_threading(): creating a dummy thread. RIP @ {:#x}",
-        __debug_thread as u64
-    );
-
-    let thread = match unsafe { Thread::from_raw(entry, PAGE_SIZE) } {
+pub fn debug_threading() {
+    let thread = match unsafe { Thread::from_raw() } {
         Ok(thread) => thread,
         Err(errno) => {
             kerror!("spawning debug thread failed. Errno: {:?}", errno);
             return;
         }
     };
-
-    let thread_inst_frame = allocate_frame().unwrap();
-    // Copy the instruction's memory to the physical frame where the process's virtual memory points to.
-    unsafe {
-        core::ptr::write_bytes(
-            phys_to_virt(thread_inst_frame.as_u64()) as *mut u8,
-            0u8,
-            PAGE_SIZE,
-        );
-        core::ptr::copy(
-            __debug_thread as *const u8,
-            phys_to_virt(thread_inst_frame.as_u64()) as *mut u8,
-            0x40,
-        );
-    }
-
-    thread
-        .vm
-        .lock()
-        .page_table()
-        .map(virt!(entry), thread_inst_frame);
 
     spawn(thread).unwrap();
 }

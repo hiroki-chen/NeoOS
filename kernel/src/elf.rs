@@ -1,9 +1,11 @@
 //! Linux ELF format parsing module.
 
-use alloc::{boxed::Box, string::ToString, sync::Arc};
+use core::ffi::CStr;
+
+use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use goblin::{
     container::Ctx,
-    elf::{Elf, ProgramHeader},
+    elf::{Elf, Header, ProgramHeader},
 };
 use rcore_fs::vfs::INode;
 
@@ -19,77 +21,124 @@ use crate::{
     page, virt,
 };
 
-/// Loads a memory from a disk INode and then maps it into the virtual memory. Returns the largest memory we can use.
-pub fn load_elf_and_map(
-    vm: &mut MemoryManager<KernelPageTable>,
-    inode: &Arc<dyn INode>,
-) -> KResult<u64> {
-    kinfo!("loading the ELF file and mapping it into memory.");
-    let mut max_mem = 0u64;
-    let mut buf = [0u8; 0x3c0];
-    let size = inode.read_at(0, &mut buf).map_err(fserror_to_kerror)?;
-    if size != buf.len() {
-        kerror!("reading is wrong.");
-        return Err(Errno::ENFILE);
-    }
+pub struct ElfFile {
+    header: Header,
+    program_headers: Vec<ProgramHeader>,
+    ctx: Ctx,
+    inode: Arc<dyn INode>,
+    raw: [u8; 0x3c0],
+}
 
-    let elf_header = Elf::parse_header(&buf).map_err(|err| {
-        kerror!("elf parsing failed. Error: {}", err.to_string());
-        Errno::EINVAL
-    })?;
-    let ctx = Ctx::new(
-        elf_header.container().unwrap(),
-        elf_header.endianness().unwrap(),
-    );
+impl ElfFile {
+    /// Loads the elf file from the memory. This only parses the header!
+    pub fn load(inode: &Arc<dyn INode>) -> KResult<Self> {
+        kinfo!("loading ELF header");
 
-    // Check if the type is correct.
-    let elf_type = elf_header.e_type;
-    if (elf_type & 0x2 == 0) || (elf_type & 0x3 == 0) {
-        kerror!("unsupported ELF type. Should be shared object or executable. Got {elf_type}.");
-        return Err(Errno::EINVAL);
-    }
-
-    // Check if the target architecture is correct.
-    let arch = elf_header.e_machine;
-    if arch & 0x3E == 0 {
-        kerror!("unsupported target architecture. Should be x86_64. Got {arch}.");
-        return Err(Errno::EINVAL);
-    }
-
-    // Iterate all the program headers from the header.
-    let program_header =
-        ProgramHeader::parse(&buf, elf_header.e_phoff as _, elf_header.e_phnum as _, ctx).map_err(
-            |err| {
-                kerror!("cannot parse program headers. Err: {}", err.to_string());
-                Errno::EINVAL
-            },
-        )?;
-    for ph in program_header.iter() {
-        kinfo!("visiting program header of type {:x}", ph.p_type);
-
-        if ph.p_type & 0x1 != 0 {
-            // This header can be loaded.
-            vm.add(Arena {
-                range: ph.p_vaddr..ph.p_vaddr + ph.p_memsz,
-                flags: ArenaFlags {
-                    writable: 0x2 & ph.p_flags != 0,
-                    user_accessible: true,
-                    non_executable: 0x1 & ph.p_flags == 0,
-                    mmio: 0,
-                },
-                callback: Box::new(FileArenaCallback {
-                    file: INodeWrapper(inode.clone()),
-                    mem_start: ph.p_vaddr,
-                    file_start: ph.p_offset,
-                    file_end: ph.p_offset + ph.p_filesz,
-                    frame_allocator: KernelFrameAllocator,
-                }),
-            })
+        let mut buf = [0u8; 0x3c0];
+        let size = inode.read_at(0, &mut buf).map_err(fserror_to_kerror)?;
+        if size != buf.len() {
+            kerror!("reading is wrong.");
+            return Err(Errno::ENFILE);
         }
 
-        max_mem = max_mem.max(ph.p_vaddr + ph.p_memsz);
+        let header = Elf::parse_header(&buf).map_err(|err| {
+            kerror!("elf parsing failed. Error: {}", err.to_string());
+            Errno::EINVAL
+        })?;
+        let ctx = Ctx::new(header.container().unwrap(), header.endianness().unwrap());
+
+        // Check if the type is correct.
+        let elf_type = header.e_type;
+        if (elf_type & 0x2 == 0) || (elf_type & 0x3 == 0) {
+            kerror!("unsupported ELF type. Should be shared object or executable. Got {elf_type}.");
+            return Err(Errno::EINVAL);
+        }
+
+        // Check if the target architecture is correct.
+        let arch = header.e_machine;
+        if arch & 0x3E == 0 {
+            kerror!("unsupported target architecture. Should be x86_64. Got {arch}.");
+            return Err(Errno::EINVAL);
+        }
+
+        // Iterate all the program headers from the header.
+        let program_headers =
+            ProgramHeader::parse(&buf, header.e_phoff as _, header.e_phnum as _, ctx).map_err(
+                |err| {
+                    kerror!("cannot parse program headers. Err: {}", err.to_string());
+                    Errno::EINVAL
+                },
+            )?;
+
+        Ok(Self {
+            header,
+            ctx,
+            program_headers,
+            inode: inode.clone(),
+            raw: buf,
+        })
     }
 
-    // Get the entry point.
-    Ok(page!(max_mem + PAGE_SIZE as u64).start_address().as_u64())
+    /// Loads a memory from a disk INode and then maps it into the virtual memory. Returns the largest memory we can use.
+    pub fn load_elf_and_map(&self, vm: &mut MemoryManager<KernelPageTable>) -> KResult<u64> {
+        kinfo!(" mapping the ELF file into memory.");
+
+        let mut max_mem = 0;
+        for ph in self.program_headers.iter() {
+            kinfo!("visiting program header of type {:x}", ph.p_type);
+
+            if ph.p_type == 0x1 {
+                kinfo!("loading program header {:x?}", ph);
+                // This header can be loaded.
+                vm.add(Arena {
+                    range: ph.p_vaddr..ph.p_vaddr + ph.p_memsz,
+                    flags: ArenaFlags {
+                        writable: 0x2 & ph.p_flags != 0,
+                        user_accessible: true,
+                        non_executable: 0x1 & ph.p_flags == 0,
+                        mmio: 0,
+                    },
+                    callback: Box::new(FileArenaCallback {
+                        file: INodeWrapper(self.inode.clone()),
+                        mem_start: ph.p_vaddr,
+                        file_start: ph.p_offset,
+                        file_end: ph.p_offset + ph.p_filesz,
+                        frame_allocator: KernelFrameAllocator,
+                    }),
+                })
+            }
+
+            max_mem = max_mem.max(ph.p_vaddr + ph.p_memsz);
+        }
+
+        // Get the entry point.
+        Ok(page!(max_mem + PAGE_SIZE as u64).start_address().as_u64())
+    }
+
+    pub fn get_interpreter(&self) -> KResult<&str> {
+        // No interpret => executable.
+        let interpret_header = self
+            .program_headers
+            .iter()
+            .find(|header| header.p_type == 0x3)
+            .ok_or({
+                kerror!("This ELF file does not contain interpreter. This file does no depend on shared objects.");
+                Errno::EINVAL
+            })?;
+
+        // Read the name: ld.so / ld-musl.so
+        let offset = interpret_header.p_offset;
+        let slice = &self.raw[offset as usize..(offset + interpret_header.p_filesz) as usize];
+
+        Ok(CStr::from_bytes_until_nul(slice)
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default())
+    }
+
+    /// Gets the entry point.
+    #[inline]
+    pub fn entry_point(&self) -> u64 {
+        self.header.e_entry
+    }
 }

@@ -102,6 +102,7 @@ bitflags! {
 }
 
 bitflags! {
+    #[derive(Default)]
     pub struct AccessType: u64 {
         const EXECUTE = 0b0001;
         const WRITE = 0b0010;
@@ -262,6 +263,21 @@ where
         self.page_table.with(f)
     }
 
+    pub fn do_handle_page_fault(&mut self, addr: u64, access_type: AccessType) -> bool {
+        match self.arena.iter().find(|arena| arena.contains_addr(addr)) {
+            Some(arena) => {
+                // Dispatch.
+                arena
+                    .callback
+                    .do_handle_page_fault(&mut self.page_table, addr, access_type)
+            }
+            None => {
+                kerror!("cannot find arena for this address @ {:#x}.", addr);
+                false
+            }
+        }
+    }
+
     /// Receives the page fault handling request from the kernel.
     pub fn handle_page_fault(&mut self, addr: u64) -> bool {
         // Locate memory region where page fault occurs.
@@ -271,10 +287,7 @@ where
                 arena.callback.handle_page_fault(&mut self.page_table, addr)
             }
             None => {
-                kerror!(
-                    "handle_page_fault(): cannot find arena for this address @ {:#x}.",
-                    addr
-                );
+                kerror!("cannot find arena for this address @ {:#x}.", addr);
                 false
             }
         }

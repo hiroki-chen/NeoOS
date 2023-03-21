@@ -3,7 +3,6 @@
 use core::fmt::Debug;
 
 use alloc::{boxed::Box, sync::Arc};
-use log::error;
 use rcore_fs::vfs::INode;
 use x86_64::{PhysAddr, VirtAddr};
 
@@ -154,7 +153,8 @@ where
     }
 
     fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {
-        let entry = page_table.map(addr, PhysAddr::new(0));
+        let entry = page_table.map(addr, phys!(0));
+        // Delayed mapping.
         entry.set_present(false);
         entry.set_execute(!flags.non_executable);
         entry.set_writable(flags.writable);
@@ -167,7 +167,7 @@ where
         let entry = match page_table.get_entry(addr) {
             Ok(entry) => entry,
             Err(errno) => {
-                error!(
+                kerror!(
                     "FileArenaCallback::unmap(): unable to find page table entry @ {:#x}",
                     addr.as_u64()
                 );
@@ -191,7 +191,11 @@ where
             match check_permission(&access_type, entry) {
                 true => return true,
                 false => {
-                    error!("do_handle_page_fault(): entry exists but access type violation was found. Access type: {:#x?}", access_type);
+                    kerror!(
+                        "entry exists but access type violation was found. Access type: {:#x?}; entry: {:#x?}",
+                        access_type,
+                        entry,
+                    );
                     return false;
                 }
             }
@@ -201,7 +205,10 @@ where
         let frame = match self.frame_allocator.alloc() {
             Ok(f) => f,
             Err(errno) => {
-                error!("do_handle_page_fault(): failed to allocate frame for page table entry. Error: {:?}", errno);
+                kerror!(
+                    "failed to allocate frame for page table entry. Error: {:?}",
+                    errno
+                );
                 return false;
             }
         };
@@ -214,7 +221,7 @@ where
         match self.fill_data(page_table, VirtAddr::new(addr)) {
             Ok(_) => true,
             Err(errno) => {
-                error!("do_handle_page_fault(): failed to fill data.");
+                kerror!("failed to fill data.");
                 false
             }
         }
@@ -286,7 +293,10 @@ where
             match check_permission(&access_type, entry) {
                 true => return true,
                 false => {
-                    error!("do_handle_page_fault(): entry exists but access type violation was found. Access type: {:#x?}", access_type);
+                    kerror!(
+                        "entry exists but access type violation was found. Access type: {:#x?}",
+                        access_type
+                    );
                     return false;
                 }
             }
@@ -296,7 +306,10 @@ where
         let frame = match self.frame_allocator.alloc() {
             Ok(f) => f,
             Err(errno) => {
-                error!("do_handle_page_fault(): failed to allocate frame for page table entry. Error: {:?}", errno);
+                kerror!(
+                    "failed to allocate frame for page table entry. Error: {:?}",
+                    errno
+                );
                 return false;
             }
         };
@@ -320,7 +333,7 @@ where
             .alloc()
             .expect("map(): no physical memory available!");
         let entry = page_table.map(addr, frame);
-        entry.set_present(false);
+        entry.set_present(true);
         entry.set_execute(!flags.non_executable);
         entry.set_writable(flags.writable);
         entry.set_user(flags.user_accessible);
@@ -368,7 +381,7 @@ where
 
     fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {
         let entry = page_table.map(addr, PhysAddr::new(0));
-        entry.set_present(false);
+        entry.set_present(true);
         entry.set_execute(!flags.non_executable);
         entry.set_writable(flags.writable);
         entry.set_user(flags.user_accessible);

@@ -20,6 +20,7 @@ use crate::{
     arch::{KERNEL_PM4, PAGE_SIZE, PHYSICAL_MEMORY_PM4},
     error::{Errno, KResult},
     memory::{allocate_frame, deallocate_frame, phys_to_virt, BitMapAlloc, LOCKED_FRAME_ALLOCATOR},
+    mm::AccessType,
     process::thread::current,
 };
 
@@ -53,8 +54,8 @@ impl FrameDeallocator<Size4KiB> for PTFrameAllocator {
     }
 }
 
-/// Handles the page fault by the current thread.
-pub fn handle_page_fault(addr: u64) -> bool {
+/// Handles the page fault by the current thread. This page faul handler is invoked by the user process.
+pub fn handle_page_fault(addr: u64, errno: u64) -> bool {
     let thread = match current() {
         Ok(thread) => thread,
         Err(errno) => {
@@ -72,8 +73,19 @@ pub fn handle_page_fault(addr: u64) -> bool {
         thread.id
     );
 
+    let mut access_type = AccessType::default();
+    if errno & 0x1 != 0 {
+        access_type |= AccessType::EXECUTE;
+    }
+    if errno & 0x2 != 0 {
+        access_type |= AccessType::WRITE;
+    }
+    if errno & 0x4 != 0 {
+        access_type |= AccessType::USER;
+    }
+
     let mut vm = thread.vm.lock();
-    vm.handle_page_fault(addr)
+    vm.do_handle_page_fault(addr, access_type)
 }
 
 pub trait EntryBehaviors: Debug {
@@ -119,7 +131,7 @@ pub trait EntryBehaviors: Debug {
     fn mmio(&self) -> u8;
     fn set_mmio(&mut self, value: u8);
 
-    fn flags(&self) -> PageTableFlags;
+    fn flags(&mut self) -> &mut PageTableFlags;
     fn phys_addr(&self) -> PhysAddr;
 }
 
@@ -219,6 +231,12 @@ impl Debug for PageEntryWrapper {
 }
 
 impl EntryBehaviors for PageEntryWrapper {
+    /// Since `flags()` function only returns the copy of the flag but not a mutable reference, we need to
+    /// manually convert it into mutable reference so that we can manipulate the property of the page entry.
+    fn flags(&mut self) -> &mut PageTableFlags {
+        unsafe { &mut *(self.0 as *mut _ as *mut PageTableFlags) }
+    }
+
     fn phys_addr(&self) -> PhysAddr {
         self.0.addr()
     }
@@ -273,37 +291,37 @@ impl EntryBehaviors for PageEntryWrapper {
     }
 
     fn set_execute(&mut self, value: bool) {
-        self.0.flags().set(PageTableFlags::NO_EXECUTE, value)
+        self.flags().set(PageTableFlags::NO_EXECUTE, !value)
     }
 
     fn set_mmio(&mut self, value: u8) {}
 
     fn set_present(&mut self, value: bool) {
-        self.0.flags().set(PageTableFlags::PRESENT, value)
+        self.flags().set(PageTableFlags::PRESENT, value)
     }
 
     fn set_user(&mut self, value: bool) {
-        self.0.flags().set(PageTableFlags::USER_ACCESSIBLE, value)
+        self.flags().set(PageTableFlags::USER_ACCESSIBLE, value)
     }
     fn set_writable(&mut self, value: bool) {
-        self.0.flags().set(PageTableFlags::WRITABLE, value)
+        self.flags().set(PageTableFlags::WRITABLE, value)
     }
 
     fn set_shared(&mut self, writable: bool) {
-        self.0.flags().set(PageTableFlags::BIT_10, writable);
-        self.0.flags().set(PageTableFlags::BIT_9, !writable);
+        self.flags().set(PageTableFlags::BIT_10, writable);
+        self.flags().set(PageTableFlags::BIT_9, !writable);
     }
 
     fn set_swapped(&mut self, value: bool) {
-        self.0.flags().set(PageTableFlags::BIT_11, value);
+        self.flags().set(PageTableFlags::BIT_11, value);
     }
 
     fn clear_accessed(&mut self) {
-        self.0.flags().remove(PageTableFlags::ACCESSED);
+        self.flags().remove(PageTableFlags::ACCESSED);
     }
 
     fn clear_dirty(&mut self) {
-        self.0.flags().remove(PageTableFlags::DIRTY);
+        self.flags().remove(PageTableFlags::DIRTY);
     }
 
     fn clear_shared(&mut self) {
@@ -315,10 +333,6 @@ impl EntryBehaviors for PageEntryWrapper {
     fn set_target(&mut self, target: PhysAddr) {
         let flags = self.0.flags();
         self.0.set_addr(target, flags);
-    }
-
-    fn flags(&self) -> PageTableFlags {
-        self.0.flags()
     }
 }
 
