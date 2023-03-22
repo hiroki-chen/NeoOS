@@ -21,6 +21,8 @@ pub mod apfs;
 #[cfg(feature = "sfs")]
 pub mod sfs;
 
+pub const AT_FDCWD: isize = -100;
+
 #[cfg(not(any(feature = "sfs", feature = "apfs")))]
 compile_error!("Must specify one filesystem type: apfs or sfs.");
 

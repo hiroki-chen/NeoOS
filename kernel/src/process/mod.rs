@@ -2,12 +2,13 @@ use core::{future::Future, task::Poll};
 
 use crate::{
     arch::mm::paging::KernelPageTable,
-    error::{Errno, KResult},
-    fs::file::FileObject,
+    error::{fserror_to_kerror, Errno, KResult},
+    fs::{file::FileObject, AT_FDCWD, MAXIMUM_FOLLOW, ROOT_INODE},
     mm::MemoryManager,
     process::event::Event,
     signal::{SigAction, SigInfo, SigSet},
     sync::{futex::SimpleFutex, mutex::SpinLockNoInterrupt as Mutex},
+    utils::split_path,
 };
 use alloc::{
     collections::{BTreeMap, VecDeque},
@@ -16,6 +17,7 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::lazy_static;
+use rcore_fs::vfs::INode;
 use spin::RwLock;
 
 use event::EventBus;
@@ -130,6 +132,39 @@ impl Process {
         self.threads.clear();
 
         kinfo!("process {} exit with {}", self.process_id, self.exit_code);
+    }
+
+    /// The process has a base working directory and we can invoke this function to lookup a certain inode at a given
+    /// path. If the INode is found, we return a reference count to it.
+    ///
+    /// # Cases
+    ///
+    /// - `path` is absolute, i.e., it starts with `/`. We read from the root inode.
+    /// - `path` is relative. We append it with the base directory indicated by `dirfd`.
+    /// - `dirfd` is `AT_FDCWD`. We append it with the working directory of the current process.
+    pub fn read_inode_at(
+        &self,
+        dirfd: u64,
+        path: &str,
+        follow_symlink: bool,
+    ) -> KResult<Arc<dyn INode>> {
+        let (directory, filename) = split_path(&path)?;
+        let follow_time = match follow_symlink {
+            true => MAXIMUM_FOLLOW,
+            false => 0,
+        };
+        if dirfd == AT_FDCWD as _ {
+            return ROOT_INODE
+                .lookup(&self.pwd)
+                .map_err(fserror_to_kerror)?
+                .lookup_follow(path, follow_time)
+                .map_err(fserror_to_kerror);
+        }
+        todo!()
+    }
+
+    pub fn read_inode(&self, path: &str) -> KResult<Arc<dyn INode>> {
+        self.read_inode_at(AT_FDCWD as _, path, true)
     }
 }
 

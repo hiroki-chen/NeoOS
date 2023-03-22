@@ -10,7 +10,6 @@ all: $(OUTPUT)
 
 $(OUTPUT): $(SOURCE)
 	@$(CC) -o $@ $^ $(C_FLAGS)
-	@cp test ../../test
 
 clean:
 	@rm $(OUTPUT)

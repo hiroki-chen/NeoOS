@@ -236,7 +236,7 @@ impl Thread {
     pub unsafe fn from_raw() -> KResult<Arc<Thread>> {
         let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
         let stack_top = Self::prepare_user_stack(&mut vm)? as u64;
-        let elf_inode = ROOT_INODE.find("test").map_err(fserror_to_kerror)?;
+        let elf_inode = ROOT_INODE.lookup("/bin/test").map_err(fserror_to_kerror)?;
         let elf = ElfFile::load(&elf_inode)?;
         elf.load_elf_and_map(&mut vm)?;
         let vm = Arc::new(Mutex::new(vm));

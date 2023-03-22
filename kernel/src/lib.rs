@@ -100,10 +100,7 @@ pub fn kmain() -> ! {
 
         // Test.
         let apfs = ROOT_INODE.clone();
-        let foo = apfs.find("okay").unwrap();
-        let mut buf = [0u8; 4];
-        foo.read_at(0, &mut buf).unwrap();
-        kinfo!("{:x?}", buf);
+        let foo = apfs.lookup("/bin").unwrap();
     }
 
     loop {

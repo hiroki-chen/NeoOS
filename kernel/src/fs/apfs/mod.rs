@@ -33,12 +33,12 @@ use self::meta::{
     DrecFlags, FsMap, JDrecHashedKey, JDrecVal, JFileExtentKey, JFileExtentVal, JInodeKey,
     JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical,
     ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC, APFS_TYPE_FILE_EXTENT, APFS_TYPE_INODE,
-    OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID,
+    J_DREC_LEN_MASK, OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID,
 };
 
 use rcore_fs::{
     dirty::Dirty as MaybeDirty,
-    vfs::{FileSystem, FsError, FsInfo, INode, Metadata, PollStatus},
+    vfs::{FileSystem, FileType, FsError, FsInfo, INode, Metadata, PollStatus},
 };
 
 pub mod meta;
@@ -414,14 +414,16 @@ impl AppleFileSystem {
                     })
                     .map(|val| RwLock::new(MaybeDirty::new(val.clone())));
 
-                Ok(Arc::new(AppleFileSystemInode {
+                let inode = Arc::new(AppleFileSystemInode {
                     id: drec.file_id,
                     volumn: volumn.clone(),
                     apfs: self.self_ptr.upgrade().unwrap(),
                     inode_inner: RwLock::new(MaybeDirty::new(inode_val.clone())),
                     file_extent,
                     dir_record: RwLock::new(MaybeDirty::new(drec.clone())),
-                }))
+                });
+                inode.init_dir();
+                Ok(inode)
             }
             None => Err(Errno::ENODEV),
         }
@@ -436,7 +438,6 @@ impl AppleFileSystem {
         let root = self
             .get_inode(&drec, volumn_name)
             .expect("No root inode found");
-        root.init_dir();
         root
     }
 }
@@ -492,14 +493,65 @@ impl AppleFileSystemInode {
 
         if !ty.contains(DrecFlags::DT_DIR) {
             // We do nothing here.
-            kwarn!("trying to init a non-directory INode.");
             return;
         }
 
-        let parent = self.inode_inner.read().parent_id;
         let current = self.id;
-        let parent_name = "..".as_bytes().to_vec();
-        let current_name = ".".as_bytes().to_vec();
+        // Root directory doss not have parent.
+        let parent = {
+            let parent = self.inode_inner.read().parent_id;
+            if parent == 1 {
+                current
+            } else {
+                parent
+            }
+        };
+
+        // Add current directory to the directory records.
+        let current_jdrec_hashed_key = JDrecHashedKey {
+            hdr: JKey {
+                obj_id_and_type: ((APFS_TYPE_DIR_REC as u64) << OBJ_TYPE_SHIFT) | current,
+            },
+            name_len_and_hash: 2 & J_DREC_LEN_MASK, // ".\0"
+            name: {
+                let mut name = [0u8; 255];
+                name[0] = b'.';
+                name
+            },
+        };
+        let parent_jdrec_hashed_key = JDrecHashedKey {
+            hdr: JKey {
+                obj_id_and_type: ((APFS_TYPE_DIR_REC as u64) << OBJ_TYPE_SHIFT) | current,
+            },
+            name_len_and_hash: 3 & J_DREC_LEN_MASK, // "..\0"
+            name: {
+                let mut name = [0u8; 255];
+                name[0] = b'.';
+                name[1] = b'.';
+                name
+            },
+        };
+        let current_jdrec_val = JDrecVal {
+            file_id: current,
+            date_added: self.dir_record.read().date_added,
+            flags: 0x4,
+        };
+        let parent_jdrec_val = JDrecVal {
+            file_id: parent,
+            date_added: self.dir_record.read().date_added,
+            flags: 0x4,
+        };
+
+        kinfo!(
+            "parent: {:#x?} : {:#x?}",
+            parent_jdrec_hashed_key,
+            parent_jdrec_val
+        );
+        let mut lock = self.volumn.fs_map.write();
+        lock.dir_record_map
+            .insert(current_jdrec_hashed_key, current_jdrec_val);
+        lock.dir_record_map
+            .insert(parent_jdrec_hashed_key, parent_jdrec_val);
     }
     /// Gets all the directory records under this directory, but they do not contain `.` and `..`.
     fn get_all(&self) -> KResult<Vec<(JDrecHashedKey, JDrecVal)>> {
@@ -541,6 +593,18 @@ impl AppleFileSystemInode {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect())
     }
+
+    /// Appends a directory record to the inode.
+    pub fn append_dirrecord(&self) -> KResult<()> {
+        // to be implemented.
+        Ok(())
+    }
+
+    /// Removes a directory record from the inode.
+    pub fn remove_dirrecord(&self, name: &str) -> KResult<()> {
+        // to be implemented.
+        Ok(())
+    }
 }
 
 impl Debug for AppleFileSystemInode {
@@ -548,11 +612,51 @@ impl Debug for AppleFileSystemInode {
         f.debug_struct("AppleFileSystemInode")
             .field("id", &self.id)
             .field("inode_inner", &self.inode_inner.read())
+            .field("directory record", &self.dir_record.read())
             .finish()
     }
 }
 
 impl INode for AppleFileSystemInode {
+    fn move_(
+        &self,
+        old_name: &str,
+        target: &Arc<dyn INode>,
+        new_name: &str,
+    ) -> rcore_fs::vfs::Result<()> {
+        let info = self.metadata()?;
+        if info.type_ != FileType::Dir {
+            kerror!("Do not invoke `mv` on a non-directory source inode.");
+            return Err(FsError::NotDir);
+        }
+
+        if info.nlinks == 0 {
+            return Err(FsError::DirRemoved);
+        }
+
+        if old_name == "." || old_name == ".." {
+            return Err(FsError::IsDir);
+        }
+
+        let dst = target
+            .as_any_ref()
+            .downcast_ref::<Self>()
+            .ok_or(FsError::NotSameFs)?;
+        if !Arc::ptr_eq(&self.apfs, &dst.apfs) {
+            return Err(FsError::NotSameFs);
+        }
+        let dst_info = dst.metadata()?;
+        if dst_info.type_ != FileType::Dir {
+            kerror!("Do not invoke `mv` on a non-directory target inode.");
+            return Err(FsError::NotDir);
+        }
+        if dst_info.nlinks == 0 {
+            return Err(FsError::DirRemoved);
+        }
+
+        Ok(())
+    }
+
     fn find(&self, name: &str) -> rcore_fs::vfs::Result<Arc<dyn INode>> {
         // Check the Inode type.
         let dir_record = self.dir_record.read();

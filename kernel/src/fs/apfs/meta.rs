@@ -292,7 +292,8 @@ impl DrecFlags {
             DrecFlags::DT_FIFO => FileType::NamedPipe,
             DrecFlags::DT_SOCK => FileType::Socket,
             DrecFlags::DT_LNK => FileType::SymLink,
-            _ => panic!("unknown type"),
+            DrecFlags::DT_REG => FileType::File,
+            ty => panic!("unknown type: {:?}", ty),
         }
     }
 }

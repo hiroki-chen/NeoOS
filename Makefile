@@ -47,6 +47,7 @@ all: kernel
 
 sample_program:
 	@$(MAKE) -C sample_programs/simple_c
+	@cp sample_programs/simple_c/test $(WORK_DIR)/test
 
 # Creates virtual hard disk.
 hard_disk: sample_program
@@ -60,8 +61,8 @@ else
 	@cd $(WORK_DIR) && dd if=/dev/zero bs=1M count=400 > $(DISK) && mkfs.apfs $(DISK)
 	@cd $(WORK_DIR) && sudo mount -o loop,readwrite $(DISK) /mnt
 # TODO: Add meaningful files/directories.
-	@mkdir -p /mnt/foo && mkdir -p /mnt/baz && echo 'abcd' > /mnt/baz/bar && echo 'dcba' > /mnt/okay
-	@cd $(WORK_DIR) && cp test /mnt
+	@cd /mnt && mkdir bin dev lib proc
+	@cd $(WORK_DIR) && cp test /mnt/bin
 	@sudo umount /mnt
 	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
 	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)

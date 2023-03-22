@@ -9,6 +9,7 @@ use crate::{
     arch::interrupt::SYSCALL_REGS_NUM,
     error::KResult,
     process::thread::{Thread, ThreadContext},
+    utils::{read_user_string, split_path},
 };
 
 bitflags! {
@@ -60,6 +61,17 @@ pub fn sys_openat(
         flags,
         mode
     );
+
+    // Open the directory.
+    let mut proc = thread.parent.lock();
+    let path = read_user_string(path)?;
+    let oflags = Oflags::from_bits_truncate(flags);
+
+    kinfo!("opening {path} with open flags {:?}", oflags);
+
+    if oflags.contains(Oflags::O_CREATE) {
+        let (directory, filename) = split_path(&path)?;
+    }
 
     Ok(0)
 }
