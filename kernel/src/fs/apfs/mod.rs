@@ -17,13 +17,13 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use core::{ffi::CStr, fmt::Debug};
+use core::{ffi::CStr, fmt::Debug, mem::MaybeUninit};
 use spin::RwLock;
 
 use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
-    fs::apfs::meta::{ApfsVolumn, BTreeInfo, Xid, BLOCK_SIZE},
+    fs::apfs::meta::{ApfsVolumn, BTreeInfo, SpacemanPhysical, Xid, BLOCK_SIZE},
     function, kdebug, kerror, kinfo, kwarn,
     utils::calc_fletcher64,
 };
@@ -63,7 +63,7 @@ pub trait BlockLike: Device {
     /// Use this function unless you know what you are accessing.
     fn load_struct<T>(&self, id: Oid) -> KResult<T>
     where
-        T: AsRef<[u8]> + AsMut<[u8]> + Clone + Sized + 'static,
+        T: Clone + Sized + 'static,
     {
         unsafe {
             let mut buf = vec![0u8; BLOCK_SIZE];
@@ -159,6 +159,23 @@ pub struct AppleFileSystem {
     nx_omap: RwLock<Option<ObjectMap>>,
     /// The inode map. Volumn name to inode.
     inodes: RwLock<BTreeMap<String, BTreeMap<u64, Weak<AppleFileSystemInode>>>>,
+    /// The spaceman instance. TODO: make it a high-level struct.
+    spaceman: RwLock<SpacemanPhysical>,
+}
+
+/// The space manager allocates and frees blocks where objects and file data can be stored. Thereʼs exactly one
+/// instance of this structure in a container.
+///
+/// This is very useful when we want to write something onto the disk.
+pub struct SpaceManager {
+    // Its members are yet to be determined.
+}
+
+impl SpaceManager {
+    /// Parses a space manager instance from the disk content.
+    pub fn from_raw() -> KResult<Self> {
+        todo!()
+    }
 }
 
 impl AppleFileSystem {
@@ -190,15 +207,21 @@ impl AppleFileSystem {
         // Step 2: Use the block-zero copy of the container superblock to locate the checkpoint descriptor area
         // by reading the `nx_xp_desc_base` field.
         let nx_xp_desc_base = nx_superblock.nx_xp_desc_base;
-        let highest_bit = nx_xp_desc_base & (1 << 63);
+        let mut highest_bit = nx_superblock.nx_xp_desc_blocks & (1 << 31);
         if highest_bit != 0 {
             kerror!("currently we do not support non-contiguous checkpoint descriptor area");
+            return Err(Errno::EACCES);
+        }
+        let nx_xp_data_base = nx_superblock.nx_xp_data_base;
+        highest_bit = nx_superblock.nx_xp_data_blocks & (1 << 31);
+        if highest_bit != 0 {
+            kerror!("currently we do not support non-contiguous checkpoint data area");
             return Err(Errno::EACCES);
         }
 
         // Step 3: Read the entries in the checkpoint descriptor area, which are instances of `checkpoint_map_phys_t`.
         // or `nx_superblock_t`.
-        let mut best_xid = 0;
+        let mut best_superblock_xid = 0;
         for idx in 0..nx_superblock.nx_xp_desc_blocks {
             // Should check whether this object is a checkpoint mapping or another superblock.
             // This can be done by reading the header of the target block.
@@ -226,16 +249,47 @@ impl AppleFileSystem {
                         &*(map_object.as_ptr() as *const CheckpointMapPhysical)
                     };
 
-                    // Find the latest superblock.
-                    if map_object.cpm_o.o_xid > best_xid {
-                        best_xid = map_object.cpm_o.o_xid;
+                    // Find the latest superblock. 4000 0000 0c
+                    if map_object.cpm_o.o_xid > best_superblock_xid {
+                        best_superblock_xid = map_object.cpm_o.o_xid;
                         nx_superblock = cur_superblock.clone();
                     }
                 }
+
                 _ => continue,
             }
         }
 
+        // Step 4: Read the checkpoint data area.
+        let mut best_spaceman_xid = 0;
+        let mut spaceman = MaybeUninit::<SpacemanPhysical>::uninit();
+        for idx in 0..nx_superblock.nx_xp_data_blocks {
+            let addr = nx_xp_data_base + idx as u64;
+            let object = match read_object(&device, addr) {
+                Ok(object) => object,
+                Err(_) => continue,
+            };
+
+            let hdr = unsafe { &*(object.as_ptr() as *const ObjectPhysical) };
+
+            let ty = ObjectTypes::from_bits_truncate((hdr.o_type & 0xff) as _);
+            match ty {
+                ObjectTypes::OBJECT_TYPE_SPACEMAN => {
+                    // Always get the latest one.
+                    if best_spaceman_xid < hdr.o_xid {
+                        best_spaceman_xid = hdr.o_xid;
+                        let object = unsafe { &*(object.as_ptr() as *const SpacemanPhysical) };
+                        spaceman.write(object.clone());
+                    }
+                }
+                ty => {
+                    kwarn!("unhandled checkpoint type {:?}", ty);
+                }
+            }
+        }
+
+        let spaceman = unsafe { spaceman.assume_init() };
+        kdebug!("get spaceman {:x?}", spaceman);
         kdebug!("mounted the superblock: {:x?}", nx_superblock);
         Self {
             self_ptr: Weak::default(),
@@ -245,6 +299,7 @@ impl AppleFileSystem {
             nx_omap_root: RwLock::new(None),
             nx_omap: RwLock::new(None),
             inodes: RwLock::new(BTreeMap::new()),
+            spaceman: RwLock::new(spaceman),
         }
         .as_arc()
     }
@@ -440,6 +495,42 @@ impl AppleFileSystem {
             .expect("No root inode found");
         root
     }
+
+    /// Creates a new INode.
+    pub fn create_inode(
+        &self,
+        volumn: &Arc<ApfsVolumn>,
+        id: u64,
+        inode_key: JInodeKey,
+        inode: JInodeVal,
+        dir_record_key: JDrecHashedKey,
+        dir_record: JDrecVal,
+    ) -> KResult<Arc<dyn INode>> {
+        // Add to the map first.
+        let mut fs_map = volumn.fs_map.write();
+        fs_map
+            .dir_record_map
+            .insert(dir_record_key.clone(), dir_record.clone());
+        fs_map.inode_map.insert(inode_key.clone(), inode.clone());
+
+        let new_inode = Arc::new(AppleFileSystemInode {
+            id,
+            volumn: volumn.clone(),
+            apfs: self.self_ptr.upgrade().unwrap(),
+            inode_inner: RwLock::new(MaybeDirty::new(inode)),
+            dir_record: RwLock::new(MaybeDirty::new(dir_record)),
+            file_extent: None, // Currently, it is `None` for newly created files. Or we may directly use memory?
+        });
+
+        self.inodes
+            .write()
+            .entry(volumn.name.clone())
+            .and_modify(|map| {
+                map.insert(id, Arc::downgrade(&new_inode));
+            });
+
+        Ok(new_inode)
+    }
 }
 
 impl FileSystem for AppleFileSystem {
@@ -594,8 +685,9 @@ impl AppleFileSystemInode {
             .collect())
     }
 
-    /// Appends a directory record to the inode.
-    pub fn append_dirrecord(&self) -> KResult<()> {
+    /// Appends a directory record to the inode. This function is called *after* the corresponding INode is created
+    /// and properly inserted into the filesystem B-Tree.
+    pub fn append_dirrecord(&self, key: JDrecHashedKey, val: JDrecVal) -> KResult<()> {
         // to be implemented.
         Ok(())
     }
@@ -824,6 +916,32 @@ impl INode for AppleFileSystemInode {
 
     fn fs(&self) -> Arc<dyn FileSystem> {
         self.apfs.clone()
+    }
+
+    fn create2(
+        &self,
+        name: &str,
+        ty: FileType,
+        mode: u32,
+        _data: usize,
+    ) -> rcore_fs::vfs::Result<Arc<dyn INode>> {
+        let info = self.metadata()?;
+        if info.type_ != FileType::Dir {
+            kerror!("trying to create something in a non-directory inode.");
+            return Err(FsError::NotDir);
+        }
+
+        if info.nlinks == 0 {
+            kerror!("this directory no long exists.");
+            return Err(FsError::DirRemoved);
+        }
+
+        if self.find(name).is_ok() {
+            kerror!("duplicate filename.");
+            return Err(FsError::EntryExist);
+        }
+
+        todo!()
     }
 }
 

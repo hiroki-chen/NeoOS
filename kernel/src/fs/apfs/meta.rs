@@ -1,6 +1,6 @@
 //! Defines some important metadata.
 
-use core::{any::Any, cmp::Ordering, ffi::CStr, panic, time::Duration};
+use core::{any::Any, cmp::Ordering, ffi::CStr, fmt::Debug, panic, time::Duration};
 
 use alloc::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -592,7 +592,7 @@ pub struct JFileExtentKey {
 #[derive(Clone, Debug)]
 #[repr(C, packed)]
 pub struct JFileExtentVal {
-    /// The extentʼs length is a `uint64_t` value, accessed as `len_and_kind & PEXT_LEN_MASK`, and measured in blocks.
+    /// The extentʼs length is a `pub` value, accessed as `len_and_kind & PEXT_LEN_MASK`, and measured in blocks: u64,
     /// The extentʼs kind is a `j_obj_kinds` value, accessed as `(len_and_kind & PEXT_KIND_MASK) >> PEXT_KIND_SHIFT`.
     pub len_and_flags: u64,
     pub phys_block_num: u64,
@@ -1053,7 +1053,7 @@ pub struct JInodeVal {
     // pub xfields: [u8; BLOCK_SIZE - 92],
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[repr(C, align(8))]
 pub struct CheckpointMap {
     pub cpm_type: u32,
@@ -1076,6 +1076,22 @@ pub struct CheckpointMapPhysical {
     /// checkpoint-mapping blocks stored contiguously in the checkpoint descriptor area. The last checkpoint-mapping
     /// block is marked with the CHECKPOINT_MAP_LAST flag.
     pub cpm_map: [CheckpointMap; MAX_ALLOWED_CHECKPOINT_MAP_SIZE],
+}
+
+impl Debug for CheckpointMapPhysical {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let cpm_map = self
+            .cpm_map
+            .iter()
+            .take_while(|&element| element.cpm_type != 0)
+            .collect::<Vec<_>>();
+        f.debug_struct("CheckpointMapPhysical")
+            .field("cpm_o", &self.cpm_o)
+            .field("cpm_flags", &self.cpm_flags)
+            .field("cpm_count", &self.cpm_count)
+            .field("cpm_map", &cpm_map)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1197,6 +1213,127 @@ pub struct BTreeNodePhysical {
     pub btn_val_free_list: Nloc,
 
     pub btn_data: [u8; BTREE_STORAGE_SIZE],
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct ChunkInfo {
+    pub ci_xid: u64,
+    pub ci_addr: u64,
+    pub ci_block_count: u32,
+    pub ci_free_count: u32,
+    pub ci_bitmap_addr: u64,
+}
+
+/// A block that contains an array of chunk-info structures.
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct ChunkInfoBlock {
+    pub cib_o: ObjectPhysical,
+    pub cib_index: u32,
+    pub cib_chunk_info_count: u32,
+    pub cib_chunk_info: [ChunkInfo; 255],
+}
+
+/// A block that contains an array of chunk-info block addresses.
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct CibAddrBlock {
+    pub cab_o: ObjectPhysical,
+    pub cab_index: u32,
+    pub cab_cib_count: u32,
+    pub cab_cib_addr: [u64; 255],
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SpacemanFreeQueueKey {
+    pub sfqk_xid: Xid,
+    pub sfqk_paddr: u64,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SpacemanFreeQueueEntry {
+    pub sfqe_key: SpacemanFreeQueueKey,
+    pub sfqe_count: u64,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SpacemanFreeQueue {
+    pub sfq_count: u64,
+    pub sfq_tree_oid: Oid,
+    pub sfq_oldest_xid: Xid,
+    pub sfq_tree_node_limit: u16,
+    pub sfq_pad16: u16,
+    pub sfq_pad32: u32,
+    pub _reserved: u64,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SpacemanDevice {
+    pub sm_block_count: u64,
+    pub sm_chunk_count: u64,
+    pub sm_cib_count: u32,
+    pub sm_cab_count: u32,
+    pub sm_free_count: u64,
+    pub sm_addr_offset: u32,
+    pub sm_reserved: u32,
+    pub sm_reserved2: u64,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SpacemanAllocationZoneBoundaries {
+    pub saz_zone_start: u64,
+    pub saz_zone_end: u64,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SpacemanAllocationZoneInfoPhys {
+    pub saz_current_boundaries: SpacemanAllocationZoneBoundaries,
+    pub saz_previous_boundaries: [SpacemanAllocationZoneBoundaries; 7],
+    pub saz_zone_id: u16,
+    pub saz_previous_boundary_index: u16,
+    pub saz_reserved: u32,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SpacemanDatazoneInfoPhys {
+    pub sdz_allocation_zones: [[SpacemanAllocationZoneInfoPhys; 8]; 2],
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+pub struct SpacemanPhysical {
+    pub sm_o: ObjectPhysical,
+    pub sm_block_size: u32,
+    pub sm_blocks_per_chunk: u32,
+    pub sm_chunks_per_cib: u32,
+    pub sm_cibs_per_cab: u32,
+    pub sm_dev: [SpacemanDevice; 2],
+    pub sm_flags: u32,
+    pub sm_ip_bm_tx_multiplier: u32,
+    pub sm_ip_block_count: u64,
+    pub sm_ip_bm_size_in_blocks: u32,
+    pub sm_ip_bm_block_count: u32,
+    pub sm_ip_bm_base: u64,
+    pub sm_ip_base: u64,
+    pub sm_fs_reserve_block_count: u64,
+    pub sm_fs_reserve_alloc_count: u64,
+    pub sm_fq: [SpacemanFreeQueue; 3],
+    pub sm_ip_bm_free_head: u16,
+    pub sm_ip_bm_free_tail: u16,
+    pub sm_ip_bm_xid_offset: u32,
+    pub sm_ip_bitmap_offset: u32,
+    pub sm_ip_bm_free_next_offset: u32,
+    pub sm_version: u32,
+    pub sm_struct_size: u32,
+    pub sm_datazone: SpacemanAllocationZoneInfoPhys,
 }
 
 impl BTreeNodePhysical {
