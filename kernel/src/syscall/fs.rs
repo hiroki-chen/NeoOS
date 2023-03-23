@@ -9,7 +9,7 @@ use crate::{
     arch::interrupt::SYSCALL_REGS_NUM,
     error::KResult,
     process::thread::{Thread, ThreadContext},
-    utils::{read_user_string, split_path},
+    utils::{ptr::Ptr, read_user_string, split_path},
 };
 
 bitflags! {
@@ -99,4 +99,39 @@ pub fn sys_ioctl(
     let mut proc = thread.parent.lock();
     let file = proc.get_fd(file_fd)?;
     file.ioctl(cmd, [arg1, arg2, arg3])
+}
+
+pub fn sys_write(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let file_fd = syscall_registers[0];
+    let buf = unsafe { Ptr::new_with_const(syscall_registers[1] as *const u8) };
+    let len = syscall_registers[2] as usize;
+
+    let mut proc = thread.parent.lock();
+    // Currently assume this is valid.
+    let slice = unsafe { core::slice::from_raw_parts(buf.as_ptr(), len) };
+    let file = proc.get_fd(file_fd)?;
+    let len = file.write(slice)?;
+
+    Ok(len)
+}
+
+pub async fn sys_read(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let file_fd = syscall_registers[0];
+    let buf = Ptr::new(syscall_registers[1] as *mut u8);
+    let len = syscall_registers[2] as usize;
+
+    let mut proc = thread.parent.lock();
+    let file = proc.get_fd(file_fd)?;
+    let slice = unsafe { core::slice::from_raw_parts_mut(buf.as_ptr(), len) };
+    let len = file.read(slice).await?;
+
+    Ok(0)
 }

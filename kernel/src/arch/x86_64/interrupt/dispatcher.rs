@@ -67,6 +67,7 @@ pub async fn trap_dispatcher_user(
     should_yield: &mut bool,
 ) -> bool {
     let tf = ctx.get_trapno();
+
     match tf {
         BREAKPOINT_INTERRUPT => {
             kinfo!("spawn(): breakpoint!");
@@ -87,12 +88,6 @@ pub async fn trap_dispatcher_user(
         }
         PAGE_FAULT_INTERRUPT => {
             let cr2 = get_pf_addr();
-            kinfo!(
-                "spawn(): thread {:#x} triggered page fault @ {:#x}. Ctx was {:#x?}",
-                thread.id,
-                cr2,
-                ctx.get_user_context(),
-            );
 
             if !handle_page_fault(cr2, ctx.get_user_context().errno) {
                 // Report SEGSEV.

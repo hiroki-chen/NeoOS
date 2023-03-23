@@ -1,7 +1,6 @@
 //! Implements system call interfaces and handling routines.
 
 use alloc::sync::Arc;
-use log::trace;
 
 use crate::{
     arch::interrupt::{SYSCALL, SYSCALL_REGS_NUM},
@@ -9,7 +8,10 @@ use crate::{
     process::thread::{Thread, ThreadContext},
 };
 
-use self::signal::{sys_rt_sigaction, sys_rt_sigreturn};
+use self::{
+    fs::{sys_read, sys_write},
+    signal::{sys_rt_sigaction, sys_rt_sigreturn},
+};
 
 mod signal;
 
@@ -350,7 +352,7 @@ pub async fn handle_syscall(thread: &Arc<Thread>, ctx: &mut ThreadContext) -> bo
     assert_eq!(
         ctx.get_trapno(),
         SYSCALL,
-        "handle_syscall(): cannot call this function with a unmatched trap number!"
+        "cannot call this function with a unmatched trap number!"
     );
 
     let syscall_number = ctx.get_user_context().get_syscall_number();
@@ -360,13 +362,13 @@ pub async fn handle_syscall(thread: &Arc<Thread>, ctx: &mut ThreadContext) -> bo
     assert_eq!(
         syscall_registers.len(),
         SYSCALL_REGS_NUM,
-        "handle_syscall(): the number of parameters is wrong: should be {:#x}, got {:#x}",
+        "the number of parameters is wrong: should be {:#x}, got {:#x}",
         SYSCALL_REGS_NUM,
         syscall_registers.len()
     );
 
-    trace!(
-        "handle_syscall(): handling {:#x} with registers {:#x?}",
+    ktrace!(
+        "handling {:#x} with registers {:#x?}",
         syscall_number,
         syscall_registers
     );
@@ -375,9 +377,9 @@ pub async fn handle_syscall(thread: &Arc<Thread>, ctx: &mut ThreadContext) -> bo
         Ok(ret) => ret,
         Err(_) => return true,
     };
-    ctx.get_user_context().regs.rax = ret;
+    ctx.get_user_context().regs.rax = ret as _;
 
-    false
+    true
 }
 
 async fn do_handle_syscall(
@@ -385,8 +387,10 @@ async fn do_handle_syscall(
     ctx: &mut ThreadContext,
     syscall_number: u64,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
-) -> KResult<u64> {
+) -> KResult<usize> {
     match syscall_number {
+        SYS_READ => sys_read(thread, ctx, syscall_registers).await,
+        SYS_WRITE => sys_write(thread, ctx, syscall_registers),
         SYS_RT_SIGACTION => sys_rt_sigaction(thread, ctx, syscall_registers),
         SYS_RT_SIGRETURN => sys_rt_sigreturn(thread, ctx, syscall_registers),
 

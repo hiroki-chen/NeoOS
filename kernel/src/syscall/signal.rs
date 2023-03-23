@@ -22,7 +22,7 @@ pub fn sys_rt_sigaction(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
-) -> KResult<u64> {
+) -> KResult<usize> {
     // Explanation:
     //
     // rdi: int signal
@@ -93,7 +93,7 @@ pub fn sys_rt_sigreturn(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
-) -> KResult<u64> {
+) -> KResult<usize> {
     // Copy the pointer from the user space into the kernel.
     let sig_frame_ptr =
         (ctx.get_user_context().get_rsp() - core::mem::size_of::<u64>() as u64) as *const SigFrame;
@@ -113,5 +113,5 @@ pub fn sys_rt_sigreturn(
 
     // Restore the context and resume it. ThreadContext -> User Context -> Signal Frame
     sig_frame.ucontext.uc_context = SigContext::from_uctx(ctx.get_user_context());
-    Ok(ctx.get_user_context().regs.rax)
+    Ok(ctx.get_user_context().regs.rax as _)
 }

@@ -42,6 +42,9 @@ syscall_normal:
   mov gs:12, rsp
   mov rsp, gs:4
 
+  pop rsp
+  add rsp, 22 * 8
+
   // Errno and trap_num.
   push 0
   push 0x100

@@ -10,6 +10,8 @@ use crate::{
     memory::copy_from_user,
 };
 
+pub mod ptr;
+
 /// Calculate the fletcher 64's checksum for a given byte array.
 pub fn calc_fletcher64(src: &[u8]) -> KResult<u64> {
     let initial_value = 0u64;

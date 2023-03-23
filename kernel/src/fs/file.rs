@@ -137,7 +137,7 @@ impl File {
     }
 
     /// Reads the file from `self.file_option.offset`.
-    pub async fn read_buf(&mut self, buf: &mut [u8]) -> KResult<usize> {
+    pub async fn read_buf(&self, buf: &mut [u8]) -> KResult<usize> {
         let offset = self.file_option.read().offset as usize;
         let len = self.read_at(offset, buf).await?;
         self.file_option.write().offset += len as u64;
@@ -146,7 +146,7 @@ impl File {
     }
 
     /// Reads the file from `offset + self.file_option.offset`.
-    pub async fn read_at(&mut self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
+    pub async fn read_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
         let file_option = self.file_option.read();
         // Check file option.
         if !file_option.open_option.contains(FileOpenOption::READ) {
@@ -185,7 +185,7 @@ impl File {
     /// Sync write operations guarantee that the data has been written to the storage device before the write
     /// operation returns, which can be important for ensuring the integrity of the data in the event of a power
     /// failure or other interruption.
-    pub fn write_buf(&mut self, buf: &[u8]) -> KResult<usize> {
+    pub fn write_buf(&self, buf: &[u8]) -> KResult<usize> {
         let offset = if self
             .file_option
             .read()
@@ -208,7 +208,7 @@ impl File {
         Ok(len)
     }
 
-    pub fn write_at(&mut self, offset: usize, buf: &[u8]) -> KResult<usize> {
+    pub fn write_at(&self, offset: usize, buf: &[u8]) -> KResult<usize> {
         // First check if we have permissions to write this file.
         if !self
             .file_option
@@ -333,6 +333,22 @@ impl FileObject {
     pub fn ioctl(&self, cmd: u64, args: [u64; 3]) -> KResult<usize> {
         match self {
             FileObject::File(file) => file.io_control(cmd, args[0]),
+
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn write(&self, buf: &[u8]) -> KResult<usize> {
+        match self {
+            FileObject::File(file) => file.write_buf(buf),
+
+            _ => unimplemented!(),
+        }
+    }
+
+    pub async fn read(&self, buf: &mut [u8]) -> KResult<usize> {
+        match self {
+            FileObject::File(file) => file.read_buf(buf).await,
 
             _ => unimplemented!(),
         }
