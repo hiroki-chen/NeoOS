@@ -2,7 +2,7 @@
 
 use core::ffi::CStr;
 
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, string::ToString, sync::Arc, vec::Vec};
 use goblin::{
     container::Ctx,
     elf::{Elf, Header, ProgramHeader},
@@ -18,7 +18,9 @@ use crate::{
         callback::{FileArenaCallback, INodeWrapper},
         Arena, ArenaFlags, MemoryManager,
     },
-    page, virt,
+    page,
+    process::ld::{AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM},
+    virt,
 };
 
 pub struct ElfFile {
@@ -134,6 +136,38 @@ impl ElfFile {
             .unwrap_or_default()
             .to_str()
             .unwrap_or_default())
+    }
+
+    /// Constructs the auxiliary vector map.
+    ///
+    /// The auxiliary vector (aka auxv) is some memory near the start of a running ELF program's stack. Specifically,
+    /// it's a sequence of pairs of either 64 bit or 32 bit unsigned ints. The two components of the pair form a key and
+    /// a value.
+    pub fn get_auxv(&self) -> KResult<BTreeMap<u8, usize>> {
+        let mut auxv = BTreeMap::new();
+        let program_headers = &self.program_headers;
+
+        match program_headers
+            .iter()
+            .find(|&program_header| program_header.p_type == 0x6)
+        {
+            Some(at_phdr) => {
+                auxv.insert(AT_PHDR, at_phdr.p_vaddr as usize);
+            }
+            None => {
+                if let Some(at_phdr) = program_headers.iter().find(|&program_header| {
+                    program_header.p_type == 0x1 && program_header.p_offset == 0
+                }) {
+                    auxv.insert(AT_PHDR, (at_phdr.p_vaddr + self.header.e_phoff) as usize);
+                }
+            }
+        }
+
+        auxv.insert(AT_PHENT, self.header.e_phentsize as usize);
+        auxv.insert(AT_PHNUM, self.header.e_phnum as usize);
+        auxv.insert(AT_PAGESZ, PAGE_SIZE);
+
+        Ok(auxv)
     }
 
     /// Gets the entry point.

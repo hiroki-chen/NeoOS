@@ -177,7 +177,7 @@ pub struct SigInfo {
     pub signo: usize,
     pub code: usize,
     pub errno: usize,
-    sifields: SiFields,
+    pub sifields: SiFields,
 }
 
 #[derive(Debug, Default, Clone, Copy)]

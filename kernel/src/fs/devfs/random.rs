@@ -1,9 +1,11 @@
-use core::any::Any;
+use core::{any::Any, sync::atomic::Ordering};
 
 use alloc::sync::Arc;
 use rcore_fs::vfs::{make_rdev, FileType, INode, Metadata, PollStatus, Result, Timespec};
 
 use crate::{arch::cpu::rdrand, sync::mutex::SpinLockNoInterrupt as Mutex};
+
+use super::INODE_COUNT;
 
 struct RandomInner {
     seed: u32,
@@ -13,12 +15,14 @@ struct RandomInner {
 /// This is intended to be cryptographically secure, but this is left as future work.
 #[derive(Clone)]
 pub struct Random {
+    id: u64,
     inner: Arc<Mutex<RandomInner>>,
 }
 
 impl Random {
     pub fn new() -> Self {
         Self {
+            id: INODE_COUNT.fetch_add(1, Ordering::SeqCst),
             inner: Arc::new(Mutex::new(RandomInner {
                 seed: rdrand() as u32,
             })),

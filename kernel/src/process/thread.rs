@@ -12,10 +12,13 @@ use core::{fmt::Debug, time::Duration};
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, VecDeque},
+    string::String,
     sync::{Arc, Weak},
+    vec,
     vec::Vec,
 };
 use lazy_static::lazy_static;
+use rcore_fs::vfs::INode;
 use spin::RwLock;
 
 use crate::{
@@ -27,15 +30,19 @@ use crate::{
         PAGE_SIZE,
     },
     elf::ElfFile,
-    error::{fserror_to_kerror, Errno, KResult},
-    fs::ROOT_INODE,
+    error::{Errno, KResult},
+    fs::{
+        devfs::tty::TTY,
+        file::{File, FileObject, FileOpenOption, FileType},
+        ROOT_INODE,
+    },
     memory::{KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
     mm::{callback::SystemArenaCallback, Arena, ArenaFlags, FutureWithPageTable, MemoryManager},
     signal::{handle_signal, SigAction, SigSet, SigStack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
-use super::{event::EventBus, register, scheduler::FIFO_SCHEDULER, Process, Yield};
+use super::{event::EventBus, ld::InitInfo, register, scheduler::FIFO_SCHEDULER, Process, Yield};
 
 const DEBUG_THREAD_ID: u64 = 0xdeadbeef;
 const DEBUG_PROC_ID: u64 = 0xbeefdead;
@@ -118,7 +125,24 @@ pub fn sleep(duration: Duration) {
 
 impl Thread {
     /// Prepares the user stack. Returns the stack top.
-    fn prepare_user_stack(vm: &mut MemoryManager<KernelPageTable>) -> KResult<usize> {
+    ///
+    /// The initial stack should contain the arguments as well as some necessary environment variables. One can
+    /// easily use gdb to check the top of the user stack, or simply execute the following command.
+    ///
+    /// ```sh
+    /// $ cat /proc/self/map
+    ///
+    /// 7fded5a5e000-7fded5a5f000 rw-p 00000000 00:00 0
+    /// 7ffdbec15000-7ffdbec36000 rw-p 00000000 00:00 0                          [stack]
+    /// 7ffdbed9b000-7ffdbed9e000 r--p 00000000 00:00 0                          [vvar]
+    /// 7ffdbed9e000-7ffdbed9f000 r-xp 00000000 00:00 0                          [vdso]
+    /// ```
+    fn prepare_user_stack(
+        vm: &mut MemoryManager<KernelPageTable>,
+        args: Vec<String>,
+        envs: Vec<String>,
+        auxv: BTreeMap<u8, usize>,
+    ) -> KResult<usize> {
         let user_stack_bottom = USER_STACK_START;
         let user_stack_top = USER_STACK_START + USER_STACK_SIZE;
 
@@ -144,6 +168,11 @@ impl Thread {
             callback: Box::new(SystemArenaCallback::new(KernelFrameAllocator)),
         });
 
+        unsafe {
+            vm.with(|| {
+                InitInfo { args, envs, auxv }.push_at(user_stack_top as _);
+            });
+        }
         Ok(user_stack_top)
     }
 
@@ -223,22 +252,25 @@ impl Thread {
         self.inner.lock().thread_context.replace(ctx);
     }
 
-    /// Creates a raw thread with in-memory instructions.
-    /// Returns the user stack top.
+    /// Creates a new user-space thread and returns the user stack top.
     ///
-    /// # Note
+    /// # Arguments
     ///
-    /// Do *not directly* use this function unless you need to debug if kernel correctly handles multi-threading.
-    ///
-    /// # Safety
-    ///
-    /// This function is unsafe because `inst_addr` must be valid.
-    pub unsafe fn from_raw() -> KResult<Arc<Thread>> {
+    /// - inode: the current directory where this thread is created.
+    /// - path: the execution path of this thread.
+    /// - args: the argument string. Same as `const char** argv`.
+    /// - envp: the environment strings.
+    pub fn create(
+        inode: &Arc<dyn INode>,
+        path: &str,
+        args: Vec<String>,
+        envp: Vec<String>,
+    ) -> KResult<Arc<Thread>> {
         let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
-        let stack_top = Self::prepare_user_stack(&mut vm)? as u64;
-        let elf_inode = ROOT_INODE.lookup("/bin/test").map_err(fserror_to_kerror)?;
-        let elf = ElfFile::load(&elf_inode)?;
+        let elf = ElfFile::load(inode)?;
         elf.load_elf_and_map(&mut vm)?;
+        let auxv = elf.get_auxv()?;
+        let stack_top = Self::prepare_user_stack(&mut vm, args, envp, auxv)? as u64;
         let vm = Arc::new(Mutex::new(vm));
 
         // So we must pretend that 'interrupt' occurs here so that CPU allows to perform `IRETQ`.
@@ -263,6 +295,9 @@ impl Thread {
         // IOPL | IF | RSVD
         context.regs.rflags = 0x3202;
 
+        // Get stdio files.
+        let stdio = init_stdio();
+
         let thread = Thread {
             id: DEBUG_THREAD_ID,
             parent: Arc::new(Mutex::new(Process {
@@ -270,9 +305,9 @@ impl Thread {
                 process_group_id: DEBUG_PROC_ID,
                 threads: Vec::new(),
                 vm: vm.clone(),
-                exec_path: "".into(),
-                pwd: ".".into(),
-                opened_files: BTreeMap::new(),
+                exec_path: path.into(),
+                pwd: "/".into(),
+                opened_files: stdio,
                 exit_code: 0u8,
                 event_bus: EventBus::new(),
                 futexes: BTreeMap::new(),
@@ -373,6 +408,47 @@ pub fn current() -> KResult<Arc<Thread>> {
     }
 }
 
+/// A helper function that initializes the default stdio for the thread.
+fn init_stdio() -> BTreeMap<u64, FileObject> {
+    let mut files = BTreeMap::new();
+
+    // IO. stdin, stdout, stderr.
+    files.insert(
+        0,
+        FileObject::File(File::new(
+            TTY.clone(),
+            "/dev/tty",
+            false,
+            FileOpenOption::READ,
+            FileType::CONVENTIONAL,
+        )),
+    );
+
+    files.insert(
+        1,
+        FileObject::File(File::new(
+            TTY.clone(),
+            "/dev/tty",
+            false,
+            FileOpenOption::WRITE,
+            FileType::CONVENTIONAL,
+        )),
+    );
+
+    files.insert(
+        2,
+        FileObject::File(File::new(
+            TTY.clone(),
+            "/dev/tty",
+            false,
+            FileOpenOption::WRITE,
+            FileType::CONVENTIONAL,
+        )),
+    );
+
+    files
+}
+
 /// This function spawns a new kernel thread from the given [`Thread`] object.
 ///
 /// This function returns a [`KResult`] object, indicating whether the operation was successful. If the thread was
@@ -428,13 +504,11 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading() {
-    let thread = match unsafe { Thread::from_raw() } {
-        Ok(thread) => thread,
-        Err(errno) => {
-            kerror!("spawning debug thread failed. Errno: {:?}", errno);
-            return;
-        }
-    };
+    let debug_inode = ROOT_INODE.lookup("./bin/test").unwrap();
+
+    let args = vec!["test".into()];
+    let envp = vec!["PATH=/bin".into()];
+    let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
 
     spawn(thread).unwrap();
 }

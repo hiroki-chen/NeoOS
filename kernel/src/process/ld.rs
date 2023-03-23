@@ -17,10 +17,10 @@ pub struct StackWriter {
 
 #[derive(Clone, Debug, Default)]
 pub struct InitInfo {
-    args: Vec<String>,
-    envs: Vec<String>,
+    pub args: Vec<String>,
+    pub envs: Vec<String>,
     /// ELF auxiliary vectors are a mechanism to transfer certain kernel level information to the user processes.
-    auxv: BTreeMap<u8, usize>,
+    pub auxv: BTreeMap<u8, usize>,
 }
 
 impl StackWriter {

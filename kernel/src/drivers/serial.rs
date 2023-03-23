@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use uart_16550::SerialPort;
 use x86_64::instructions::{interrupts::without_interrupts, port::Port};
 
-use crate::{print, sync::mutex::SpinLockNoInterrupt as Mutex};
+use crate::{fs::devfs::tty::TTY, function, ktrace, sync::mutex::SpinLockNoInterrupt as Mutex};
 
 use super::{Driver, DRIVERS, IRQ_MANAGER, SERIAL_COM_0_UUID, SERIAL_COM_1_UUID, SERIAL_DRIVERS};
 
@@ -67,19 +67,20 @@ impl ComPort {
 
 impl Driver for ComPort {
     fn dispatch(&self, irq: Option<u64>) -> bool {
-        log::trace!("serial::dispatch(): received IRQ {:#x?}", irq);
+        ktrace!("serial::dispatch(): received IRQ {:#x?}", irq);
 
         let read_byte = {
             let read_byte = self.read();
+            // Convert '\r' to '\n'.
             if read_byte == 0xd {
                 0xa
             } else {
                 read_byte
             }
-        } as char;
-        print!("{read_byte}");
+        };
 
-        // TODO: Send this key into some character device so that the application can read it.
+        // Send this key to the teleprinter device so that the application can read it.
+        TTY.write_byte(read_byte);
 
         true
     }
@@ -116,9 +117,4 @@ impl SerialDriver for ComPort {
             ier.write(0x07);
         }
     }
-}
-
-/// Sends to the teleprinter.
-pub fn send_to_tty(byte: u8) {
-    unimplemented!();
 }

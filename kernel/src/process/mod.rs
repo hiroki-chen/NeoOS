@@ -102,6 +102,10 @@ impl Process {
             .ok_or(Errno::EEXIST)
     }
 
+    pub fn get_fd(&mut self, fd: u64) -> KResult<&mut FileObject> {
+        self.opened_files.get_mut(&fd).ok_or(Errno::EBADF)
+    }
+
     fn add_file(&mut self, file: FileObject) -> KResult<u64> {
         let fd = self.get_free_fd()?;
         self.opened_files.insert(fd, file);

@@ -75,3 +75,28 @@ pub fn sys_openat(
 
     Ok(0)
 }
+
+pub fn sys_ioctl(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let file_fd = syscall_registers[0];
+    let cmd = syscall_registers[1];
+    let arg1 = syscall_registers[2];
+    let arg2 = syscall_registers[3];
+    let arg3 = syscall_registers[4];
+
+    kdebug!(
+        "syscall parameters: file_fd: {}, cmd: {}, args: {}, {}, {}",
+        file_fd,
+        cmd,
+        arg1,
+        arg2,
+        arg3,
+    );
+
+    let mut proc = thread.parent.lock();
+    let file = proc.get_fd(file_fd)?;
+    file.ioctl(cmd, [arg1, arg2, arg3])
+}

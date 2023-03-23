@@ -94,13 +94,14 @@ pub fn kmain() -> ! {
             crate::arch::interrupt::ipi::IpiType::Others,
         );
 
-        kinfo!("kmain(): kernel main procedure started.");
-        print_banner();
         crate::process::thread::debug_threading();
 
         // Test.
         let apfs = ROOT_INODE.clone();
         let foo = apfs.lookup("/bin").unwrap();
+
+        kinfo!("kmain(): kernel main procedure started.");
+        print_banner();
     }
 
     loop {

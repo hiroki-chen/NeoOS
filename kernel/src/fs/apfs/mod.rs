@@ -249,7 +249,7 @@ impl AppleFileSystem {
                         &*(map_object.as_ptr() as *const CheckpointMapPhysical)
                     };
 
-                    // Find the latest superblock. 4000 0000 0c
+                    // Find the latest superblock.
                     if map_object.cpm_o.o_xid > best_superblock_xid {
                         best_superblock_xid = map_object.cpm_o.o_xid;
                         nx_superblock = cur_superblock.clone();
@@ -271,7 +271,6 @@ impl AppleFileSystem {
             };
 
             let hdr = unsafe { &*(object.as_ptr() as *const ObjectPhysical) };
-
             let ty = ObjectTypes::from_bits_truncate((hdr.o_type & 0xff) as _);
             match ty {
                 ObjectTypes::OBJECT_TYPE_SPACEMAN => {

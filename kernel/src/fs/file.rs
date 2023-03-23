@@ -75,6 +75,7 @@ pub enum Seek {
 /// When a process opens a file, the kernel creates a file handle and assigns it to the process. The process can then
 /// use the file handle to read from or write to the file, or to perform other operations on the file, such as seeking
 /// to a specific location within the file or changing the file's permissions.
+#[derive(Clone)]
 pub struct File {
     /// The INode `File` points to.
     pub inode: Arc<dyn INode>,
@@ -310,16 +311,30 @@ impl File {
         *offset += 1;
         Ok(name)
     }
+
+    pub fn io_control(&self, cmd: u64, arg: u64) -> KResult<usize> {
+        self.inode
+            .io_control(cmd as _, arg as _)
+            .map_err(fserror_to_kerror)
+    }
 }
 
 /// Anything that looks like a `file`.
+#[derive(Clone)]
 pub enum FileObject {
+    /// A regular file object.
     File(File),
+    /// A socket.
     Socket,
 }
 
-impl Drop for FileObject {
-    fn drop(&mut self) {
-        // todo.
+impl FileObject {
+    /// Io control interface. This function dispatches the request to each file.
+    pub fn ioctl(&self, cmd: u64, args: [u64; 3]) -> KResult<usize> {
+        match self {
+            FileObject::File(file) => file.io_control(cmd, args[0]),
+
+            _ => unimplemented!(),
+        }
     }
 }

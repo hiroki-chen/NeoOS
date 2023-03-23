@@ -6,11 +6,13 @@
 
 use alloc::{sync::Arc, vec::Vec};
 use lazy_static::lazy_static;
-use rcore_fs::vfs::{FileSystem, INode};
+use rcore_fs::vfs::INode;
+use rcore_fs_mountfs::MountFS;
 
 use crate::{
     drivers::{block::BlockDriverWrapper, BLOCK_DRIVERS},
     error::KResult,
+    fs::devfs::DEV_FS,
 };
 
 pub mod devfs;
@@ -73,6 +75,12 @@ lazy_static! {
         let apfs = apfs::AppleFileSystem::mount_container(device).unwrap();
         apfs.load_nx_object_map().unwrap();
         apfs.mount_volumns_all().unwrap();
-        apfs.root_inode()
+
+        let apfs = MountFS::new(apfs);
+        let root = apfs.mountpoint_root_inode();
+        let dev = root.find(true, "dev").unwrap();
+        dev.mount(DEV_FS.clone()).unwrap();
+
+        root
     };
 }
