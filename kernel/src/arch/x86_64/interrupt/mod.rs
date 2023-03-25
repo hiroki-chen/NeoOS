@@ -308,8 +308,6 @@ pub unsafe fn init_interrupt_all() -> KResult<()> {
     // Step 3: Set up the interrupt descriptor table.
     init_idt()?;
     kinfo!("init_interrupt_all(): initialized idt.");
-    kinfo!("init_interrupt_all(): try `int 0x3`. You will see the trap frame.");
-    asm!("int 0x3");
     // Step 4: Set up the syscall handlers.
     init_syscall()?;
     kinfo!("init_interrupt_all(): initialized syscall handlers.");

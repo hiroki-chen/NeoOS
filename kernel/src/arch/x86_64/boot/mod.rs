@@ -55,7 +55,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     kinfo!("_start(): initialized kernel page tables");
 
     // Print boot header.
-    kinfo!("_start(): boot header:\n{:#x?}", header);
+    kdebug!("_start(): boot header:\n{:#x?}", header);
     // Initialize the memory management (paging).
     if let Err(errno) = init_mm(header) {
         panic!(
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
     }
 
     let header = ApHeader::from_raw(ap_header);
-    kinfo!("_start_ap(): reading header: {:#x?}", header);
+    kdebug!("_start_ap(): reading header: {:#x?}", header);
 
     // Setup interrupt and related data structures.
     if let Err(errno) = init_interrupt_all() {

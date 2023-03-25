@@ -10,7 +10,10 @@ pub mod callback;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use bitflags::bitflags;
 use core::{future::Future, ops::Range, pin::Pin};
-use x86_64::{structures::paging::Page, VirtAddr};
+use x86_64::{
+    structures::paging::{Page, Size4KiB},
+    VirtAddr,
+};
 
 use crate::{
     arch::{
@@ -22,6 +25,7 @@ use crate::{
     memory::{is_page_aligned, page_frame_number, page_mask},
     process::thread::{Thread, CURRENT_THREAD_PER_CPU},
     sync::mutex::SpinLockNoInterrupt as Mutex,
+    utils::ptr::Ptr,
 };
 
 use callback::ArenaCallback;
@@ -148,8 +152,9 @@ impl Arena {
             kwarn!("arena size is not 4KB aligned.");
         }
 
-        for mem in self.range.clone().step_by(PAGE_SIZE) {
-            let page = page!(mem);
+        for page in
+            Page::<Size4KiB>::range_inclusive(page!(self.range.start), page!(self.range.end - 1))
+        {
             // Invoke callback and let it do something for us.
             self.callback
                 .map(page_table, page.start_address(), &self.flags);
@@ -191,9 +196,12 @@ impl Arena {
     /// Checks whether a read request is valid, i.e., the given address + size should
     /// not exceed `self.range`.
     ///
-    /// Returns non-zero value to indicate how many bytes can be read.
-    /// Returns `Errno::ENOMEM` to indicate memory is not sufficient for page-allocation.
-    pub fn check_read<T>(&self, ptr: *const T, size: usize) -> KResult<usize> {
+    /// - Returns non-zero value to indicate how many bytes can be read.
+    /// - Returns `Errno::ENOMEM` to indicate memory is not sufficient for page-allocation.
+    pub fn check_read<T>(&self, ptr: *const T, size: usize) -> KResult<usize>
+    where
+        T: Sized + 'static,
+    {
         let arena_start = self.range.start;
         let arena_end = self.range.end;
 
@@ -218,7 +226,10 @@ impl Arena {
     /// Returns non-zero value to indicate how many bytes are written.
     /// Returns `Errno::EINVAL` to indicate an invalid operation.
     /// Returns `Errno::EPERM` to indicate a non-writable memory address.
-    pub fn check_write<T>(&self, ptr: *mut T, size: usize) -> KResult<usize> {
+    pub fn check_write<T>(&self, ptr: *mut T, size: usize) -> KResult<usize>
+    where
+        T: Sized + 'static,
+    {
         if !self.flags.writable {
             kdebug!(
                 "checked_write(): error writing {:#x} with size {:#x}",
@@ -256,6 +267,46 @@ where
                 P::new()
             },
         }
+    }
+
+    /// Checks whether a read request is valid, i.e., the given address + size should
+    /// not exceed `self.range`. If the pointer is valid, we convert it into a slice.
+    pub fn check_read_array<T>(&self, ptr: &Ptr<T>, size: usize) -> KResult<&'static [T]>
+    where
+        T: Sized + 'static,
+    {
+        let mut valid_size = 0;
+        let ptr = ptr.as_ptr();
+
+        for arena in self.arena.iter() {
+            valid_size += arena.check_read(ptr, size).unwrap_or(0);
+
+            if valid_size == core::mem::size_of::<T>() * size {
+                return unsafe { Ok(core::slice::from_raw_parts(ptr, size)) };
+            }
+        }
+
+        Err(Errno::EINVAL)
+    }
+
+    /// Checks whether a read request is valid, i.e., the given address + size should
+    /// not exceed `self.range`. If the pointer is valid, we convert it into a slice.
+    pub fn check_write_array<T>(&self, ptr: &Ptr<T>, size: usize) -> KResult<&'static mut [T]>
+    where
+        T: Sized + 'static,
+    {
+        let mut valid_size = 0;
+        let ptr = ptr.as_mut_ptr();
+
+        for arena in self.arena.iter() {
+            valid_size += arena.check_write(ptr, size).unwrap_or(0);
+
+            if valid_size == core::mem::size_of::<T>() * size {
+                return unsafe { Ok(core::slice::from_raw_parts_mut(ptr, size)) };
+            }
+        }
+
+        Err(Errno::EINVAL)
     }
 
     /// Executes function `f` with `page_table`.
@@ -356,7 +407,7 @@ where
 
     /// Extends this memory space.
     pub fn add(&mut self, other: Arena) {
-        kinfo!("add(): adding {:#x?} to vm...", other.range);
+        kinfo!("add(): adding {:#x?} to vm...", other);
 
         let start_addr = page_frame_number(other.range.start);
         let end_addr = page_frame_number(other.range.end + PAGE_SIZE as u64);

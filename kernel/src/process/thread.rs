@@ -144,7 +144,7 @@ impl Thread {
         auxv: BTreeMap<u8, usize>,
     ) -> KResult<usize> {
         let user_stack_bottom = USER_STACK_START;
-        let user_stack_top = USER_STACK_START + USER_STACK_SIZE;
+        let mut user_stack_top = USER_STACK_START + USER_STACK_SIZE;
 
         // Reserve 4 pages for init info.
         // This is because the execution of the ELF file must requrie argc, argc, envp things.
@@ -170,7 +170,7 @@ impl Thread {
 
         unsafe {
             vm.with(|| {
-                InitInfo { args, envs, auxv }.push_at(user_stack_top as _);
+                user_stack_top = InitInfo { args, envs, auxv }.push_at(user_stack_top as _) as _;
             });
         }
         Ok(user_stack_top)
@@ -231,6 +231,7 @@ impl Thread {
                     fp_state: Box::new(FpState::new()),
                 }),
                 sigaltstack: self.inner.lock().sigaltstack.clone(),
+                clear_child_td : self.inner.lock().clear_child_td,
             })),
             vm,
         }
@@ -324,6 +325,7 @@ impl Thread {
                     fp_state: Box::new(FpState::new()),
                 }),
                 sigaltstack: SigStack::default(),
+                clear_child_td: 0, // NULL by default.
             })),
             vm,
         };
@@ -344,6 +346,8 @@ pub struct ThreadInner {
     pub thread_context: Option<ThreadContext>,
     /// The signal alternative stack.
     pub sigaltstack: SigStack,
+    /// The clear_child_td thing. See <https://man7.org/linux/man-pages/man2/set_tid_address.2.html>
+    pub clear_child_td: u64,
 }
 
 /// A structure representing the context of a thread.

@@ -9,8 +9,8 @@ use x86_64::instructions::port::Port;
 use crate::{
     drivers::{block::init_ahci, PCI_DRIVERS},
     error::{Errno, KResult},
-    function, kinfo,
-    memory::phys_to_virt, kdebug,
+    function, kdebug, kinfo,
+    memory::phys_to_virt,
 };
 
 pub const PCI_COMMAND: u16 = 0x04;
@@ -58,7 +58,7 @@ pub fn init_pci() -> KResult<()> {
     let devices_connected = unsafe { pci::scan_bus(&Ops, CSpaceAccessMethod::IO) };
 
     for device in devices_connected.into_iter() {
-        kinfo!(
+        kdebug!(
             "init_pci(): {:02x}:{:02x}.{} {:#x} {:#x} ({} {}) irq: {}:{:?}",
             device.loc.bus,
             device.loc.device,
@@ -83,7 +83,7 @@ fn init_device(device: &PCIDevice) -> KResult<()> {
         // Mass storage class
         // SATA subclass
         if let Some(BAR::Memory(addr, len, _, _)) = device.bars[5] {
-            kinfo!(
+            kdebug!(
                 "init_device(): Found AHCI dev {:?} BAR5 {:x?}",
                 device,
                 addr

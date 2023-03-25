@@ -106,7 +106,7 @@ impl Process {
         self.opened_files.get_mut(&fd).ok_or(Errno::EBADF)
     }
 
-    fn add_file(&mut self, file: FileObject) -> KResult<u64> {
+    pub fn add_file(&mut self, file: FileObject) -> KResult<u64> {
         let fd = self.get_free_fd()?;
         self.opened_files.insert(fd, file);
         Ok(fd)
@@ -165,6 +165,12 @@ impl Process {
                 .map_err(fserror_to_kerror);
         }
         todo!()
+    }
+
+    pub fn remove_file(&mut self, fd: u64) -> KResult<()> {
+        self.opened_files.remove(&fd).ok_or(Errno::EBADF)?;
+
+        Ok(())
     }
 
     pub fn read_inode(&self, path: &str) -> KResult<Arc<dyn INode>> {

@@ -1,5 +1,14 @@
 //! A wrapper for raw pointer.
 
+use core::ffi::CStr;
+
+use alloc::string::{String, ToString};
+
+use crate::{
+    error::KResult,
+    memory::{copy_from_user, copy_to_user},
+};
+
 /// A workaround for sending and syncing raw pointers between different threads because compile rejects sending something
 /// like `*const c_void` to another thread, although, in fact, it is safe to do so.
 ///
@@ -80,7 +89,44 @@ impl<T> Ptr<T> {
         }
     }
 
-    pub fn as_ptr(&self) -> *mut T {
+    /// Reads from this pointer. If the pointer is invalid, an error will be reported.
+    pub unsafe fn read(&self) -> KResult<T> {
+        copy_from_user(self.ptr)
+    }
+
+    /// Writes to thie pointer.
+    pub unsafe fn write(&self, data: T) -> KResult<()> {
+        copy_to_user(&data as *const T, self.ptr)
+    }
+
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr as _
+    }
+
+    pub fn as_mut_ptr(&self) -> *mut T {
         self.ptr
+    }
+}
+
+impl ToString for Ptr<u8> {
+    /// Implements the `to_string` method for a pointer that points to a byte array. Note however, that this function
+    /// assumes the pointer points to a canonical C-char array that ends with a null terminator `\0`.
+    ///
+    /// This function returns an empty string if the pointer is invalid.
+    ///
+    /// # Examples
+    ///
+    ///```
+    /// let bytes = [0x41, 0x41, 0x41, 0x41, 0x0, 0x0, 0x0];
+    /// let ptr = Ptr::<u8>::new_from_const(bytes.as_ptr());
+    /// println!("{}", ptr.to_string());
+    ///```
+    fn to_string(&self) -> String {
+        unsafe {
+            CStr::from_ptr(self.ptr as _)
+                .to_str()
+                .unwrap_or_default()
+                .to_string()
+        }
     }
 }

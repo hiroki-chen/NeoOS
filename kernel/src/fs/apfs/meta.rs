@@ -1691,3 +1691,8 @@ pub fn get_timespec(time: u64) -> Timespec {
         nsec: duration.subsec_nanos() as _,
     }
 }
+
+#[inline]
+pub fn get_timestamp(time: Timespec) -> Duration {
+    Duration::new(time.sec as u64, time.nsec as u32)
+}

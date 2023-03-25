@@ -77,7 +77,7 @@ pub fn init_acpi(header: &Header) -> KResult<()> {
     // Check IoAPIC information.
     if let Ok(platform_info) = PlatformInfo::new(&table) {
         kinfo!("init_acpi(): showing platform information!");
-        kinfo!("Interrupt model: {:#x?}", platform_info.interrupt_model);
+        kdebug!("Interrupt model: {:#x?}", platform_info.interrupt_model);
 
         // Set the BSP.
         BSP_ID.call_once(|| {

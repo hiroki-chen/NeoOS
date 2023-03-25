@@ -14,7 +14,7 @@ use rcore_fs::vfs::{make_rdev, FileType, FsError, INode, Metadata, PollStatus, T
 use spin::RwLock;
 
 use crate::{
-    function, kerror, print,
+    function, kerror, kinfo, print,
     process::{
         event::{Event, EventBus},
         search_by_group_id,
@@ -25,7 +25,10 @@ use crate::{
 
 lazy_static! {
     pub static ref TTY: Arc<TtyInode> = Arc::new(TtyInode::new());
+    static ref WINSIZE: RwLock<Winsize> = RwLock::new(Winsize::default());
 }
+
+const TIOCGWINSZ: u32 = 0x5413;
 
 // c_lflag flag constants.
 
@@ -248,7 +251,19 @@ impl INode for TtyInode {
     }
 
     fn io_control(&self, cmd: u32, data: usize) -> rcore_fs::vfs::Result<usize> {
-        unimplemented!()
+        kinfo!("io_control: {:#x}, data: {:#x}", cmd, data);
+
+        match cmd {
+            TIOCGWINSZ => {
+                let ptr = data as *mut Winsize;
+                unsafe {
+                    ptr.write(WINSIZE.read().clone());
+                }
+
+                Ok(0)
+            }
+            _ => Err(FsError::IOCTLError), // No such command.
+        }
     }
 
     fn write_at(&self, offset: usize, buf: &[u8]) -> rcore_fs::vfs::Result<usize> {
@@ -288,6 +303,10 @@ impl INode for TtyInode {
         })
     }
 
+    fn set_metadata(&self, _metadata: &Metadata) -> rcore_fs::vfs::Result<()> {
+        Ok(())
+    }
+
     /// Polls something
     fn async_poll<'ctx>(
         &'ctx self,
@@ -312,6 +331,26 @@ pub struct Termios {
     pub c_cc: [u8; 19], /* special characters */
     pub c_ispeed: u32,  /* input speed */
     pub c_ospeed: u32,  /* output speed */
+}
+
+#[derive(Clone, Debug)]
+#[repr(C, align(8))]
+struct Winsize {
+    pub ws_row: u16,
+    pub ws_col: u16,
+    pub ws_xpixel: u16,
+    pub ws_ypixel: u16,
+}
+
+impl Default for Winsize {
+    fn default() -> Self {
+        Self {
+            ws_row: 400,
+            ws_col: 200,
+            ws_xpixel: 100,
+            ws_ypixel: 100,
+        }
+    }
 }
 
 impl Termios {

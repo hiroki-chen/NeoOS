@@ -109,10 +109,14 @@ where
         // Destination virtual memory region.
         let dst = page_table.get_page_slice_mut(addr)?;
         // Prepare source buffer.
-        let file_offset = addr + self.file_start - self.mem_start;
+        let file_offset = addr - self.mem_start + self.file_start; // Memory offset + file base.
+
         let read_size = (self.file_end as isize - file_offset.as_u64() as isize)
             .min(PAGE_SIZE as isize)
-            .max(0) as usize;
+            // If the read_size becomes zero, it usually happens when the file size is smaller than the memory
+            // size for some sectiosn like .bss or .data.
+            .max((self.file_end - self.file_start) as _) as usize;
+
         let read_size = self
             .file
             .read_at(file_offset.as_u64() as usize, &mut dst[..read_size])?;
@@ -192,9 +196,10 @@ where
                 true => return true,
                 false => {
                     kerror!(
-                        "entry exists but access type violation was found. Access type: {:#x?}; entry: {:#x?}",
+                        "entry exists but access type violation was found. Access type: {:#x?}; entry: {:#x?}; fault address is {:#x}",
                         access_type,
                         entry,
+                        addr,
                     );
                     return false;
                 }

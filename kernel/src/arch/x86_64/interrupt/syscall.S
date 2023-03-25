@@ -16,7 +16,7 @@
 //  * r9   arg5
 __syscall:
   // We first check if the syscall is valid.
-  cmp rax, 0x80
+  cmp rax, 0x150
   jge syscall_end
 
 syscall_normal:

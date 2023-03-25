@@ -4,18 +4,24 @@ use alloc::sync::Arc;
 
 use crate::{
     arch::interrupt::{SYSCALL, SYSCALL_REGS_NUM},
-    error::KResult,
+    error::{Errno, KResult},
     process::thread::{Thread, ThreadContext},
+    syscall::fs::{sys_ioctl, sys_writev},
 };
 
 use self::{
     fs::{sys_read, sys_write},
+    id::{sys_getegid, sys_geteuid, sys_getgid, sys_getuid},
+    others::sys_arch_prctl,
+    process::{sys_exit, sys_exit_group, sys_set_tid_address},
     signal::{sys_rt_sigaction, sys_rt_sigreturn},
 };
 
+mod fs;
+mod id;
+mod others;
+mod process;
 mod signal;
-
-pub mod fs;
 
 // System call numbers for x86_64.
 
@@ -391,12 +397,26 @@ async fn do_handle_syscall(
     match syscall_number {
         SYS_READ => sys_read(thread, ctx, syscall_registers).await,
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
+        SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
+        SYS_IOCTL => sys_ioctl(thread, ctx, syscall_registers),
+
         SYS_RT_SIGACTION => sys_rt_sigaction(thread, ctx, syscall_registers),
         SYS_RT_SIGRETURN => sys_rt_sigreturn(thread, ctx, syscall_registers),
 
-        _ => panic!(
-            "do_handle_syscall(): unrecognized syscall number {:#x}",
-            syscall_number
-        ),
+        SYS_GETEUID => sys_geteuid(thread, ctx, syscall_registers),
+        SYS_GETUID => sys_getuid(thread, ctx, syscall_registers),
+        SYS_GETEGID => sys_getegid(thread, ctx, syscall_registers),
+        SYS_GETGID => sys_getgid(thread, ctx, syscall_registers),
+
+        SYS_SET_TID_ADDRESS => sys_set_tid_address(thread, ctx, syscall_registers),
+        SYS_EXIT => sys_exit(thread, ctx, syscall_registers),
+        SYS_EXIT_GROUP => sys_exit_group(thread, ctx, syscall_registers),
+
+        SYS_ARCH_PRCTL => sys_arch_prctl(thread, ctx, syscall_registers),
+
+        _ => {
+            kerror!("unrecognized syscall number {:#x}", syscall_number);
+            Err(Errno::EINVAL)
+        }
     }
 }

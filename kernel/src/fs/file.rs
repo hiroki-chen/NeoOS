@@ -17,14 +17,17 @@ use crate::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use super::apfs::meta::get_timespec;
+
 bitflags! {
-      pub struct FileOpenOption: u8{
-          const READ = 0b0001;
-          const WRITE = 0b0010;
-          const APPEND = 0b0100;
-          // async?
-          const NON_BLOCKING = 0b1000;
-      }
+        #[derive(Default)]
+        pub struct FileOpenOption: u8{
+            const READ = 0b0001;
+            const WRITE = 0b0010;
+            const APPEND = 0b0100;
+            // async?
+            const NON_BLOCKING = 0b1000;
+        }
 }
 
 /// Minimum `file-like` trait.
@@ -154,6 +157,14 @@ impl File {
         }
 
         let file_offset = file_option.offset as usize + offset;
+        // Get the timestamp.
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?;
+        let mut metadata = self.inode.metadata().map_err(fserror_to_kerror)?;
+        metadata.atime = get_timespec(timestamp.as_nanos() as _);
+        self.inode
+            .set_metadata(&metadata)
+            .map_err(fserror_to_kerror)?;
+
         if !file_option
             .open_option
             .contains(FileOpenOption::NON_BLOCKING)
@@ -218,17 +229,21 @@ impl File {
         {
             return Err(Errno::EBADF);
         }
+
         let len = self
             .inode
             .write_at(offset, buf)
             .map_err(fserror_to_kerror)?;
 
         // Modify the time.
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        // self.inode.set_mtime(timestamp)?;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?;
+        let mut metadata = self.inode.metadata().map_err(fserror_to_kerror)?;
+        metadata.mtime = get_timespec(timestamp.as_nanos() as _);
+
+        self.inode
+            .set_metadata(&metadata)
+            .map_err(fserror_to_kerror)?;
+
         Ok(len)
     }
 

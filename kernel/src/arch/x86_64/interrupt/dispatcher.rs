@@ -170,7 +170,7 @@ fn handle_ipi(ipi: u8) -> bool {
 /// Simply dumps the tf.
 #[inline(always)]
 fn dump_all(tf: &mut TrapFrame) {
-    kinfo!("dump_all(): dumped tf (Not TensorFlow :)) as\n{:#x?}", tf);
+    kdebug!("dump_all(): dumped tf (Not TensorFlow :)) as\n{:#x?}", tf);
 }
 
 /// Handles page fault.
@@ -197,6 +197,7 @@ fn page_fault(tf: &mut TrapFrame) {
     let mut vm = thread.vm.lock();
     if !vm.handle_page_fault(pf_addr) {
         kerror!("page_fault(): this thread cannot handle page fault!");
+        kerror!("dumped context as {:#x?}", tf);
         arch::cpu::die();
     }
 }

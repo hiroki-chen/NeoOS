@@ -13,6 +13,7 @@
 #![allow(dead_code)]
 #![feature(atomic_from_mut)]
 #![feature(naked_functions)]
+#![feature(c_size_t)]
 #![feature(allocator_api)]
 #![feature(core_intrinsics)]
 #![feature(rustc_attrs)]
@@ -84,16 +85,6 @@ extern "C" {
 /// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
 pub fn kmain() -> ! {
     if cpu_id() == *BSP_ID.get().unwrap() as usize {
-        // Test IPI.
-        crate::arch::interrupt::ipi::send_ipi(
-            || {
-                kinfo!("Hello from the other side ^^");
-            },
-            None,
-            true,
-            crate::arch::interrupt::ipi::IpiType::Others,
-        );
-
         crate::process::thread::debug_threading();
 
         // Test.

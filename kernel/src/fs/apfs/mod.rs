@@ -29,11 +29,11 @@ use crate::{
 };
 
 use self::meta::{
-    get_timespec, ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical, CheckpointMapPhysical,
-    DrecFlags, FsMap, JDrecHashedKey, JDrecVal, JFileExtentKey, JFileExtentVal, JInodeKey,
-    JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey, ObjectMapPhysical, ObjectPhysical,
-    ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC, APFS_TYPE_FILE_EXTENT, APFS_TYPE_INODE,
-    J_DREC_LEN_MASK, OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID,
+    get_timespec, get_timestamp, ApfsSuperblock, BTreeNodeFlags, BTreeNodePhysical,
+    CheckpointMapPhysical, DrecFlags, FsMap, JDrecHashedKey, JDrecVal, JFileExtentKey,
+    JFileExtentVal, JInodeKey, JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey,
+    ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC,
+    APFS_TYPE_FILE_EXTENT, APFS_TYPE_INODE, J_DREC_LEN_MASK, OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID,
 };
 
 use rcore_fs::{
@@ -632,11 +632,6 @@ impl AppleFileSystemInode {
             flags: 0x4,
         };
 
-        kinfo!(
-            "parent: {:#x?} : {:#x?}",
-            parent_jdrec_hashed_key,
-            parent_jdrec_val
-        );
         let mut lock = self.volumn.fs_map.write();
         lock.dir_record_map
             .insert(current_jdrec_hashed_key, current_jdrec_val);
@@ -709,6 +704,21 @@ impl Debug for AppleFileSystemInode {
 }
 
 impl INode for AppleFileSystemInode {
+    fn set_metadata(&self, metadata: &Metadata) -> rcore_fs::vfs::Result<()> {
+        // Mainly update the time?
+        let mut inode_inner = self.inode_inner.write();
+        inode_inner.mod_time = get_timestamp(metadata.mtime).as_nanos() as _;
+        inode_inner.access_time = get_timestamp(metadata.atime).as_nanos() as _;
+        inode_inner.change_time = get_timestamp(metadata.ctime).as_nanos() as _;
+
+        Ok(())
+    }
+
+    fn sync_all(&self) -> rcore_fs::vfs::Result<()> {
+        // TODO: need to synchronize the metadata as well as the content of the file.
+        Ok(())
+    }
+
     fn move_(
         &self,
         old_name: &str,
