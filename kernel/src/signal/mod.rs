@@ -7,9 +7,9 @@
 //! A signal is an asynchronous notification sent to a process or to a specific thread within the same process to
 //! notify it of an event.
 
-use core::mem::MaybeUninit;
+use core::{fmt::Debug, mem::MaybeUninit};
 
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use bitflags::bitflags;
 
 use crate::{
@@ -180,6 +180,16 @@ pub struct SigInfo {
     pub sifields: SiFields,
 }
 
+impl Debug for SigInfo {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SigInfo")
+            .field("signo", &self.signo)
+            .field("code", &self.code)
+            .field("errno", &self.errno)
+            .finish()
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 #[repr(C)]
 pub struct SigAction {
@@ -328,24 +338,25 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
 
     // Iterate over the signal queue. Linux 2.6 do_signal() uses a loop.
     // If no more pending signals, the kernel returns to the user process.
-    while let Some((idx, info)) =
-        process
-            .sig_queue
-            .iter()
-            .enumerate()
-            .find_map(|(idx, (info, dest))| {
-                if *dest == -1 || *dest as u64 == thread.id {
-                    let signal = unsafe { core::mem::transmute::<usize, Signal>(info.signo) };
-                    if !thread.inner.lock().sigmask.contains(signal) {
-                        None
-                    } else {
-                        Some((idx, info.clone()))
-                    }
-                } else {
+    let queue = process
+        .sig_queue
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, (info, dest))| {
+            if *dest == -1 || *dest as u64 == thread.id {
+                let signal = unsafe { core::mem::transmute::<usize, Signal>(info.signo) };
+                if thread.inner.lock().sigmask.contains(signal) {
                     None
+                } else {
+                    Some((idx, info.clone()))
                 }
-            })
-    {
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    for (idx, info) in queue.into_iter() {
         let signal = unsafe { core::mem::transmute::<usize, Signal>(info.signo) };
         process.sig_queue.remove(idx);
         process.pending_sigset.remove_signal(signal);
@@ -363,7 +374,29 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
             SIG_DFL => {
                 // FIXME: NOT IMPLEMENTED FOR ALL.
                 match signal {
-                    Signal::SIGHUP | Signal::SIGTERM | Signal::SIGINT | Signal::SIGABRT => {
+                    Signal::SIGHUP
+                    | Signal::SIGTERM
+                    | Signal::SIGINT
+                    | Signal::SIGABRT
+                    | Signal::SIGKILL
+                    | Signal::SIGSEGV => {
+                        // May be too simple?
+                        if signal == Signal::SIGKILL {
+                            println!(
+                                "[{}]\t{} killed\t{}",
+                                idx + 1,
+                                thread.id,
+                                thread.parent.lock().exec_path
+                            );
+                        }
+                        if signal == Signal::SIGSEGV {
+                            println!(
+                                "[{}]\t{} segmentation fault (core dumped)\t{}",
+                                idx + 1,
+                                thread.id,
+                                thread.parent.lock().exec_path
+                            );
+                        }
                         // quit the program.
                         process.exit(make_unix_error_code!(signal));
                         return true;

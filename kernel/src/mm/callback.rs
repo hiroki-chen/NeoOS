@@ -112,11 +112,12 @@ where
         let file_offset = addr - self.mem_start + self.file_start; // Memory offset + file base.
 
         let read_size = (self.file_end as isize - file_offset.as_u64() as isize)
-            .min(PAGE_SIZE as isize)
             // If the read_size becomes zero, it usually happens when the file size is smaller than the memory
             // size for some sectiosn like .bss or .data.
-            .max((self.file_end - self.file_start) as _) as usize;
+            .max((self.file_end - self.file_start) as _)
+            .min(PAGE_SIZE as isize) as usize;
 
+        // TODO: FIXME.
         let read_size = self
             .file
             .read_at(file_offset.as_u64() as usize, &mut dst[..read_size])?;

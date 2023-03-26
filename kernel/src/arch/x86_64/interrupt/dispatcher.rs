@@ -18,6 +18,7 @@ use crate::{
     },
     drivers::IRQ_MANAGER,
     process::thread::{current, Thread, ThreadContext},
+    signal::{send_signal, SiFields, SigInfo, Signal},
     syscall::handle_syscall,
 };
 
@@ -65,6 +66,7 @@ pub async fn trap_dispatcher_user(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
     should_yield: &mut bool,
+    exited: &mut bool,
 ) -> bool {
     let tf = ctx.get_trapno();
 
@@ -76,29 +78,51 @@ pub async fn trap_dispatcher_user(
 
         INVALID_OPCODE_INTERRUPT => {
             kerror!("spawn(): invalid opcode.");
-            false
+            true
         }
         STACK_SEGMENT_FAULT_INTERRUPT => {
-            kerror!("spawn(): cannot explicitly return from user process!");
-            false
+            // Report SEGSEV.
+            send_signal(
+                thread.parent.clone(),
+                -1,
+                SigInfo {
+                    signo: Signal::SIGSEGV as _,
+                    code: 0,
+                    errno: 0,
+                    sifields: SiFields::default(),
+                },
+            );
+            true
         }
         GENERAL_PROTECTION_INTERRUPT => {
             kerror!("spawn(): illegal instruction.");
-            false
+            true
         }
         PAGE_FAULT_INTERRUPT => {
             let cr2 = get_pf_addr();
 
             if !handle_page_fault(cr2, ctx.get_user_context().errno) {
                 // Report SEGSEV.
-                kerror!("spawn(): Segmentation fault.");
-                false
+                send_signal(
+                    thread.parent.clone(),
+                    -1,
+                    SigInfo {
+                        signo: Signal::SIGSEGV as _,
+                        code: 0,
+                        errno: 0,
+                        sifields: SiFields::default(),
+                    },
+                );
+                true
             } else {
                 true
             }
         }
         IRQ_MIN..IRQ_MAX => handle_irq(tf as _, true, Some(should_yield)),
-        SYSCALL => handle_syscall(thread, ctx).await,
+        SYSCALL => {
+            *exited = handle_syscall(thread, ctx).await;
+            true
+        }
         tf => {
             kerror!("spawn(): not supported {:#x}.", tf);
             false

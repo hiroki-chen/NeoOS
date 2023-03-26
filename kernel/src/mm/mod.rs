@@ -269,6 +269,12 @@ where
         }
     }
 
+    /// Removes the memory region from the process manager (used to, e.g., map another address), if the address is valid;
+    /// otherwise, we return [`Errno::EINVAL`]. This function returns the old arena on succcess.
+    pub fn remove_addr(&self, addr: u64, len: usize) -> KResult<Arena> {
+        todo!()
+    }
+
     /// Checks whether a read request is valid, i.e., the given address + size should
     /// not exceed `self.range`. If the pointer is valid, we convert it into a slice.
     pub fn check_read_array<T>(&self, ptr: &Ptr<T>, size: usize) -> KResult<&'static [T]>

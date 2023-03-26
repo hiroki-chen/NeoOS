@@ -2,15 +2,23 @@
 //!
 //! Note however, that any operations that cause filesystem write is dangerous if you are working with apfs.
 
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 use bitflags::bitflags;
 use rcore_fs::vfs::FsError;
 
 use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, io::IoVec},
     error::{fserror_to_kerror, Errno, KResult},
-    fs::file::{File, FileObject, FileOpenOption, FileType},
+    fs::{
+        file::{File, FileObject, FileOpenOption, FileType},
+        AT_FDCWD,
+    },
     process::thread::{Thread, ThreadContext},
+    sys::{Stat, AT_SYMLINK_NOFOLLOW},
     utils::{ptr::Ptr, read_user_string, split_path},
 };
 
@@ -231,4 +239,90 @@ pub fn sys_writev(
     let len = file.write(&io_vectors).unwrap();
 
     Ok(len)
+}
+
+pub fn sys_getcwd(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let buf = syscall_registers[0];
+    let size = syscall_registers[1] as usize;
+
+    let proc = thread.parent.lock();
+    let cwd = proc.cwd.as_str();
+
+    // If the length of the absolute pathname of the current working
+    // directory, including the terminating null byte, exceeds size
+    // bytes, NULL is returned, and errno is set to ERANGE; an
+    // application should check for this error, and allocate a larger
+    // buffer if necessary.
+    if cwd.len() + 1 > size {
+        // Insufficient buffer.
+        return Err(Errno::ERANGE);
+    }
+
+    // Check the pointer before use.
+    let buf_ptr = Ptr::new(buf as *mut u8);
+    thread
+        .vm
+        .lock()
+        .check_write_array(&buf_ptr, cwd.len() + 1)?;
+
+    unsafe {
+        buf_ptr.write_c_string(cwd);
+    }
+
+    Ok(0)
+}
+
+/// These functions return information about a file, in the buffer pointed to by `statbuf`. No permissions are required
+/// on the file itself.
+pub fn sys_newfstatat(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let dfd = syscall_registers[0];
+    let filename = syscall_registers[1];
+    let statbuf = syscall_registers[2];
+    let flag = syscall_registers[3];
+
+    let filename_ptr = Ptr::new(filename as *mut u8);
+    let filename = filename_ptr.to_string();
+
+    do_stat(thread, dfd, filename, statbuf as *mut Stat, flag)
+}
+
+pub fn sys_stat(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let filename = syscall_registers[0];
+    let statbuf = syscall_registers[1];
+
+    let filename_ptr = Ptr::new(filename as *mut u8);
+    let filename = filename_ptr.to_string();
+
+    do_stat(thread, AT_FDCWD as _, filename, statbuf as *mut Stat, 0)
+}
+
+fn do_stat(
+    thread: &Arc<Thread>,
+    dfd: u64,
+    filename: String,
+    statbuf: *mut Stat,
+    flag: u64,
+) -> KResult<usize> {
+    let follow_symlink = flag & AT_SYMLINK_NOFOLLOW != 0;
+    let proc = thread.parent.lock();
+    let inode = proc.read_inode_at(dfd, &filename, follow_symlink)?;
+    let metadata = inode.metadata().map_err(fserror_to_kerror)?;
+
+    unsafe {
+        statbuf.write(Stat::from_metadata(&metadata));
+    }
+
+    Ok(0)
 }

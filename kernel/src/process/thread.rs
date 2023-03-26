@@ -44,8 +44,9 @@ use crate::{
 
 use super::{event::EventBus, ld::InitInfo, register, scheduler::FIFO_SCHEDULER, Process, Yield};
 
-const DEBUG_THREAD_ID: u64 = 0xdeadbeef;
-const DEBUG_PROC_ID: u64 = 0xbeefdead;
+// For testing. pid_t is a *signed* integer. So we do not want to make it overflow to negative.
+const DEBUG_THREAD_ID: u64 = 0xbeef;
+const DEBUG_PROC_ID: u64 = 0xdead;
 
 /// A naked function that is used to test if ring switch works. If it works, this function would trigger general
 /// protection fault (0xd) indicating that `hlt` is privileged instruction so that the user-level application is
@@ -207,7 +208,7 @@ impl Thread {
             threads: Vec::new(),
             vm: vm.clone(),
             exec_path: lock.exec_path.clone(),
-            pwd: lock.pwd.clone(),
+            cwd: lock.cwd.clone(),
             opened_files: BTreeMap::new(),
             exit_code: 0,
             event_bus: EventBus::new(),
@@ -231,7 +232,7 @@ impl Thread {
                     fp_state: Box::new(FpState::new()),
                 }),
                 sigaltstack: self.inner.lock().sigaltstack.clone(),
-                clear_child_td : self.inner.lock().clear_child_td,
+                clear_child_tid: self.inner.lock().clear_child_tid,
             })),
             vm,
         }
@@ -300,14 +301,14 @@ impl Thread {
         let stdio = init_stdio();
 
         let thread = Thread {
-            id: DEBUG_THREAD_ID,
+            id: DEBUG_PROC_ID,
             parent: Arc::new(Mutex::new(Process {
                 process_id: DEBUG_PROC_ID,
                 process_group_id: DEBUG_PROC_ID,
                 threads: Vec::new(),
                 vm: vm.clone(),
                 exec_path: path.into(),
-                pwd: "/".into(),
+                cwd: "/".into(),
                 opened_files: stdio,
                 exit_code: 0u8,
                 event_bus: EventBus::new(),
@@ -325,7 +326,7 @@ impl Thread {
                     fp_state: Box::new(FpState::new()),
                 }),
                 sigaltstack: SigStack::default(),
-                clear_child_td: 0, // NULL by default.
+                clear_child_tid: 0, // NULL by default.
             })),
             vm,
         };
@@ -347,7 +348,7 @@ pub struct ThreadInner {
     /// The signal alternative stack.
     pub sigaltstack: SigStack,
     /// The clear_child_td thing. See <https://man7.org/linux/man-pages/man2/set_tid_address.2.html>
-    pub clear_child_td: u64,
+    pub clear_child_tid: u64,
 }
 
 /// A structure representing the context of a thread.
@@ -470,7 +471,7 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
             ctx.switch();
 
             // syscall / trap: anyway, a context switch happens here.
-            if !trap_dispatcher_user(&thread, &mut ctx, &mut should_yield).await {
+            if !trap_dispatcher_user(&thread, &mut ctx, &mut should_yield, &mut exited).await {
                 // TODO: Elegantly kill the process and reclaim all the resources it occupies.
                 kerror!(
                     "spawn(): cannot handle context switch. Dumped context is {:#x?}",

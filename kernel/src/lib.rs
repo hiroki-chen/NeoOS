@@ -30,6 +30,7 @@ pub mod drivers;
 pub mod elf;
 pub mod fs;
 pub mod irq;
+pub mod sys;
 
 #[macro_use]
 pub mod error;

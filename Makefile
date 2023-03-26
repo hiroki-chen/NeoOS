@@ -91,7 +91,8 @@ run: kernel hard_disk
 
 clean:
 	@cargo clean
-	@rm -r $(WORK_DIR)
+	@rm -rf $(WORK_DIR)
+	@$(MAKE) -C sample_programs/simple_c clean
 
 $(TEST_IMAGE): $(TEST_KERNEL)
 	gcc $^ -o $@ -no-pie -nostartfiles

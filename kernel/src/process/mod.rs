@@ -69,8 +69,8 @@ pub struct Process {
     pub vm: Arc<Mutex<MemoryManager<KernelPageTable>>>,
     /// Current exeuction path.
     pub exec_path: String,
-    /// Wording directory.
-    pub pwd: String,
+    /// Working directory.
+    pub cwd: String,
     /// Opened files.
     pub opened_files: BTreeMap<u64, FileObject>,
     /// Exit code.
@@ -159,7 +159,7 @@ impl Process {
         };
         if dirfd == AT_FDCWD as _ {
             return ROOT_INODE
-                .lookup(&self.pwd)
+                .lookup(&self.cwd)
                 .map_err(fserror_to_kerror)?
                 .lookup_follow(path, follow_time)
                 .map_err(fserror_to_kerror);
@@ -187,10 +187,10 @@ pub fn register(process: &Arc<Mutex<Process>>, id: u64) {
 pub fn search_by_id(id: u64) -> KResult<Arc<Mutex<Process>>> {
     KERNEL_PROCESS_LIST
         .read()
-        .iter()
-        .find(|item| item.1.lock().process_id == id)
-        .map(|(_, item)| item.clone())
-        .ok_or(Errno::EEXIST)
+        .get(&id)
+        .cloned()
+        // The target process or process group does not exist.
+        .ok_or(Errno::ESRCH)
 }
 
 pub fn search_by_group_id(id: u64) -> Vec<Arc<Mutex<Process>>> {

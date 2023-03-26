@@ -6,6 +6,7 @@ use crate::{
     arch::interrupt::SYSCALL_REGS_NUM,
     error::{Errno, KResult},
     process::thread::{Thread, ThreadContext},
+    sys::Utsname,
     utils::ptr::Ptr,
 };
 
@@ -56,4 +57,23 @@ pub fn sys_arch_prctl(
         }
         _ => Err(Errno::EINVAL),
     }
+}
+
+/// uname() returns system information in the structure pointed to by buf.
+/// The utsname struct is defined in <sys/utsname.h>.
+pub fn sys_uname(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let buf = syscall_registers[0];
+
+    let buf_ptr = Ptr::new(buf as *mut Utsname);
+    thread.vm.lock().check_write_array(&buf_ptr, 1)?;
+
+    unsafe {
+        buf_ptr.write(Utsname::default_uname())?;
+    }
+
+    Ok(0)
 }

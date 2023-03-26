@@ -106,6 +106,20 @@ impl<T> Ptr<T> {
     pub fn as_mut_ptr(&self) -> *mut T {
         self.ptr
     }
+
+    /// Writes a Rust-style string into the buffer pointed by this pointer. Appends a null byte `\0` to the end
+    /// of the target buffer area.
+    ///
+    /// # Safety
+    ///
+    /// Similar to other pointer-manipulating functions, this function is unsafe because there is no guarantee that
+    /// the buffer pointed by this pointer is valid. Any incautios use of the function can cause undefined behavior.
+    /// It is recommended that the caller always check the pointer before use.
+    pub unsafe fn write_c_string(&self, src: &str) {
+        (self.ptr as *mut u8).copy_from(src.as_ptr(), src.len());
+        // Write a null byte to the end of the buffer.
+        (self.ptr as *mut u8).add(src.len()).write(0u8);
+    }
 }
 
 impl ToString for Ptr<u8> {

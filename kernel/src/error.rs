@@ -67,7 +67,7 @@ pub type KResult<T> = Result<T, Errno>;
 pub fn error_to_int<T>(result: &KResult<T>) -> i32 {
     match result.as_ref() {
         Ok(_) => 0i32,
-        Err(errno) => -(*errno as i32),
+        Err(errno) => *errno as i32,
     }
 }
 

@@ -2,8 +2,8 @@ SOURCE 	:= main.c
 OUTPUT 	:= test
 OBJDUMP	:= out.S
 
-MUSL_LIB_PATH 	?= /home/chb/.local/musl/lib
-MUSL_INC_PATH	?= /home/chb/.local/musl/include
+MUSL_LIB_PATH 	?= /usr/lib/x86_64-linux-musl
+MUSL_INC_PATH	?= /usr/include/x86_64-linux-musl
 INCLUDE		?= -I$(MUSL_INC_PATH)
 LINK		?= -L$(MUSL_LIB_PATH) \
 			$(MUSL_LIB_PATH)/crt1.o \
@@ -11,7 +11,7 @@ LINK		?= -L$(MUSL_LIB_PATH) \
 			$(MUSL_LIB_PATH)/crtn.o \
 			-lc
 
-CC 		?= $(HOME)/.local/musl/bin/musl-gcc
+CC 		?= musl-gcc
 C_FLAGS 	?= -static -nostdinc -nostdlib -m64
 
 # bug: __fwritex @ 0x4018e5: jmp rax --> rax = 0 --> Instruction fetch!!
@@ -24,4 +24,4 @@ $(OUTPUT): $(SOURCE)
 	@objdump -D $(OUTPUT) -M intel > $(OBJDUMP)
 
 clean:
-	@rm $(OUTPUT) $(OBJDUMP)
+	@rm -rf $(OUTPUT) $(OBJDUMP)

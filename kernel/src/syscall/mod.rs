@@ -1,27 +1,29 @@
 //! Implements system call interfaces and handling routines.
 
-use alloc::sync::Arc;
+use alloc::{collections::BTreeMap, sync::Arc};
+use lazy_static::lazy_static;
+use spin::RwLock;
 
 use crate::{
     arch::interrupt::{SYSCALL, SYSCALL_REGS_NUM},
-    error::{Errno, KResult},
+    error::{error_to_int, Errno, KResult},
     process::thread::{Thread, ThreadContext},
     syscall::fs::{sys_ioctl, sys_writev},
 };
 
-use self::{
-    fs::{sys_read, sys_write},
-    id::{sys_getegid, sys_geteuid, sys_getgid, sys_getuid},
-    others::sys_arch_prctl,
-    process::{sys_exit, sys_exit_group, sys_set_tid_address},
-    signal::{sys_rt_sigaction, sys_rt_sigreturn},
-};
-
 mod fs;
 mod id;
+mod mem;
 mod others;
 mod process;
 mod signal;
+
+pub use fs::*;
+pub use id::*;
+pub use mem::*;
+pub use others::*;
+pub use process::*;
+pub use signal::*;
 
 // System call numbers for x86_64.
 
@@ -349,11 +351,20 @@ pub const SYS_KEXEC_FILE_LOAD: u64 = 320;
 pub const SYS_BPF: u64 = 321;
 pub const SYS_EXECVEAT: u64 = 322;
 
+lazy_static! {
+    /// Records if the process is exited after syscall.
+    pub(crate) static ref PROC_EXITED: RwLock<BTreeMap<u64, bool>> = RwLock::new(BTreeMap::new());
+}
+
 /// Handles the system calls issued by the thread upon the kernel's capture of the running context. Because syscalls can
 /// be interrupted, we do it asynchronously.
 ///
 /// Returns `true` if the system call is correctly handled.
 pub async fn handle_syscall(thread: &Arc<Thread>, ctx: &mut ThreadContext) -> bool {
+    {
+        // If `handle_syscall` is invoked, we can ensure that this thread must be active.
+        PROC_EXITED.write().insert(thread.id, false);
+    }
     // First, we perform a sanity check.
     assert_eq!(
         ctx.get_trapno(),
@@ -381,11 +392,22 @@ pub async fn handle_syscall(thread: &Arc<Thread>, ctx: &mut ThreadContext) -> bo
 
     let ret = match do_handle_syscall(thread, ctx, syscall_number, syscall_registers).await {
         Ok(ret) => ret,
-        Err(_) => return true,
+        error => error_to_int(&error) as usize,
     };
     ctx.get_user_context().regs.rax = ret as _;
 
-    true
+    // If not found, we asusme this process is corrupted and should be exited.
+    let mut map = PROC_EXITED.write();
+    let exited = match map.get(&thread.id).copied().unwrap_or(true) {
+        false => false,
+        true => {
+            // remove this thread.
+            map.remove(&thread.id);
+            true
+        }
+    };
+
+    exited
 }
 
 async fn do_handle_syscall(
@@ -399,7 +421,14 @@ async fn do_handle_syscall(
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
         SYS_IOCTL => sys_ioctl(thread, ctx, syscall_registers),
+        SYS_STAT => sys_stat(thread, ctx, syscall_registers),
+        SYS_NEWFSTATAT => sys_newfstatat(thread, ctx, syscall_registers),
+        SYS_GETCWD => sys_getcwd(thread, ctx, syscall_registers),
 
+        SYS_MMAP => sys_mmap(thread, ctx, syscall_registers),
+        SYS_MUNMAP => sys_munmap(thread, ctx, syscall_registers),
+
+        SYS_KILL => sys_kill(thread, ctx, syscall_registers),
         SYS_RT_SIGACTION => sys_rt_sigaction(thread, ctx, syscall_registers),
         SYS_RT_SIGRETURN => sys_rt_sigreturn(thread, ctx, syscall_registers),
 
@@ -408,6 +437,7 @@ async fn do_handle_syscall(
         SYS_GETEGID => sys_getegid(thread, ctx, syscall_registers),
         SYS_GETGID => sys_getgid(thread, ctx, syscall_registers),
 
+        SYS_GETPID => sys_getpid(thread, ctx, syscall_registers),
         SYS_SET_TID_ADDRESS => sys_set_tid_address(thread, ctx, syscall_registers),
         SYS_EXIT => sys_exit(thread, ctx, syscall_registers),
         SYS_EXIT_GROUP => sys_exit_group(thread, ctx, syscall_registers),

@@ -4,8 +4,11 @@ use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, signal::SigContext},
     error::{Errno, KResult},
     memory::{copy_from_user, copy_to_user},
-    process::thread::{Thread, ThreadContext},
-    signal::{SigAction, SigFrame, SigSet, Signal},
+    process::{
+        search_by_id,
+        thread::{Thread, ThreadContext},
+    },
+    signal::{send_signal, SiFields, SigAction, SigFrame, SigInfo, SigSet, Signal},
 };
 
 const NON_MASKABLE_SIGNALS: &[Signal; 3] = &[Signal::SIGSTOP, Signal::SIGKILL, Signal::SIGABRT];
@@ -114,4 +117,34 @@ pub fn sys_rt_sigreturn(
     // Restore the context and resume it. ThreadContext -> User Context -> Signal Frame
     sig_frame.ucontext.uc_context = SigContext::from_uctx(ctx.get_user_context());
     Ok(ctx.get_user_context().regs.rax as _)
+}
+
+/// The kill() system call can be used to send any signal to any process group or process.
+pub fn sys_kill(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let pid = syscall_registers[0] as i64;
+    let sig = syscall_registers[1];
+    let signal = unsafe { core::mem::transmute::<u64, Signal>(sig) };
+
+    // If pid is positive, then signal sig is sent to the process with
+    // the ID specified by pid; otherwise, broadcast is needed.
+    let killall = !pid.is_positive();
+    let siginfo = SigInfo {
+        signo: sig as _,
+        code: 0,
+        errno: 0,
+        sifields: SiFields::default(),
+    };
+
+    if !killall {
+        let current_process = search_by_id(pid as _)?;
+        send_signal(current_process, -1, siginfo);
+    } else {
+        // Need to extract pid again.
+    }
+
+    Ok(0)
 }
