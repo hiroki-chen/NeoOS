@@ -441,6 +441,7 @@ async fn do_handle_syscall(
         SYS_SET_TID_ADDRESS => sys_set_tid_address(thread, ctx, syscall_registers),
         SYS_EXIT => sys_exit(thread, ctx, syscall_registers),
         SYS_EXIT_GROUP => sys_exit_group(thread, ctx, syscall_registers),
+        SYS_SCHED_YIELD => sys_sched_yield(thread, ctx, syscall_registers),
 
         SYS_ARCH_PRCTL => sys_arch_prctl(thread, ctx, syscall_registers),
 

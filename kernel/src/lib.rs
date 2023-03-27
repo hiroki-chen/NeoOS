@@ -56,14 +56,13 @@ pub mod f64;
 use alloc::string::String;
 use core::panic::PanicInfo;
 use lazy_static::lazy_static;
-use process::scheduler;
+use process::scheduler::FIFO_SCHEDULER;
 // We do not want OOM to cause kernel crash.
 use buddy_system_allocator::LockedHeapWithRescue;
 
 use crate::{
     arch::cpu::{cpu_id, BSP_ID},
     debug::{Frame, UNWIND_DEPTH},
-    fs::ROOT_INODE,
     logging::print_banner,
 };
 
@@ -85,20 +84,18 @@ extern "C" {
 
 /// Kernel main. It mainly performs CPU idle to wait for scheduling, if any.
 pub fn kmain() -> ! {
-    if cpu_id() == *BSP_ID.get().unwrap() as usize {
-        crate::process::thread::debug_threading();
-
-        // Test.
-        let apfs = ROOT_INODE.clone();
-        let foo = apfs.lookup("/bin").unwrap();
-
+    if cpu_id() == BSP_ID.get().copied().unwrap() as usize {
         kinfo!("kmain(): kernel main procedure started.");
         print_banner();
     }
 
+    cpu_idle();
+}
+
+pub fn cpu_idle() -> ! {
     loop {
-        scheduler::FIFO_SCHEDULER.start_schedule();
-        crate::arch::interrupt::wait();
+        FIFO_SCHEDULER.start_schedule();
+        x86_64::instructions::interrupts::enable_and_hlt();
     }
 }
 

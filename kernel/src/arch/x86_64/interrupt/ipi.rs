@@ -15,7 +15,7 @@ use log::debug;
 use crate::arch::{
     acpi::AP_STARTUP,
     apic::X2Apic,
-    cpu::{CPUS, CPU_NUM},
+    cpu::{cpu_id, CPUS, CPU_NUM},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
@@ -25,7 +25,7 @@ pub enum IpiType {
     TlbFlush = 0x40,
     /// Indicates that the target CPU(s) should be woken up.
     WakeUp = 0x41,
-    /// Other Ipi types. This carries a callback for te target CPU to be exeucted.
+    /// Other Ipi types. This carries a callback for the target CPU to be exeucted.
     Others = 0x42,
 }
 
@@ -76,6 +76,7 @@ pub fn send_ipi<T>(cb: T, target: Option<u8>, sync: bool, ipi_type: IpiType)
 where
     T: Fn() + Send + Sync + 'static,
 {
+    let this_cpu = cpu_id();
     let lapic = X2Apic;
     let cb = Arc::new(cb);
     let finished = Arc::new(AtomicUsize::new(0x0));
@@ -87,7 +88,6 @@ where
 
     match target {
         Some(target) => unsafe {
-            kinfo!("send_ipi(): sending IPI to target {:#x}", target);
             let finished_cloned = finished.clone();
 
             if ipi_type == IpiType::Others {
@@ -106,7 +106,15 @@ where
         },
         None => {
             // Invoke all!
-            for cpu in unsafe { CPUS.iter().filter(|cpu| cpu.get().is_some()) } {
+            for cpu in unsafe {
+                CPUS.iter().filter(|cpu| {
+                    if let Some(cpu) = cpu.get() {
+                        cpu.cpu_id != this_cpu
+                    } else {
+                        false
+                    }
+                })
+            } {
                 let cpu = cpu.get().unwrap();
                 let cb_cloned = cb.clone();
                 let finished_cloned = finished.clone();

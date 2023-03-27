@@ -9,6 +9,7 @@ pub const AT_EMPTY_PATH: u64 = 0x1000;
 pub const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 
 bitflags! {
+    #[derive(Default)]
     pub struct Prot: u64 {
         const PROT_READ = 0x1;		/* page can be read */
         const PROT_WRITE = 0x2;		/* page can be written */

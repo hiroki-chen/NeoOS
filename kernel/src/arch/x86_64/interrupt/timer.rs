@@ -6,12 +6,15 @@ use lazy_static::lazy_static;
 
 use crate::{
     arch::{
-        cpu::{cpu_id, BSP_ID},
+        cpu::{cpu_id, AP_UP_NUM, BSP_ID, CPU_NUM},
         timer::rdtsc_timer,
     },
+    process::scheduler::FIFO_SCHEDULER,
     sync::mutex::SpinLockNoInterrupt as Mutex,
     trigger::Trigger,
 };
+
+use super::ipi::{send_ipi, IpiType};
 
 pub static TICK: AtomicUsize = AtomicUsize::new(0usize);
 pub static TICK_WALL: AtomicUsize = AtomicUsize::new(0usize);
@@ -24,7 +27,19 @@ lazy_static! {
 
 pub fn handle_timer() {
     if cpu_id() == *BSP_ID.get().unwrap() as usize {
-        TICK.fetch_add(0x1, Ordering::Release);
+        // Only the primary core can do tick.
+        let prev = TICK.fetch_add(0x1, Ordering::Release);
+        let ap_num = AP_UP_NUM.load(Ordering::Relaxed);
+        let cpu_num = CPU_NUM.get().copied().unwrap_or(1);
+
+        if ap_num == cpu_num - 1 && prev >= 0x2 {
+            // Clear the tick.
+            TICK.store(0x0, Ordering::SeqCst);
+            // Try to do some balance on each core.
+            FIFO_SCHEDULER.schedule_tick();
+            // Wake up other cores via IPI.
+            send_ipi(|| {}, None, false, IpiType::WakeUp);
+        }
     }
     // Do tick.
     TICK_WALL.fetch_add(0x1, Ordering::Relaxed);

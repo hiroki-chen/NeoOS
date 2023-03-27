@@ -103,3 +103,15 @@ pub fn sys_getpid(
 ) -> KResult<usize> {
     Ok(thread.id as _)
 }
+
+/// sched_yield() causes the calling thread to relinquish the CPU. The thread is moved to the end of the queue for its static
+/// priority and a new thread gets to run.
+pub fn sys_sched_yield(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+
+
+    Ok(0)
+}

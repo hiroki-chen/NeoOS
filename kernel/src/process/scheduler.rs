@@ -6,11 +6,19 @@
 
 use core::{future::Future, pin::Pin, task::Context};
 
-use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
+use alloc::{
+    boxed::Box,
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+    vec::Vec,
+};
 use lazy_static::lazy_static;
 use woke::{waker_ref, Woke};
 
-use crate::sync::mutex::SpinLock as Mutex;
+use crate::{
+    arch::cpu::{cpu_id, CPU_NUM},
+    sync::mutex::SpinLockNoInterrupt as Mutex,
+};
 
 use super::thread::ThreadState;
 
@@ -21,6 +29,15 @@ lazy_static! {
 
     // TODO: Choose time quantum?
     pub static ref RR_SCHEDULER: Scheduler = Scheduler::new(Box::new(RoundRobin::new(100)));
+}
+
+/// Calculates the summed priority of the task queue. We simply add them up.
+fn get_cumulative_priority(queue: &VecDeque<Arc<Task>>) -> u64 {
+    queue
+        .iter()
+        .filter(|&task| task.running())
+        .map(|task| task.priority)
+        .sum()
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -37,6 +54,8 @@ pub struct Task {
     future: Mutex<Pin<Box<dyn Future<Output = ()> + 'static + Send>>>,
     /// The state of the current task.
     state: Mutex<ThreadState>,
+    /// The priority of this task.
+    priority: u64,
 }
 
 impl Task {
@@ -94,6 +113,12 @@ pub trait SchedAlgorithm: Send + Sync {
     fn add_task(&self, task: Arc<Task>, task_info: Option<TaskInfo>);
     /// Get the type.
     fn ty(&self) -> ScheduleType;
+    /// Load balance function. This function is invoked when a CPU finishes all its jobs.
+    fn load_balance(&self);
+    /// Check if there is runnable task.
+    fn is_empty(&self) -> bool;
+    /// Init the algorithm.
+    fn init(&self);
 }
 
 /// The round robin scheduling algorithm, a widely used algorithm in traditional OS. This algorithm is a real-time
@@ -110,13 +135,14 @@ pub struct RoundRobin {
 /// a queue of processes waiting to be executed, and the CPU is allocated to the process at the head of the queue. Once a
 /// process has completed its execution, it is removed from the queue, and the next process in the queue is executed.
 pub struct Fifo {
-    task_list: Mutex<VecDeque<Arc<Task>>>,
+    /// The task list is owned by *each* core.
+    task_list: Mutex<BTreeMap<u64, VecDeque<Arc<Task>>>>,
 }
 
 impl Fifo {
     pub const fn new() -> Self {
         Self {
-            task_list: Mutex::new(VecDeque::new()),
+            task_list: Mutex::new(BTreeMap::new()),
         }
     }
 }
@@ -127,23 +153,82 @@ impl SchedAlgorithm for Fifo {
             kwarn!("add_task(): FIFO ignores the `task_info` struct. You are feeding the algorithm the wrong input.");
         }
 
-        self.task_list.lock().push_back(task);
+        let cpu = cpu_id() as u64;
+        // Need to check whether this task has been already put into the queue.
+        let mut lock = self.task_list.lock();
+        let task_list = lock.entry(cpu).or_default();
+
+        match task_list.iter().position(|cur| Arc::ptr_eq(cur, &task)) {
+            Some(idx) => {
+                let task = task_list.remove(idx).unwrap();
+                task_list.push_back(task);
+            }
+
+            None => task_list.push_back(task),
+        }
     }
 
     fn first_ready(&self) -> Option<(Arc<Task>, Option<TaskInfo>)> {
-        let mut task_list = self.task_list.lock();
-        task_list
-            .iter()
-            .position(|task| task.waiting())
-            .map(|idx| (task_list.remove(idx).unwrap(), None))
+        let cpu = cpu_id() as u64;
+        let mut lock = self.task_list.lock();
+        match lock.get_mut(&cpu) {
+            Some(task_list) => task_list
+                .iter()
+                .position(|task| task.waiting())
+                .map(|idx| (task_list.remove(idx).unwrap(), None)),
+            None => None,
+        }
     }
 
     fn schedule(&self) -> Option<Arc<Task>> {
-        self.task_list.lock().pop_front()
+        let cpu = cpu_id() as u64;
+        self.task_list.lock().get_mut(&cpu).unwrap().pop_front()
     }
 
     fn ty(&self) -> ScheduleType {
         ScheduleType::Fifo
+    }
+
+    fn load_balance(&self) {
+        let cpu = cpu_id() as u64;
+        // Find the busies queue.
+        let mut lock = self.task_list.lock();
+        let groups = lock
+            .iter()
+            .map(|(k, v)| (*k, get_cumulative_priority(v)))
+            .collect::<Vec<_>>();
+
+        let busiest = groups
+            .into_iter()
+            .max_by(|lhs, rhs| lhs.1.cmp(&rhs.1))
+            .unwrap_or_default()
+            .0;
+
+        if cpu != busiest {
+            let task_list = lock.get_mut(&busiest).unwrap();
+            if let Some(idx) = task_list.iter().position(|task| task.waiting()) {
+                // FIXME: Doing so causes page fault at 0x0.
+                // We may need to properly transfer the task rather than simply `pop` and `push`.
+                // let task = task_list.remove(idx).unwrap();
+                // lock.get_mut(&cpu).unwrap().push_back(task);
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        let cpu = cpu_id() as u64;
+        match self.task_list.lock().get(&cpu) {
+            Some(task_list) => task_list.into_iter().filter(|&task| task.waiting()).count() == 0,
+            None => true,
+        }
+    }
+
+    fn init(&self) {
+        let cpu_num = CPU_NUM.get().copied().unwrap();
+        let mut lock = self.task_list.lock();
+        (0..cpu_num).for_each(|idx| {
+            lock.insert(idx as u64, VecDeque::new());
+        });
     }
 }
 
@@ -162,6 +247,18 @@ impl SchedAlgorithm for RoundRobin {
 
     fn ty(&self) -> ScheduleType {
         ScheduleType::RoundRobin
+    }
+
+    fn load_balance(&self) {
+        unimplemented!()
+    }
+
+    fn is_empty(&self) -> bool {
+        unimplemented!()
+    }
+
+    fn init(&self) {
+        unimplemented!()
     }
 }
 
@@ -202,6 +299,7 @@ impl Scheduler {
             Arc::new(Task {
                 future: Mutex::new(Box::pin(future)),
                 state: Mutex::new(ThreadState::WAITING),
+                priority: 1, // todo.
             }),
             task_info,
         );
@@ -211,9 +309,18 @@ impl Scheduler {
         self.algorithm.add_task(task, task_info);
     }
 
+    pub fn yield_and_add(&self, task: Arc<Task>) {
+        self.algorithm.add_task(task, None);
+    }
+
     pub fn start_schedule(&self) {
-        // Start running!
-        while let Some((task, task_info)) = self.algorithm.first_ready() {
+        if self.algorithm.is_empty() {
+            // Check if we can move some threads.
+            self.algorithm.load_balance();
+        }
+
+        // Pick only one thread/process/task (anyway, in the view of the kernel, they are the same) at once.
+        if let Some((task, task_info)) = self.algorithm.first_ready() {
             task.set_sleeping();
 
             // Make an explicit poll.
@@ -225,5 +332,14 @@ impl Scheduler {
                 self.add_task(task.clone(), task_info);
             }
         }
+    }
+
+    pub fn init(&self) {
+        self.algorithm.init();
+    }
+
+    /// This function gets called by the timer code, with HZ frequency. We call it with interrupts disabled.
+    pub fn schedule_tick(&self) {
+        // TODO.
     }
 }

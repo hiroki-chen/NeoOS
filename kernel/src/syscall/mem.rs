@@ -7,7 +7,7 @@ use crate::{
     error::{Errno, KResult},
     memory::is_page_aligned,
     process::thread::{Thread, ThreadContext},
-    sys::{Prot, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, MAP_SHARED_VALIDATE},
+    sys::{Prot, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, MAP_SHARED_VALIDATE}, mm::ArenaFlags,
 };
 
 /// mmap() creates a new mapping in the virtual address space of the calling process. The starting address for the new
@@ -104,15 +104,17 @@ pub fn sys_mprotect(
         return Err(Errno::EINVAL);
     }
 
-    let vm = thread.vm.lock();
+    let mut vm = thread.vm.lock();
     let arena = vm
-        .iter()
+        .iter_mut()
         .find(|arena| arena.overlap_with(&(addr..addr + len)))
         .ok_or(Errno::ENOMEM)?;
 
     if !arena.flags.user_accessible || (!arena.flags.writable && prot.contains(Prot::PROT_WRITE)) {
         return Err(Errno::EACCES);
     }
+
+    arena.flags = ArenaFlags::from(prot);
 
     Ok(0)
 }

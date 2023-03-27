@@ -20,7 +20,7 @@ use crate::{
     kmain,
     logging::init_env_logger,
     memory::init_heap,
-    LOG_LEVEL,
+    LOG_LEVEL, process::scheduler::FIFO_SCHEDULER,
 };
 
 use super::cpu::ApHeader;
@@ -107,6 +107,9 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
             );
         }
     }
+
+    FIFO_SCHEDULER.init();
+    crate::process::thread::debug_threading();
 
     // Step into the kernel main function.
     AP_CAN_INIT.store(true, Ordering::Relaxed);

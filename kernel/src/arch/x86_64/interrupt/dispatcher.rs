@@ -16,6 +16,7 @@ use crate::{
             pretty_interpret,
         },
     },
+    cpu_idle,
     drivers::IRQ_MANAGER,
     process::thread::{current, Thread, ThreadContext},
     signal::{send_signal, SiFields, SigInfo, Signal},
@@ -184,7 +185,7 @@ fn handle_ipi(ipi: u8) -> bool {
     match unsafe { core::mem::transmute::<u8, IpiType>(ipi as _) } {
         IpiType::TlbFlush => flush_all(),
         // Does nothing.
-        IpiType::WakeUp => (),
+        IpiType::WakeUp => cpu_idle(),
         IpiType::Others => AbstractCpu::current().unwrap().pop_event(),
     }
 
@@ -200,8 +201,8 @@ fn dump_all(tf: &mut TrapFrame) {
 /// Handles page fault.
 fn page_fault(tf: &mut TrapFrame) {
     let pf_addr = arch::mm::paging::get_pf_addr();
-    kdebug!(
-        "page_fault(): detected page fault interrupt @ {:#x}. Layout:",
+    kinfo!(
+        "page_fault(): detected page fault interrupt @ {:#x}.",
         pf_addr
     );
 

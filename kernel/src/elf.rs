@@ -20,7 +20,7 @@ use crate::{
     },
     page,
     process::ld::{AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM},
-    virt,
+    virt, kdebug,
 };
 
 pub struct ElfFile {
@@ -87,10 +87,10 @@ impl ElfFile {
 
         let mut max_mem = 0;
         for ph in self.program_headers.iter() {
-            kinfo!("visiting program header of type {:x}", ph.p_type);
+            kdebug!("visiting program header of type {:x}", ph.p_type);
 
             if ph.p_type == 0x1 {
-                kinfo!("loading program header {:x?}", ph);
+                kdebug!("loading program header {:x?}", ph);
                 // This header can be loaded.
                 vm.add(Arena {
                     range: ph.p_vaddr..ph.p_vaddr + ph.p_memsz,

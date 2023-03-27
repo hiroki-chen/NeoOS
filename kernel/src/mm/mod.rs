@@ -25,6 +25,7 @@ use crate::{
     memory::{is_page_aligned, page_frame_number, page_mask},
     process::thread::{Thread, CURRENT_THREAD_PER_CPU},
     sync::mutex::SpinLockNoInterrupt as Mutex,
+    sys::Prot,
     utils::ptr::Ptr,
 };
 
@@ -36,6 +37,17 @@ pub struct ArenaFlags {
     pub user_accessible: bool,
     pub non_executable: bool,
     pub mmio: u8,
+}
+
+impl From<Prot> for ArenaFlags {
+    fn from(value: Prot) -> Self {
+        Self {
+            writable: value.contains(Prot::PROT_WRITE),
+            user_accessible: value.contains(Prot::PROT_READ),
+            non_executable: !value.contains(Prot::PROT_EXEC),
+            mmio: 0,
+        }
+    }
 }
 
 /// A wrapper struct for a future that requires a specific page table (CR3 value) to run. This enables page table switching
@@ -145,12 +157,13 @@ impl Arena {
 
     /// Maps itself into `page_table`.
     pub fn map(&self, page_table: &mut dyn PageTableBehaviors) -> KResult<()> {
-        if !is_page_aligned(self.range.start) {
-            kwarn!("arena start point is not aligned to 4 KB.");
-        }
-        if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
-            kwarn!("arena size is not 4KB aligned.");
-        }
+        // Useless check.
+        // if !is_page_aligned(self.range.start) {
+        //     kwarn!("arena start point is not aligned to 4 KB.");
+        // }
+        // if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
+        //     kwarn!("arena size is not 4KB aligned.");
+        // }
 
         for page in
             Page::<Size4KiB>::range_inclusive(page!(self.range.start), page!(self.range.end - 1))
@@ -413,7 +426,7 @@ where
 
     /// Extends this memory space.
     pub fn add(&mut self, other: Arena) {
-        kinfo!("add(): adding {:#x?} to vm...", other);
+        kdebug!("add(): adding {:#x?} to vm...", other);
 
         let start_addr = page_frame_number(other.range.start);
         let end_addr = page_frame_number(other.range.end + PAGE_SIZE as u64);
@@ -458,6 +471,10 @@ where
     /// Returns the iterator.
     pub fn iter(&self) -> impl Iterator<Item = &Arena> {
         self.arena.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Arena> {
+        self.arena.iter_mut()
     }
 
     /// Validates the page table.

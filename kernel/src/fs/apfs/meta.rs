@@ -21,7 +21,7 @@ use unicode_normalization::char::decompose_canonical;
 use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
-    function, kerror, kinfo, kwarn,
+    function, kdebug, kerror, kinfo,
 };
 
 use super::{read_fs_tree, read_object, read_omap, Device};
@@ -1538,7 +1538,7 @@ impl BTreeNodePhysical {
                     let val_obj = (&*(val.as_ptr() as *const JDirStatVal)).clone();
                     fs_map.dir_stat_map.insert(key_obj, val_obj);
                 }
-                other => kwarn!("unhandled type {:?}", other),
+                other => (),
             }
         })?;
 
@@ -1638,7 +1638,7 @@ impl ApfsVolumn {
         // Read the file system tree.
         let apfs_tree = read_fs_tree(device, apfs_root_addr)?;
 
-        kinfo!("apfs tree: {:x?}", apfs_tree);
+        kdebug!("apfs tree: {:x?}", apfs_tree);
 
         // Get occupied INode numbers.
         let occupied_inode_numbers = apfs_tree

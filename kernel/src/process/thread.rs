@@ -100,6 +100,8 @@ pub struct Thread {
     pub inner: Arc<Mutex<ThreadInner>>,
     /// Proc.vm
     pub vm: Arc<Mutex<MemoryManager<KernelPageTable>>>,
+    /// Need schedule?
+    pub need_schedule: bool,
 }
 
 /// Finds a free tid and assigns it to the current thread by `register`.
@@ -235,6 +237,7 @@ impl Thread {
                 clear_child_tid: self.inner.lock().clear_child_tid,
             })),
             vm,
+            need_schedule: false,
         }
         .register()
         .unwrap();
@@ -329,6 +332,7 @@ impl Thread {
                 clear_child_tid: 0, // NULL by default.
             })),
             vm,
+            need_schedule: false,
         };
 
         // Add itself into the global thread table.
@@ -509,11 +513,13 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading() {
-    let debug_inode = ROOT_INODE.lookup("./bin/test").unwrap();
+    for _ in 0..4 {
+        let debug_inode = ROOT_INODE.lookup("./bin/test").unwrap();
 
-    let args = vec!["test".into()];
-    let envp = vec!["PATH=/bin".into()];
-    let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
+        let args = vec!["test".into()];
+        let envp = vec!["PATH=/bin".into()];
+        let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
 
-    spawn(thread).unwrap();
+        spawn(thread).unwrap();
+    }
 }
