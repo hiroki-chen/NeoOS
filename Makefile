@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-.phony: all clean test efi debug clippy sample_program
+.phony: all clean clean_app test efi debug clippy sample_program
 
 BACKTRACE	?= 5
 OS_LOG_LEVEL	?= info
@@ -46,8 +46,8 @@ endif
 all: kernel
 
 sample_program:
-	@$(MAKE) -C sample_programs/simple_c
-	@cp sample_programs/simple_c/test $(WORK_DIR)/test
+	@mkdir -p $(WORK_DIR)/bin
+	@$(MAKE) -C sample_programs
 
 # Creates virtual hard disk.
 hard_disk: sample_program
@@ -61,8 +61,8 @@ else
 	@cd $(WORK_DIR) && dd if=/dev/zero bs=1M count=400 > $(DISK) && mkfs.apfs $(DISK)
 	@cd $(WORK_DIR) && sudo mount -o loop,readwrite $(DISK) /mnt
 # TODO: Add meaningful files/directories.
-	@cd /mnt && mkdir bin dev lib proc
-	@cd $(WORK_DIR) && cp test /mnt/bin
+	@cd /mnt && mkdir dev lib proc
+	@cd $(WORK_DIR) && cp -r bin /mnt
 	@sudo umount /mnt
 	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
 	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)
@@ -92,7 +92,6 @@ run: kernel hard_disk
 clean:
 	@cargo clean
 	@rm -rf $(WORK_DIR)
-	@$(MAKE) -C sample_programs/simple_c clean
 
 $(TEST_IMAGE): $(TEST_KERNEL)
 	gcc $^ -o $@ -no-pie -nostartfiles
@@ -104,3 +103,6 @@ test_run: efi $(TEST_IMAGE) hard_disk
 
 clippy:
 	@cargo clippy
+
+clean_app:
+	@$(MAKE) -C sample_programs clean

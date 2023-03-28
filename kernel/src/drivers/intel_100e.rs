@@ -8,15 +8,16 @@ use smoltcp::{
     iface::{Config, Interface, SocketHandle},
     phy::{DeviceCapabilities, RxToken, TxToken},
     socket::tcp::{Socket as TcpSocket, State},
+    time::Instant,
     wire::{
         EthernetAddress as MacAddress, HardwareAddress, IpAddress, IpCidr, IpEndpoint, Ipv4Address,
     },
 };
 
 use crate::{
-    arch::PAGE_SIZE,
+    arch::{interrupt::timer::tick_millisecond, PAGE_SIZE},
     error::{Errno, KResult},
-    function, kerror, kinfo,
+    function, kerror, kinfo, kwarn,
     memory::{allocate_frame_contiguous, deallocate_frame, phys_to_virt, virt_to_phys},
     net::{get_free_port, SOCKET_SET},
     sync::mutex::SpinLockNoInterrupt as Mutex,
@@ -234,7 +235,18 @@ impl NetworkDriver for IntelEthernetController {
     }
 
     fn poll(&self) {
-        // todo.
+        let time = tick_millisecond();
+        // But why smotltcp requires i64?
+        let timestamp = Instant::from_millis(time.as_millis() as i64);
+        let mut socket_set = SOCKET_SET.lock();
+        let mut cloned_device = self.driver.clone();
+        if self
+            .interface
+            .lock()
+            .poll(timestamp, &mut cloned_device, &mut socket_set)
+        {
+            SOCKET_CONDVAR.notify_all();
+        }
     }
 
     fn connect(&self, addr: SocketAddr, socket_handle: SocketHandle) -> KResult<()> {

@@ -1,5 +1,7 @@
 //! Networking syscall interfaces.
 
+use core::net::SocketAddr;
+
 use alloc::{boxed::Box, sync::Arc};
 
 use crate::{
@@ -127,6 +129,50 @@ pub fn sys_listen(
 
     if let FileObject::Socket(socket) = socket {
         socket.listen().map(|_| 0)
+    } else {
+        Err(Errno::EBADF)
+    }
+}
+
+/// The accept() system call is used with connection-based socket types (SOCK_STREAM, SOCK_SEQPACKET). It extracts the firs
+/// connection request on the queue of pending connections for the listening socket, sockfd, creates a new connected socket
+/// and returns a new file descriptor referring to that socket.  The newly created socket is not in the listening state.
+/// The original socket sockfd is unaffected by this call.
+pub fn sys_accept(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let sockfd = syscall_registers[0];
+    let sockaddr = syscall_registers[1];
+    let socklen = syscall_registers[2];
+
+    let mut proc = thread.parent.lock();
+    let socket = proc.get_fd(sockfd)?;
+
+    if let FileObject::Socket(socket) = socket {
+        let (accepted, addr) = socket.accept()?;
+        if let SocketAddr::V4(addr) = addr {
+            // Write back to user space.
+            proc.add_file(FileObject::Socket(accepted))?;
+            let ptr = Ptr::new(sockaddr as *mut SockAddr);
+
+            unsafe {
+                ptr.write(SockAddr {
+                    // Mark as fixed.
+                    sa_family: AF_INET as _,
+                    sa_data_min: {
+                        let mut buf = [0u8; 14];
+                        buf[..2].copy_from_slice(&addr.port().to_be_bytes());
+                        buf[2..].copy_from_slice(&addr.ip().octets());
+                        buf
+                    },
+                })?;
+            }
+            Ok(0)
+        } else {
+            Err(Errno::EINVAL)
+        }
     } else {
         Err(Errno::EBADF)
     }

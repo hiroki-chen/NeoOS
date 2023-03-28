@@ -4,13 +4,16 @@ use smoltcp::{
     wire::{IpAddress, IpListenEndpoint, Ipv4Address},
 };
 
-use core::{net::SocketAddr, time::Duration};
+use core::{
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    time::Duration,
+};
 
 use crate::{
-    drivers::NETWORK_DRIVERS,
+    drivers::{NETWORK_DRIVERS, SOCKET_CONDVAR},
     error::{Errno, KResult},
-    function, kerror,
-    net::{RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET}, kinfo,
+    function, kerror, kinfo,
+    net::{RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET},
 };
 
 use super::{Shutdown, Socket as SocketTrait, SocketWrapper};
@@ -128,7 +131,10 @@ impl SocketTrait for TcpStream {
                     };
 
                     kinfo!("listening to {:?}", addr);
-                    socket.listen(local_endpoint).map_err(|_| Errno::EINVAL)
+                    socket.listen(local_endpoint).map_err(|_| Errno::EINVAL)?;
+                    self.state = TcpState::Listening;
+
+                    Ok(())
                 } else {
                     kerror!("no address provided.");
                     Err(Errno::EINVAL)
@@ -146,6 +152,63 @@ impl SocketTrait for TcpStream {
         driver.connect(addr, self.socket.0)?;
         self.state = TcpState::Alive;
         Ok(())
+    }
+
+    fn accept(&mut self) -> KResult<(Box<dyn SocketTrait>, SocketAddr)> {
+        let local_endpoint = self.addr.ok_or(Errno::EINVAL)?;
+        if let SocketAddr::V4(local_endpoint) = local_endpoint {
+            let local_endpoint = IpListenEndpoint {
+                addr: Some(IpAddress::Ipv4(Ipv4Address::from_bytes(
+                    &local_endpoint.ip().octets(),
+                ))),
+                port: local_endpoint.port(),
+            };
+
+            // Block the current thread.
+            loop {
+                let mut socket_set = SOCKET_SET.lock();
+                let socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(self.socket.0);
+
+                // Check the state.
+                if self.state == TcpState::Listening && socket.is_active() {
+                    let remote_endpoint = socket.remote_endpoint().ok_or(Errno::EINVAL)?;
+                    drop(socket);
+
+                    // May have security issues: syn flood.
+                    let rx_buffer = SocketBuffer::new(vec![0; RECVBUF_LEN]);
+                    let tx_buffer = SocketBuffer::new(vec![0; SENDBUF_LEN]);
+
+                    let mut socket = Socket::new(rx_buffer, tx_buffer);
+                    // TODO: Timeout? ==> return EWOULDBLOCK.
+                    socket
+                        .listen(local_endpoint)
+                        .map_err(|_| Errno::ECONNREFUSED)?;
+                    let old = core::mem::replace(&mut self.socket.0, socket_set.add(socket));
+
+                    let boxed_socket = Box::new(TcpStream {
+                        socket: SocketWrapper(old),
+                        addr: self.addr,
+                        // The old one should be destroyed.
+                        state: TcpState::Dead,
+                    });
+
+                    drop(socket_set);
+                    NETWORK_DRIVERS.read().first().unwrap().poll();
+
+                    let ip_bytes = remote_endpoint.addr.as_bytes();
+                    let socket_addr = SocketAddr::V4(SocketAddrV4::new(
+                        Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]),
+                        remote_endpoint.port,
+                    ));
+                    return Ok((boxed_socket, socket_addr));
+                }
+
+                drop(socket);
+                SOCKET_CONDVAR.wait(socket_set);
+            }
+        } else {
+            Err(Errno::EINVAL)
+        }
     }
 
     fn setsocketopt(&mut self) -> KResult<()> {

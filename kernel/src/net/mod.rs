@@ -74,6 +74,9 @@ pub trait Socket: Send + Sync {
     /// Binds to a given address.
     fn bind(&mut self, addr: SocketAddr) -> KResult<()>;
 
+    /// Accepts an incoming connection.
+    fn accept(&mut self) -> KResult<(Box<dyn Socket>, SocketAddr)>;
+
     /// Listens to a given address.
     fn listen(&mut self) -> KResult<()>;
 

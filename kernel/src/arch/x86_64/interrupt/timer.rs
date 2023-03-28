@@ -1,6 +1,9 @@
 //! Handles timer interrupt 0x00.
 
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::{
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    time::Duration,
+};
 
 use lazy_static::lazy_static;
 
@@ -16,6 +19,9 @@ use crate::{
 
 use super::ipi::{send_ipi, IpiType};
 
+/// This tick will continuously increment.
+pub static MONOTONIC_TICK: AtomicUsize = AtomicUsize::new(0usize);
+/// This tick is used to trigger some event.
 pub static TICK: AtomicUsize = AtomicUsize::new(0usize);
 pub static TICK_WALL: AtomicUsize = AtomicUsize::new(0usize);
 pub static APIC_UP: AtomicBool = AtomicBool::new(false);
@@ -25,8 +31,16 @@ lazy_static! {
     pub static ref TRIGGER: Mutex<Trigger> = Mutex::new(Trigger::default());
 }
 
+/// Returns the tick after.
+pub fn tick_millisecond() -> Duration {
+    let tick = TICK.load(Ordering::Relaxed);
+    // Our timer interrupt ticks per 10,000 us.
+    Duration::from_millis(10000 * tick as u64)
+}
+
 pub fn handle_timer() {
     if cpu_id() == *BSP_ID.get().unwrap() as usize {
+        MONOTONIC_TICK.fetch_add(0x1, Ordering::Relaxed);
         // Only the primary core can do tick.
         let prev = TICK.fetch_add(0x1, Ordering::Release);
         let ap_num = AP_UP_NUM.load(Ordering::Relaxed);
