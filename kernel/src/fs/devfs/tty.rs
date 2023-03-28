@@ -192,7 +192,7 @@ impl TtyInode {
     }
 
     pub fn get_fd_pid(&self) -> usize {
-        self.fg_pid.read().clone()
+        *self.fg_pid.read()
     }
 
     pub fn buf_available(&self) -> bool {

@@ -69,7 +69,7 @@ pub fn split_path(path: &str) -> KResult<(&str, &str)> {
     let mut idx = path.trim_end_matches('/').rsplitn(2, '/');
     let file_name = idx.next().unwrap();
     let mut dir_path = idx.next().unwrap_or(".");
-    if dir_path == "" {
+    if dir_path.is_empty() {
         dir_path = "/";
     }
 

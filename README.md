@@ -14,7 +14,7 @@ which outputs the doc to `./doc/doc` where you can check the documentation by th
 
 ## UEFI and Bootloader
 
-This kernel can boot itself by the UEFI crate provided by the `uefi-rs` crate. The UEFI support allows us to conveniently use some basic OS-like tools to do some pre-boot preparations. For example, we can use the simple filesystem to load the kernel image from the disk into the main memory. Also, note that the page table mapping in the UEFI environment is *identical*; that is, the physical address is its virtual address. The NeoOS kernel will remap its component and build a new page table for itself. Then it maps the old virtual address into the kernel range.
+This kernel can boot itself by the UEFI provided by the `uefi-rs` crate. The UEFI support allows us to conveniently use some basic OS-like tools to do some pre-boot preparations. For example, we can use the simple filesystem to load the kernel image from the disk into the main memory. Also, note that the page table mapping in the UEFI environment is *identical*; that is, the physical address is its virtual address. The NeoOS kernel will remap its component and build a new page table for itself. Then it maps the old virtual address into the kernel range.
 
 Eventually, the kernel flushes the `CR3` register by writing the new page table into it and then performs a jump into the kernel entry `_start` defined in `kernel/src/lib.rs`. The metadata (e.g., ACPI table, memory maps) will be stored in a bootheader and then passed to the kernel.
 
@@ -48,9 +48,14 @@ target remote :1234
 ## Some TODOs
 
 * ~~Implement keyboard drivers. (QEMU --> serial --> ? some sort of tty)~~
-* Implement the file system (we now aim to implement the APFS for its performance :)).
+* Fix multi-core scheduling:
+  * Strange page fault address (e.g., 0x0, 0x8).
+  * No thread running.
+  * Memory corrupted (e.g., B-Tree panics when visiting nodes). Perhaps due to lock problems.
 * Implement more device drivers.
 * Implement more system calls.
+* Implement the socket.
+* Reduce memory consumption.
 * Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
 
 ## Advanced Programmable Interrupt Controller (APIC)
@@ -63,7 +68,7 @@ LAPIC, in fact, handles all interrupts including the interrupt issues by the cur
 
 ## Apple Filesystem Support for Linux
 
-Additionally, you can install `mkfs.apfs` via this link: <https://github.com/linux-apfs/linux-apfs-rw.git>. This allows one to create an APFS filesystem image on Linux platforms. For example, you can createa an image `apfs.img` by
+Additionally, you can install `mkfs.apfs` via this link: <https://github.com/linux-apfs/linux-apfs-rw.git>. This allows one to create an APFS filesystem image on Linux platforms. For example, you can create an image `apfs.img` by
 
 ```sh
 $ dd if=/dev/zero bs=1M count=400 > apfs.img

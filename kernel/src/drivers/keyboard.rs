@@ -73,7 +73,7 @@ impl Driver for SystemKeyboard {
     }
 
     fn ty(&self) -> Type {
-        Type::KEYBOARD
+        Type::Keyboard
     }
 
     fn uuid(&self) -> &'static str {

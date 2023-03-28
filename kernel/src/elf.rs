@@ -12,7 +12,7 @@ use rcore_fs::vfs::INode;
 use crate::{
     arch::{mm::paging::KernelPageTable, PAGE_SIZE},
     error::{fserror_to_kerror, Errno, KResult},
-    function, kerror, kinfo,
+    function, kdebug, kerror, kinfo,
     memory::KernelFrameAllocator,
     mm::{
         callback::{FileArenaCallback, INodeWrapper},
@@ -20,7 +20,7 @@ use crate::{
     },
     page,
     process::ld::{AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM},
-    virt, kdebug,
+    virt,
 };
 
 pub struct ElfFile {

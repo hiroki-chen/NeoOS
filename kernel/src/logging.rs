@@ -12,18 +12,20 @@ use alloc::vec::Vec;
 use core::fmt;
 use lazy_static::lazy_static;
 use log::{Level, LevelFilter, Log, Metadata, Record};
+use ringbuf::HeapRb;
 use spin::RwLock;
 
 pub const BANNER: &str = include_str!("./banner.txt");
 pub const VERSION: Option<&str> = option_env!("CARGO_PKG_VERSION");
 pub const META: &str = include_str!("../meta");
+pub const RING_BUF_LEN: usize = u16::MAX as _;
 
 lazy_static! {
     /// Lock the logger instance.
     static ref LOG_LOCK: Mutex<()> = Mutex::new(());
     /// The kernel ring buffer for storing the kernel messages after the kernel is successfully booted.
     /// Useful for the `dmesg` command.
-    pub static ref RING_BUFFER: RwLock<Vec<u8>> = RwLock::new(Vec::new());
+    pub static ref RING_BUFFER: RwLock<HeapRb<u8>> = RwLock::new(HeapRb::new(RING_BUF_LEN));
 }
 
 /// An instance that logs the information into console created by the kernel.

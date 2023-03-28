@@ -13,11 +13,15 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::lazy_static;
+use spin::RwLock;
 use woke::{waker_ref, Woke};
 
 use crate::{
-    arch::cpu::{cpu_id, CPU_NUM},
-    sync::mutex::SpinLockNoInterrupt as Mutex,
+    arch::{
+        cpu::{cpu_id, CPU_NUM},
+        interrupt::ipi::{send_ipi, IpiType},
+    },
+    sync::mutex::SpinLock as Mutex,
 };
 
 use super::thread::ThreadState;
@@ -29,6 +33,9 @@ lazy_static! {
 
     // TODO: Choose time quantum?
     pub static ref RR_SCHEDULER: Scheduler = Scheduler::new(Box::new(RoundRobin::new(100)));
+
+    /// An ugly workaround for SCHED IPI communication mechanism.
+    pub static ref TASK_MIGRATION: RwLock<Option<(u64, u64)>> = RwLock::new(None);
 }
 
 /// Calculates the summed priority of the task queue. We simply add them up.
@@ -136,13 +143,13 @@ pub struct RoundRobin {
 /// process has completed its execution, it is removed from the queue, and the next process in the queue is executed.
 pub struct Fifo {
     /// The task list is owned by *each* core.
-    task_list: Mutex<BTreeMap<u64, VecDeque<Arc<Task>>>>,
+    task_list: RwLock<BTreeMap<u64, Mutex<VecDeque<Arc<Task>>>>>,
 }
 
 impl Fifo {
     pub const fn new() -> Self {
         Self {
-            task_list: Mutex::new(BTreeMap::new()),
+            task_list: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -155,8 +162,8 @@ impl SchedAlgorithm for Fifo {
 
         let cpu = cpu_id() as u64;
         // Need to check whether this task has been already put into the queue.
-        let mut lock = self.task_list.lock();
-        let task_list = lock.entry(cpu).or_default();
+        let task_list = self.task_list.read();
+        let mut task_list = task_list.get(&cpu).unwrap().lock();
 
         match task_list.iter().position(|cur| Arc::ptr_eq(cur, &task)) {
             Some(idx) => {
@@ -170,19 +177,23 @@ impl SchedAlgorithm for Fifo {
 
     fn first_ready(&self) -> Option<(Arc<Task>, Option<TaskInfo>)> {
         let cpu = cpu_id() as u64;
-        let mut lock = self.task_list.lock();
-        match lock.get_mut(&cpu) {
-            Some(task_list) => task_list
-                .iter()
-                .position(|task| task.waiting())
-                .map(|idx| (task_list.remove(idx).unwrap(), None)),
+
+        match self.task_list.read().get(&cpu) {
+            Some(task_list) => {
+                let mut lock = task_list.lock();
+                task_list
+                    .lock()
+                    .iter()
+                    .position(|task| task.waiting())
+                    .map(|idx| (lock.remove(idx).unwrap(), None))
+            }
             None => None,
         }
     }
 
     fn schedule(&self) -> Option<Arc<Task>> {
         let cpu = cpu_id() as u64;
-        self.task_list.lock().get_mut(&cpu).unwrap().pop_front()
+        self.task_list.read().get(&cpu).unwrap().lock().pop_front()
     }
 
     fn ty(&self) -> ScheduleType {
@@ -192,10 +203,12 @@ impl SchedAlgorithm for Fifo {
     fn load_balance(&self) {
         let cpu = cpu_id() as u64;
         // Find the busies queue.
-        let mut lock = self.task_list.lock();
-        let groups = lock
+        let groups = self
+            .task_list
+            .read()
+            // Lock is dropped at this point.
             .iter()
-            .map(|(k, v)| (*k, get_cumulative_priority(v)))
+            .map(|(k, v)| (*k, get_cumulative_priority(&v.lock())))
             .collect::<Vec<_>>();
 
         let busiest = groups
@@ -205,29 +218,33 @@ impl SchedAlgorithm for Fifo {
             .0;
 
         if cpu != busiest {
-            let task_list = lock.get_mut(&busiest).unwrap();
-            if let Some(idx) = task_list.iter().position(|task| task.waiting()) {
-                // FIXME: Doing so causes page fault at 0x0.
-                // We may need to properly transfer the task rather than simply `pop` and `push`.
-                // let task = task_list.remove(idx).unwrap();
-                // lock.get_mut(&cpu).unwrap().push_back(task);
-            }
+            // Need to notify the target CPU.
+            TASK_MIGRATION.write().replace((busiest, cpu));
+            send_ipi(|| {}, Some(busiest as _), false, IpiType::Sched);
         }
     }
 
     fn is_empty(&self) -> bool {
         let cpu = cpu_id() as u64;
-        match self.task_list.lock().get(&cpu) {
-            Some(task_list) => task_list.into_iter().filter(|&task| task.waiting()).count() == 0,
+        match self.task_list.read().get(&cpu) {
+            Some(task_list) => {
+                task_list
+                    .lock()
+                    .iter()
+                    .filter(|&task| task.waiting())
+                    .count()
+                    == 0
+            }
             None => true,
         }
     }
 
     fn init(&self) {
         let cpu_num = CPU_NUM.get().copied().unwrap();
-        let mut lock = self.task_list.lock();
         (0..cpu_num).for_each(|idx| {
-            lock.insert(idx as u64, VecDeque::new());
+            self.task_list
+                .write()
+                .insert(idx as u64, Mutex::new(VecDeque::new()));
         });
     }
 }
@@ -313,12 +330,21 @@ impl Scheduler {
         self.algorithm.add_task(task, None);
     }
 
-    pub fn start_schedule(&self) {
+    pub fn load_balance(&self) {
         if self.algorithm.is_empty() {
             // Check if we can move some threads.
             self.algorithm.load_balance();
         }
+    }
 
+    pub fn migrate_task(&self) {
+        let task = TASK_MIGRATION.read();
+        let (src, dst) = task.unwrap();
+
+        // TODO: add me.
+    }
+
+    pub fn start_schedule(&self) {
         // Pick only one thread/process/task (anyway, in the view of the kernel, they are the same) at once.
         if let Some((task, task_info)) = self.algorithm.first_ready() {
             task.set_sleeping();

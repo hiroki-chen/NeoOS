@@ -43,25 +43,21 @@ impl Provider for AhciProvider {
         let page_num = size / Self::PAGE_SIZE;
         let phys_addr = match allocate_frame_contiguous(page_num, 0) {
             Ok(addr) => addr,
-            Err(errno) => panic!("alloc_dma(): cannot allocate dma. Errno: {:?}", errno),
+            Err(errno) => panic!(" cannot allocate dma. Errno: {:?}", errno),
         }
         .as_u64();
-
-        debug!("alloc_dma(): need {:#x}; addr = {:#x}", size, phys_addr);
 
         (phys_to_virt(phys_addr) as usize, phys_addr as usize)
     }
 
     fn dealloc_dma(vaddr: usize, size: usize) {
-        debug!("dealloc_dma(): {:#x} @ {:#x}", size, vaddr);
-
         let phys_addr = virt_to_phys(vaddr as u64);
         let page_num = size / Self::PAGE_SIZE;
 
         for i in 0..page_num {
             if let Err(errno) = deallocate_frame(phys_addr + (i * Self::PAGE_SIZE) as u64) {
                 panic!(
-                    "dealloc_dma(): failed to deallocate memory at {:#x}. Errno: {:?}",
+                    "failed to deallocate memory at {:#x}. Errno: {:?}",
                     vaddr, errno
                 );
             }
@@ -79,7 +75,7 @@ impl Driver for AhciDriver {
     }
 
     fn ty(&self) -> Type {
-        Type::BLOCK
+        Type::Block
     }
 
     fn uuid(&self) -> &'static str {

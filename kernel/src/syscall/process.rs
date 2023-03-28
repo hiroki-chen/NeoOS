@@ -111,7 +111,5 @@ pub fn sys_sched_yield(
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
-
-
     Ok(0)
 }

@@ -16,6 +16,7 @@ use crate::{
 };
 
 pub mod devfs;
+pub mod epoll;
 pub mod file;
 
 #[cfg(feature = "apfs")]

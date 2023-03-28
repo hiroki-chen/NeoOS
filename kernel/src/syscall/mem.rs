@@ -6,8 +6,9 @@ use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, PAGE_SIZE},
     error::{Errno, KResult},
     memory::is_page_aligned,
+    mm::ArenaFlags,
     process::thread::{Thread, ThreadContext},
-    sys::{Prot, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, MAP_SHARED_VALIDATE}, mm::ArenaFlags,
+    sys::{Prot, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, MAP_SHARED_VALIDATE},
 };
 
 /// mmap() creates a new mapping in the virtual address space of the calling process. The starting address for the new

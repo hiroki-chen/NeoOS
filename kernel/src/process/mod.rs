@@ -3,7 +3,7 @@ use core::{future::Future, task::Poll};
 use crate::{
     arch::mm::paging::KernelPageTable,
     error::{fserror_to_kerror, Errno, KResult},
-    fs::{file::FileObject, AT_FDCWD, MAXIMUM_FOLLOW, ROOT_INODE},
+    fs::{epoll::EpollInstance, file::FileObject, AT_FDCWD, MAXIMUM_FOLLOW, ROOT_INODE},
     mm::MemoryManager,
     process::event::Event,
     signal::{SigAction, SigInfo, SigSet},
@@ -152,7 +152,7 @@ impl Process {
         path: &str,
         follow_symlink: bool,
     ) -> KResult<Arc<dyn INode>> {
-        let (directory, filename) = split_path(&path)?;
+        let (directory, filename) = split_path(path)?;
         let follow_time = match follow_symlink {
             true => MAXIMUM_FOLLOW,
             false => 0,
@@ -167,14 +167,26 @@ impl Process {
         todo!()
     }
 
+    #[inline]
     pub fn remove_file(&mut self, fd: u64) -> KResult<()> {
         self.opened_files.remove(&fd).ok_or(Errno::EBADF)?;
 
         Ok(())
     }
 
+    #[inline]
     pub fn read_inode(&self, path: &str) -> KResult<Arc<dyn INode>> {
         self.read_inode_at(AT_FDCWD as _, path, true)
+    }
+
+    pub fn get_epoll(&mut self, epoll_fd: u64) -> KResult<&mut EpollInstance> {
+        let file = self.get_fd(epoll_fd)?;
+
+        if let FileObject::Epoll(epoll_instance) = file {
+            Ok(epoll_instance)
+        } else {
+            Err(Errno::EACCES)
+        }
     }
 }
 

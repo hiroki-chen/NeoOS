@@ -1,5 +1,7 @@
 //! Some bindings to the Unix-like data structures and function prototypes.
 
+use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+
 use bitflags::bitflags;
 use rcore_fs::vfs::Metadata;
 
@@ -40,6 +42,103 @@ pub const MAP_UNINITIALIZED: u64 = 0x4000000; /* For anonymous mmap, memory coul
                                                * uninitialized */
 
 // MAP_HUDE_* constants are not supported.
+
+pub const AF_UNSPEC: u64 = 0;
+pub const AF_UNIX: u64 = 1; /* Unix domain sockets 		*/
+pub const AF_LOCAL: u64 = 1; /* POSIX name for AF_UNIX	*/
+pub const AF_INET: u64 = 2; /* Internet IP Protocol 	*/
+pub const AF_AX25: u64 = 3; /* Amateur Radio AX.25 		*/
+pub const AF_IPX: u64 = 4; /* Novell IPX 			*/
+pub const AF_APPLETALK: u64 = 5; /* AppleTalk DDP 		*/
+pub const AF_NETROM: u64 = 6; /* Amateur Radio NET/ROM 	*/
+pub const AF_BRIDGE: u64 = 7; /* Multiprotocol bridge 	*/
+pub const AF_ATMPVC: u64 = 8; /* ATM PVCs			*/
+pub const AF_X25: u64 = 9; /* Reserved for X.25 project 	*/
+pub const AF_INET6: u64 = 10; /* IP version 6			*/
+pub const AF_ROSE: u64 = 11; /* Amateur Radio X.25 PLP	*/
+pub const AF_DECNET: u64 = 12; /* Reserved for DECnet project	*/
+pub const AF_NETBEUI: u64 = 13; /* Reserved for 802.2LLC project*/
+pub const AF_SECURITY: u64 = 14; /* Security callback pseudo AF */
+pub const AF_KEY: u64 = 15; /* PF_KEY key management API */
+pub const AF_NETLINK: u64 = 16;
+pub const AF_ROUTE: u64 = AF_NETLINK; /* Alias to emulate 4.4BSD */
+pub const AF_PACKET: u64 = 17; /* Packet family		*/
+pub const AF_ASH: u64 = 18; /* Ash				*/
+pub const AF_ECONET: u64 = 19; /* Acorn Econet			*/
+pub const AF_ATMSVC: u64 = 20; /* ATM SVCs			*/
+pub const AF_RDS: u64 = 21; /* RDS sockets 			*/
+pub const AF_SNA: u64 = 22; /* Linux SNA Project (nutters!) */
+pub const AF_IRDA: u64 = 23; /* IRDA sockets			*/
+pub const AF_PPPOX: u64 = 24; /* PPPoX sockets		*/
+pub const AF_WANPIPE: u64 = 25; /* Wanpipe API Sockets */
+pub const AF_LLC: u64 = 26; /* Linux LLC			*/
+pub const AF_IB: u64 = 27; /* Native InfiniBand address	*/
+pub const AF_MPLS: u64 = 28; /* MPLS */
+pub const AF_CAN: u64 = 29; /* Controller Area Network      */
+pub const AF_TIPC: u64 = 30; /* TIPC sockets			*/
+pub const AF_BLUETOOTH: u64 = 31; /* Bluetooth sockets 		*/
+pub const AF_IUCV: u64 = 32; /* IUCV sockets			*/
+pub const AF_RXRPC: u64 = 33; /* RxRPC sockets 		*/
+pub const AF_ISDN: u64 = 34; /* mISDN sockets 		*/
+pub const AF_PHONET: u64 = 35; /* Phonet sockets		*/
+pub const AF_IEEE802154: u64 = 36; /* IEEE802154 sockets		*/
+pub const AF_CAIF: u64 = 37; /* CAIF sockets			*/
+pub const AF_ALG: u64 = 38; /* Algorithm sockets		*/
+pub const AF_NFC: u64 = 39; /* NFC sockets			*/
+pub const AF_VSOCK: u64 = 40; /* vSockets			*/
+pub const AF_KCM: u64 = 41; /* Kernel Connection Multiplexor*/
+pub const AF_QIPCRTR: u64 = 42; /* Qualcomm IPC Router          */
+pub const AF_SMC: u64 = 43; /* smc sockets: reserve number for
+                             * PF_SMC protocol family that
+                             * reuses AF_INET address family
+                             */
+pub const AF_XDP: u64 = 44; /* XDP sockets			*/
+pub const AF_MCTP: u64 = 45; /* Management component
+                              * transport protocol
+                              */
+pub const AF_MAX: u64 = 46; /* For now.. */
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum IpProto {
+    IpprotoIp = 0,
+    IpprotoIcmp = 1,
+    IpprotoTcp = 6,
+    IpprotoUdp = 17,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct SockAddr {
+    pub sa_family: u16,
+    pub sa_data_min: [u8; 14],
+}
+
+impl SockAddr {
+    pub fn to_core_sockaddr(&self) -> SocketAddr {
+        let ip = Ipv4Addr::new(
+            self.sa_data_min[2],
+            self.sa_data_min[3],
+            self.sa_data_min[4],
+            self.sa_data_min[5],
+        );
+        let port = u16::from_be_bytes(self.sa_data_min[..2].try_into().unwrap());
+        SocketAddr::V4(SocketAddrV4::new(ip, port))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum SocketType {
+    SockStream = 1,
+    SockDgram = 2,
+    SockRaw = 3,
+    // May be not supported.
+    // pub const SOCK_RDM: u64 = 4;
+    // pub const SOCK_SEQPACKET: u64 = 5;
+    // pub const SOCK_DCCP: u64 = 6;
+    // pub const SOCK_PACKET: u64 = 10;
+}
 
 #[derive(Debug, Clone)]
 #[repr(C)]
@@ -85,6 +184,35 @@ pub struct Timespec {
 pub struct Timezone {
     pub tz_minuteswest: u32,
     pub tz_dsttime: u32,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct EpollEvent {
+    pub events: EpollFlags,
+    /// A pointer to the user data.
+    pub data: u64,
+}
+
+bitflags! {
+    #[derive(Default)]
+    pub struct EpollFlags: u32 {
+        const EPOLLIN = 0x001;
+        const EPOLLPRI = 0x002;
+        const EPOLLOUT = 0x004;
+        const EPOLLERR = 0x008;
+        const EPOLLHUP = 0x010;
+        const EPOLLRDNORM = 0x040;
+        const EPOLLRDBAND = 0x080;
+        const EPOLLWRNORM = 0x100;
+        const EPOLLWRBAND = 0x200;
+        const EPOLLMSG = 0x400;
+        const EPOLLRDHUP = 0x2000;
+        const EPOLLEXCLUSIVE = 0x10000000;
+        const EPOLLWAKEUP = 0x20000000;
+        const EPOLLONESHOT = 0x40000000;
+        const EPOLLET = 0x80000000;
+    }
 }
 
 #[derive(Debug, Clone)]

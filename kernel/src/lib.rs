@@ -11,6 +11,8 @@
 #![allow(unused_variables)]
 #![allow(unreachable_code)]
 #![allow(dead_code)]
+#![feature(addr_parse_ascii)]
+#![feature(ip_in_core)]
 #![feature(atomic_from_mut)]
 #![feature(naked_functions)]
 #![feature(c_size_t)]
@@ -30,6 +32,7 @@ pub mod drivers;
 pub mod elf;
 pub mod fs;
 pub mod irq;
+pub mod net;
 pub mod sys;
 
 #[macro_use]

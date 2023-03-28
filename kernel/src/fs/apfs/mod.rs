@@ -180,7 +180,7 @@ impl SpaceManager {
 
 impl AppleFileSystem {
     /// Cast `self` into atomic reference counter.
-    fn as_arc(self) -> KResult<Arc<Self>> {
+    fn to_arc(self) -> KResult<Arc<Self>> {
         let fs = Arc::new(self);
         let weak = Arc::downgrade(&fs);
         let ptr = Arc::into_raw(fs) as *mut Self;
@@ -281,9 +281,7 @@ impl AppleFileSystem {
                         spaceman.write(object.clone());
                     }
                 }
-                ty => {
-                    kwarn!("unhandled checkpoint type {:?}", ty);
-                }
+                _ => (),
             }
         }
 
@@ -300,7 +298,7 @@ impl AppleFileSystem {
             inodes: RwLock::new(BTreeMap::new()),
             spaceman: RwLock::new(spaceman),
         }
-        .as_arc()
+        .to_arc()
     }
 
     /// Mounts all volumns
@@ -410,9 +408,9 @@ impl AppleFileSystem {
         }) {
             Some(volumn) => match volumn.fs_map.read().dir_record_map.get(&drec_key) {
                 Some(e) => Ok(e.clone()),
-                None => return Err(Errno::ENOENT),
+                None => Err(Errno::ENOENT),
             },
-            None => return Err(Errno::ENOENT),
+            None => Err(Errno::ENOENT),
         }
     }
 
@@ -472,7 +470,7 @@ impl AppleFileSystem {
                     id: drec.file_id,
                     volumn: volumn.clone(),
                     apfs: self.self_ptr.upgrade().unwrap(),
-                    inode_inner: RwLock::new(MaybeDirty::new(inode_val.clone())),
+                    inode_inner: RwLock::new(MaybeDirty::new(inode_val)),
                     file_extent,
                     dir_record: RwLock::new(MaybeDirty::new(drec.clone())),
                 });
@@ -489,10 +487,9 @@ impl AppleFileSystem {
         let drec = self
             .get_drec(ROOT_DIR_RECORD_ID, "root", volumn_name)
             .expect("No root directory record. APFS is mounted incorrectly");
-        let root = self
-            .get_inode(&drec, volumn_name)
-            .expect("No root inode found");
-        root
+
+        self.get_inode(&drec, volumn_name)
+            .expect("No root inode found") as _
     }
 
     /// Creates a new INode.
@@ -509,8 +506,8 @@ impl AppleFileSystem {
         let mut fs_map = volumn.fs_map.write();
         fs_map
             .dir_record_map
-            .insert(dir_record_key.clone(), dir_record.clone());
-        fs_map.inode_map.insert(inode_key.clone(), inode.clone());
+            .insert(dir_record_key, dir_record.clone());
+        fs_map.inode_map.insert(inode_key, inode.clone());
 
         let new_inode = Arc::new(AppleFileSystemInode {
             id,

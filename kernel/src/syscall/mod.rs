@@ -14,6 +14,7 @@ use crate::{
 mod fs;
 mod id;
 mod mem;
+mod net;
 mod others;
 mod process;
 mod signal;
@@ -21,6 +22,7 @@ mod signal;
 pub use fs::*;
 pub use id::*;
 pub use mem::*;
+pub use net::*;
 pub use others::*;
 pub use process::*;
 pub use signal::*;
@@ -419,6 +421,7 @@ async fn do_handle_syscall(
     match syscall_number {
         SYS_READ => sys_read(thread, ctx, syscall_registers).await,
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
+        SYS_READV => sys_readv(thread, ctx, syscall_registers),
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
         SYS_IOCTL => sys_ioctl(thread, ctx, syscall_registers),
         SYS_STAT => sys_stat(thread, ctx, syscall_registers),
@@ -444,6 +447,11 @@ async fn do_handle_syscall(
         SYS_SCHED_YIELD => sys_sched_yield(thread, ctx, syscall_registers),
 
         SYS_ARCH_PRCTL => sys_arch_prctl(thread, ctx, syscall_registers),
+
+        SYS_SOCKET => sys_socket(thread, ctx, syscall_registers),
+        SYS_CONNECT => sys_connect(thread, ctx, syscall_registers),
+        SYS_BIND => sys_bind(thread, ctx, syscall_registers),
+        SYS_LISTEN => sys_listen(thread, ctx, syscall_registers),
 
         _ => {
             kerror!("unrecognized syscall number {:#x}", syscall_number);

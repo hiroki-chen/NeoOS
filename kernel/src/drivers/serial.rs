@@ -86,7 +86,7 @@ impl Driver for ComPort {
     }
 
     fn ty(&self) -> super::Type {
-        super::Type::SERIAL
+        super::Type::Serial
     }
 
     fn uuid(&self) -> &'static str {

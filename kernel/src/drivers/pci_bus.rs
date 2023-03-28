@@ -3,12 +3,13 @@
 //!
 //! This module probes devices on the BUS and initialize them.
 
+use alloc::format;
 use pci::{CSpaceAccessMethod, Location, PCIDevice, PortOps, BAR};
 use x86_64::instructions::port::Port;
 
 use crate::{
-    drivers::{block::init_ahci, PCI_DRIVERS},
-    error::{Errno, KResult},
+    drivers::{block::init_ahci, intel_100e::init_network, PCI_DRIVERS},
+    error::KResult,
     function, kdebug, kinfo,
     memory::phys_to_virt,
 };
@@ -58,7 +59,7 @@ pub fn init_pci() -> KResult<()> {
     let devices_connected = unsafe { pci::scan_bus(&Ops, CSpaceAccessMethod::IO) };
 
     for device in devices_connected.into_iter() {
-        kdebug!(
+        kinfo!(
             "init_pci(): {:02x}:{:02x}.{} {:#x} {:#x} ({} {}) irq: {}:{:?}",
             device.loc.bus,
             device.loc.device,
@@ -83,12 +84,8 @@ fn init_device(device: &PCIDevice) -> KResult<()> {
         // Mass storage class
         // SATA subclass
         if let Some(BAR::Memory(addr, len, _, _)) = device.bars[5] {
-            kdebug!(
-                "init_device(): Found AHCI dev {:?} BAR5 {:x?}",
-                device,
-                addr
-            );
-            let _irq = unsafe { enable_irq(device.loc) };
+            kinfo!("Found AHCI dev {:?} BAR5 {:x?}", device, addr);
+            unsafe { enable_irq(device.loc) }.unwrap_or_default();
 
             let vaddr = phys_to_virt(addr);
             match init_ahci(vaddr as usize, len as usize) {
@@ -100,10 +97,27 @@ fn init_device(device: &PCIDevice) -> KResult<()> {
         }
     }
 
+    if device.id.vendor_id == 0x8086 && [0x100e, 0x10d3, 0x100f].contains(&device.id.device_id) {
+        if let Some(BAR::Memory(addr, len, _, _)) = device.bars[0] {
+            // Intel ethernet controller.
+            kinfo!("found Intel ethernet controller!");
+            let irq = unsafe { enable_irq(device.loc) }.map(|irq| irq as u8);
+
+            let vaddr = phys_to_virt(addr);
+            let interface_name = format!("ens{}f{}", device.loc.device, device.loc.function);
+            match init_network(irq, vaddr as usize, len as usize, interface_name) {
+                Ok(driver) => {
+                    PCI_DRIVERS.lock().entry(device.loc).or_insert(driver);
+                }
+                Err(errno) => return Err(errno),
+            }
+        }
+    }
+
     Ok(())
 }
 
-unsafe fn enable_irq(loc: Location) -> KResult<usize> {
+unsafe fn enable_irq(loc: Location) -> Option<usize> {
     let ops = &Ops;
     let am = CSpaceAccessMethod::IO;
 
@@ -163,8 +177,5 @@ unsafe fn enable_irq(loc: Location) -> KResult<usize> {
 
     kinfo!("enable_irq(): pci device enable done");
 
-    match assigned_irq {
-        Some(irq) => Ok(irq),
-        None => Err(Errno::EEXIST),
-    }
+    assigned_irq
 }

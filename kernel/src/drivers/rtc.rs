@@ -104,7 +104,7 @@ impl Driver for RealTimeClock {
     }
 
     fn ty(&self) -> Type {
-        Type::RTC
+        Type::Rtc
     }
 
     fn uuid(&self) -> &'static str {

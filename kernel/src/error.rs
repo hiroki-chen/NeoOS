@@ -42,6 +42,7 @@ pub enum Errno {
     EDOM,
     ERANGE,
     EWOULDBLOCK,
+    ECONNREFUSED = 3425,
 }
 
 /// The return value that indicates a successful execution ([`Ok`]) or failure ([`Err`]).

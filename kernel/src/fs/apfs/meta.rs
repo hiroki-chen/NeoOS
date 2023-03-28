@@ -606,6 +606,12 @@ impl JFileExtentVal {
         (self.len_and_flags & J_FILE_EXTENT_LEN_MASK) as _
     }
 
+    /// Checks if empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Gets the block number of this data stream.
     #[inline]
     pub fn block_len(&self) -> usize {
@@ -932,8 +938,7 @@ impl BTreeKey for JDrecHashedKey {
         // 4. Compute the CRC-32C hash of the UTF-32 string.
         let nfd_name = nfd_name
             .chars()
-            .map(|c| (c as u32).to_be_bytes())
-            .flatten()
+            .flat_map(|c| (c as u32).to_be_bytes())
             .collect::<Vec<_>>();
         let hash_res = !CASTAGNOLI.checksum(nfd_name.as_slice()) & 0x7fffff;
 
@@ -1364,7 +1369,7 @@ impl BTreeNodePhysical {
                     if ObjectTypes::from_bits_truncate((self.btn_o.o_type & 0xff) as _).intersects(
                         ObjectTypes::OBJECT_TYPE_BTREE_NODE | ObjectTypes::OBJECT_TYPE_BTREE,
                     ) {
-                        queue.push_back(node_cur.clone());
+                        queue.push_back(node_cur);
                     }
                 });
             } else {
@@ -1411,8 +1416,8 @@ impl BTreeNodePhysical {
 
         let mut omap = ObjectMap::new();
         self.level_traverse(device, |key, val| unsafe {
-            let key_obj = (&*(key.as_ptr() as *const ObjectMapKey)).clone();
-            let val_obj = (&*(val.as_ptr() as *const ObjectMapValue)).clone();
+            let key_obj = (*(key.as_ptr() as *const ObjectMapKey)).clone();
+            let val_obj = (*(val.as_ptr() as *const ObjectMapValue)).clone();
             omap.insert(key_obj, val_obj);
         })?;
 
@@ -1437,9 +1442,9 @@ impl BTreeNodePhysical {
         for i in (toc_off..toc_off + toc_len * key_size as u32).step_by(key_size) {
             let entry = unsafe {
                 if fixed {
-                    TocEntry::Off((&*(self.btn_data.as_ptr().add(i as _) as *const KvOff)).clone())
+                    TocEntry::Off((*(self.btn_data.as_ptr().add(i as _) as *const KvOff)).clone())
                 } else {
-                    TocEntry::Loc((&*(self.btn_data.as_ptr().add(i as _) as *const KvLoc)).clone())
+                    TocEntry::Loc((*(self.btn_data.as_ptr().add(i as _) as *const KvLoc)).clone())
                 }
             };
             toc.push(entry);
@@ -1514,28 +1519,28 @@ impl BTreeNodePhysical {
             let ty = &*(key.as_ptr() as *const JKey);
             match ty.get_type() {
                 APFS_TYPE_DIR_REC => {
-                    let key_obj = (&*(key.as_ptr() as *const JDrecHashedKey)).clone();
-                    let val_obj = (&*(val.as_ptr() as *const JDrecVal)).clone();
+                    let key_obj = (*(key.as_ptr() as *const JDrecHashedKey)).clone();
+                    let val_obj = (*(val.as_ptr() as *const JDrecVal)).clone();
                     fs_map.dir_record_map.insert(key_obj, val_obj);
                 }
                 APFS_TYPE_INODE => {
-                    let key_obj = (&*(key.as_ptr() as *const JInodeKey)).clone();
-                    let val_obj = (&*(val.as_ptr() as *const JInodeVal)).clone();
+                    let key_obj = (*(key.as_ptr() as *const JInodeKey)).clone();
+                    let val_obj = (*(val.as_ptr() as *const JInodeVal)).clone();
                     fs_map.inode_map.insert(key_obj, val_obj);
                 }
                 APFS_TYPE_EXTENT => {
-                    let key_obj = (&*(key.as_ptr() as *const JPhysExtKey)).clone();
-                    let val_obj = (&*(val.as_ptr() as *const JPhysExtVal)).clone();
+                    let key_obj = (*(key.as_ptr() as *const JPhysExtKey)).clone();
+                    let val_obj = (*(val.as_ptr() as *const JPhysExtVal)).clone();
                     fs_map.phys_ext_map.insert(key_obj, val_obj);
                 }
                 APFS_TYPE_FILE_EXTENT => {
-                    let key_obj = (&*(key.as_ptr() as *const JFileExtentKey)).clone();
-                    let val_obj = (&*(val.as_ptr() as *const JFileExtentVal)).clone();
+                    let key_obj = (*(key.as_ptr() as *const JFileExtentKey)).clone();
+                    let val_obj = (*(val.as_ptr() as *const JFileExtentVal)).clone();
                     fs_map.file_extent_map.insert(key_obj, val_obj);
                 }
                 APFS_TYPE_DIR_STATS => {
-                    let key_obj = (&*(key.as_ptr() as *const JDirStatKey)).clone();
-                    let val_obj = (&*(val.as_ptr() as *const JDirStatVal)).clone();
+                    let key_obj = (*(key.as_ptr() as *const JDirStatKey)).clone();
+                    let val_obj = (*(val.as_ptr() as *const JDirStatVal)).clone();
                     fs_map.dir_stat_map.insert(key_obj, val_obj);
                 }
                 other => (),

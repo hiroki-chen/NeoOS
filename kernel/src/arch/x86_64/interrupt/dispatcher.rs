@@ -16,9 +16,11 @@ use crate::{
             pretty_interpret,
         },
     },
-    cpu_idle,
     drivers::IRQ_MANAGER,
-    process::thread::{current, Thread, ThreadContext},
+    process::{
+        scheduler::FIFO_SCHEDULER,
+        thread::{current, Thread, ThreadContext},
+    },
     signal::{send_signal, SiFields, SigInfo, Signal},
     syscall::handle_syscall,
 };
@@ -124,9 +126,12 @@ pub async fn trap_dispatcher_user(
             *exited = handle_syscall(thread, ctx).await;
             true
         }
-        tf => {
-            kerror!("spawn(): not supported {:#x}.", tf);
-            false
+        ipi => {
+            if (IpiType::TlbFlush as u8..=IpiType::Others as u8).contains(&(ipi as u8)) {
+                handle_ipi(ipi as _)
+            } else {
+                panic!("__trap_dispatcher(): unrecognized type {:#x?}!", ipi)
+            }
         }
     }
 }
@@ -185,7 +190,9 @@ fn handle_ipi(ipi: u8) -> bool {
     match unsafe { core::mem::transmute::<u8, IpiType>(ipi as _) } {
         IpiType::TlbFlush => flush_all(),
         // Does nothing.
-        IpiType::WakeUp => cpu_idle(),
+        IpiType::WakeUp => FIFO_SCHEDULER.load_balance(),
+        // Do something with the runqueue.
+        IpiType::Sched => FIFO_SCHEDULER.migrate_task(),
         IpiType::Others => AbstractCpu::current().unwrap().pop_event(),
     }
 

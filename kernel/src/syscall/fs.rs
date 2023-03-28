@@ -209,6 +209,34 @@ pub fn sys_write(
     Ok(0)
 }
 
+/// The readv() system call reads iovcnt buffers from the file associated with the file descriptor fd into the buffers
+/// described by iov ("scatter input").
+///
+/// ```c
+/// struct iovec {
+///     void  *iov_base;    /* Starting address */
+///     size_t iov_len;     /* Number of bytes to transfer */
+/// };
+/// ```
+///
+/// Musl invokes this syscall to do `__stdio_write`.
+pub fn sys_readv(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let fd = syscall_registers[0];
+    let iov_addr = syscall_registers[1];
+    let iov_count = syscall_registers[2];
+
+    let mut proc = thread.parent.lock();
+    let file = proc.get_fd(fd)?;
+
+    // Collec the vector to be read.
+
+    Ok(0)
+}
+
 /// The writev() system call writes iovcnt buffers of data described by iov to the file associated with the file
 /// descriptor fd. ("gather output"). The pointer iov points to an array of iovec structures, defined in <sys/uio.h>
 /// as:

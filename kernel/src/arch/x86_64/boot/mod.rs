@@ -20,7 +20,8 @@ use crate::{
     kmain,
     logging::init_env_logger,
     memory::init_heap,
-    LOG_LEVEL, process::scheduler::FIFO_SCHEDULER,
+    process::scheduler::FIFO_SCHEDULER,
+    LOG_LEVEL,
 };
 
 use super::cpu::ApHeader;

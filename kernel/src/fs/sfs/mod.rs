@@ -345,7 +345,7 @@ impl INodeImpl {
                 let mut disk_block_id: u32 = 0;
                 self.fs.device.read_block(
                     indirect_block_id as usize,
-                    ENTRY_SIZE * (indirect_id as usize % BLK_NENTRY),
+                    ENTRY_SIZE * (indirect_id % BLK_NENTRY),
                     disk_block_id.as_buf_mut(),
                 )?;
                 assert!(disk_block_id > 0);
@@ -383,7 +383,7 @@ impl INodeImpl {
                 let disk_block_id = disk_block_id as u32;
                 self.fs.device.write_block(
                     indirect_block_id as usize,
-                    ENTRY_SIZE * (indirect_id as usize % BLK_NENTRY),
+                    ENTRY_SIZE * (indirect_id % BLK_NENTRY),
                     disk_block_id.as_buf(),
                 )?;
                 Ok(())
@@ -394,9 +394,9 @@ impl INodeImpl {
     /// Only for Dir
     fn get_file_inode_and_entry_id(&self, name: &str) -> Option<(INodeId, usize)> {
         (0..self.disk_inode.read().size as usize / DIRENT_SIZE)
-            .map(|i| (self.read_direntry(i as usize).unwrap(), i))
+            .map(|i| (self.read_direntry(i).unwrap(), i))
             .find(|(entry, _)| entry.name.as_ref() == name)
-            .map(|(entry, id)| (entry.id as INodeId, id as usize))
+            .map(|(entry, id)| (entry.id as INodeId, id))
     }
     fn get_file_inode_id(&self, name: &str) -> Option<INodeId> {
         self.get_file_inode_and_entry_id(name)

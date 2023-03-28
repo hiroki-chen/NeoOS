@@ -5,6 +5,7 @@
 //! flags and pointers that are used to manage the file.
 
 use alloc::{
+    boxed::Box,
     string::{String, ToString},
     sync::Arc,
 };
@@ -14,10 +15,11 @@ use spin::RwLock;
 
 use crate::{
     error::{fserror_to_kerror, Errno, KResult},
+    net::Socket,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use super::apfs::meta::get_timespec;
+use super::{apfs::meta::get_timespec, epoll::EpollInstance};
 
 bitflags! {
         #[derive(Default)]
@@ -335,12 +337,13 @@ impl File {
 }
 
 /// Anything that looks like a `file`.
-#[derive(Clone)]
 pub enum FileObject {
     /// A regular file object.
     File(File),
     /// A socket.
-    Socket,
+    Socket(Box<dyn Socket>),
+    /// An epoll instance.
+    Epoll(EpollInstance),
 }
 
 impl FileObject {

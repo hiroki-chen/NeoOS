@@ -25,8 +25,10 @@ pub enum IpiType {
     TlbFlush = 0x40,
     /// Indicates that the target CPU(s) should be woken up.
     WakeUp = 0x41,
+    /// The SCHED IPI used to notify the target core that it needs to migrate its runqueue.
+    Sched = 0x42,
     /// Other Ipi types. This carries a callback for the target CPU to be exeucted.
-    Others = 0x42,
+    Others = 0x43,
 }
 
 /// This function deals with sending the initial IPI to the corresponding APs to indicate that they should be awaken.
