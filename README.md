@@ -91,3 +91,34 @@ Image resized.
 ```
 
 I have checked the correctness of the this tool using my own Rust library for APFS parsing.
+
+## Running NeoOS on macOS
+
+Yes, this kernel can be run on macOS! So one can easily use MacBook to do some tests. The following steps illustrate how to prepare necessary build and execution environment for you Mac. Note however, that compatibility on M1/M2 Macs is not tested.
+
+* Install homwbrew if you do not have it.
+* Install qemu on Mac via homwbrew.
+* Install musl-gcc-cross for macOS:
+
+```sh
+brew install filosottile/musl-cross/musl-cross
+```
+
+* Execute the shell script to install musl micro runtime:
+
+```sh
+chmod +x ./prepare_darwin.sh
+./prepare_darwin.sh
+```
+
+* Install `nasm` via homebrew.
+* Install rust toolchain if you do not have it. This is done by:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+echo 'source $HOME/.cargo/env' >> ~/.zshrc # or ~/.bashrc
+rustup -V
+rustup component add rust-src llvm-tools-preview --toolchain `cat rust-toolchain`-x86_64-apple-darwin
+```
+
+That's it.
