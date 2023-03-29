@@ -54,7 +54,7 @@ ifeq ($(UNAME), Darwin)
 else
 	QEMU_COMMAND += -enable-kvm \
 			-netdev type=tap,id=net0,script=no,downscript=no \
-			-device e1000e,netdev=net0 \
+			-device e1000e,netdev=net0
 endif
 
 ifeq ($(DEBUG), 1)
@@ -83,7 +83,7 @@ ifeq ($(UNAME), Darwin)
 		hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount $(DISK) | \
 		xargs -I {} newfs_apfs -v "untitled" {}
 	@$(DISKUTIL_GET) | xargs -I {} diskutil mountDisk {}
-# Assuming no conflicting name.
+
 	@cd /Volumes/untitled && mkdir dev lib proc
 	@cd $(WORK_DIR) && cp -r bin /Volumes/untitled
 	@$(DISKUTIL_GET) | xargs -I {} hdiutil detach {}

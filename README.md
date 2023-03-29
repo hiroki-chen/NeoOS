@@ -57,6 +57,7 @@ target remote :1234
 * Implement the socket.
   * `accept()` will block the process forever because `poll()` returns false forever.
 * Reduce memory consumption.
+* Support xAPIC (macOS does not support x2APIC).
 * Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
 
 ## Advanced Programmable Interrupt Controller (APIC)

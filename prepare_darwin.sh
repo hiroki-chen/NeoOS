@@ -17,4 +17,3 @@ sudo cp -r ../x86_64-linux-musl-cross/x86_64-linux-musl/include /usr/local/inclu
 sudo cp -r ../x86_64-linux-musl-cross/x86_64-linux-musl/lib /usr/local/lib/x86_64-linux-musl
 
 echo "[-] Preparing musl-gcc OK"
-
