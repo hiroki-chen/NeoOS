@@ -21,7 +21,7 @@ lazy_static! {
     pub static ref UNWIND_DEPTH: usize = option_env!("RUST_BACKTRACE")
         .unwrap()
         .parse::<usize>()
-        .unwrap_or(0x5);
+        .unwrap_or(0x10);
 }
 
 /// Records backtrace-revelant register values.

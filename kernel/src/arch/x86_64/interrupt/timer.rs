@@ -39,7 +39,7 @@ pub fn tick_millisecond() -> Duration {
 }
 
 pub fn handle_timer() {
-    if cpu_id() == *BSP_ID.get().unwrap() as usize {
+    if cpu_id() == *BSP_ID.get().unwrap_or(&0) as usize {
         MONOTONIC_TICK.fetch_add(0x1, Ordering::Relaxed);
         // Only the primary core can do tick.
         let prev = TICK.fetch_add(0x1, Ordering::Release);

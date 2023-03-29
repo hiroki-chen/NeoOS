@@ -10,11 +10,10 @@
 
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use log::debug;
 
 use crate::arch::{
     acpi::AP_STARTUP,
-    apic::X2Apic,
+    apic::{ApicType, LOCAL_APIC},
     cpu::{cpu_id, CPUS, CPU_NUM},
 };
 
@@ -40,11 +39,17 @@ pub enum IpiType {
 /// # References
 /// * https://stackoverflow.com/questions/40083533/what-is-the-effect-of-startup-ipi-on-application-processor
 pub fn send_init_ipi(dst: u64) {
-    debug!("send_init_ipi(): sending INIT IPI to {:#x}...", dst);
+    kinfo!("sending INIT IPI to {:#x}...", dst);
+
+    let lock = LOCAL_APIC.read();
+    let lapic = lock.get(&cpu_id()).unwrap();
     // Select IPI.
-    let icr = 0x4500 | dst << 32;
-    // By default, we use x2APIC.
-    let lapic = X2Apic;
+    let icr = match lapic.ty() {
+        ApicType::X2Apic => 0x4500 | dst << 32,
+        ApicType::XApic => 0x4500 | dst << 56,
+        ApicType::None => panic!("invalid APIC"),
+    };
+
     lapic.set_icr(icr);
 }
 
@@ -56,12 +61,19 @@ pub fn send_init_ipi(dst: u64) {
 /// for SIPI state". Some (most) CPUs will respond to a Startup IPI when they aren't in the "wait for SIPI state",
 /// but without a previous INIT IPI you can't expect the CPU to be in a known/safe state at the time.
 pub fn send_startup_ipi(dst: u64) {
-    debug!("send_startup_ipi(): sending startup IPI to {:#x}...", dst);
+    kinfo!("sending startup IPI to {:#x}...", dst);
     // Start at 0x1000:0000 => 0x10000.
     let ap_segment = (AP_STARTUP >> 12) & 0xff;
-    let icr = 0x4600 | dst << 32 | ap_segment;
-    // By default, we use x2APIC.
-    let lapic = X2Apic;
+
+    let lock = LOCAL_APIC.read();
+    let lapic = lock.get(&cpu_id()).unwrap();
+    // Select IPI.
+    let icr = match lapic.ty() {
+        ApicType::X2Apic => 0x4600 | ap_segment | dst << 32,
+        ApicType::XApic => 0x4600 | ap_segment | dst << 56,
+        ApicType::None => panic!("invalid APIC"),
+    };
+
     lapic.set_icr(icr);
 }
 
@@ -79,7 +91,8 @@ where
     T: Fn() + Send + Sync + 'static,
 {
     let this_cpu = cpu_id();
-    let lapic = X2Apic;
+    let lock = LOCAL_APIC.read();
+    let lapic = lock.get(&cpu_id()).unwrap();
     let cb = Arc::new(cb);
     let finished = Arc::new(AtomicUsize::new(0x0));
 

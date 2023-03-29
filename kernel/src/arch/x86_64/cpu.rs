@@ -17,7 +17,7 @@ use x86_64::{
 
 use crate::{
     arch::{
-        apic::{AcpiSupport, X2Apic},
+        apic::{init_apic, LOCAL_APIC},
         pit::countdown,
     },
     error::{Errno, KResult},
@@ -334,14 +334,12 @@ pub fn print_cpu_topology() {
 
 /// Initialize the Advanced Programmable Interrupt Controller.
 pub fn init_cpu() -> KResult<()> {
-    if !X2Apic::does_cpu_support() {
-        log::error!("init_cpu(): CPU does not support x2APIC");
-        return Err(Errno::EINVAL);
-    }
+    init_apic()?;
 
-    let lapic = X2Apic {};
-    lapic.init();
-    kinfo!("init_cpu(): {:#x?}", lapic.get_info());
+    kinfo!(
+        "init_cpu(): {:#x?}",
+        LOCAL_APIC.read().get(&cpu_id()).unwrap().get_info(),
+    );
 
     unsafe {
         enable_float_processing_unit();

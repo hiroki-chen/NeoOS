@@ -2,17 +2,13 @@ use core::{sync::atomic::Ordering, time::Duration};
 
 use atomic_enum::atomic_enum;
 use lazy_static::lazy_static;
-use x86::msr::{
-    rdmsr, wrmsr, IA32_X2APIC_CUR_COUNT, IA32_X2APIC_DIV_CONF, IA32_X2APIC_INIT_COUNT,
-    IA32_X2APIC_LVT_TIMER,
-};
 
-use crate::{
-    arch::{apic::disable_irq, interrupt::timer::APIC_UP, pit::countdown},
-    error::{Errno, KResult},
-};
+use crate::error::{Errno, KResult};
 
-use super::cpu::CPU_FREQUENCY;
+use super::{
+    apic::LOCAL_APIC,
+    cpu::{cpu_id, CPU_FREQUENCY},
+};
 
 /// Local APIC timer modes.
 #[derive(Debug, Copy, Clone)]
@@ -82,39 +78,6 @@ pub fn init_apic_timer() -> KResult<()> {
             kerror!("init_apic_timer(): The timer source is at higher priority!");
             Err(Errno::EINVAL)
         }
-        _ => {
-            unsafe {
-                // Measure the bus frequency for a fixed time interval.
-                // This time we use PIT temporarrily.
-                x86_64::instructions::interrupts::without_interrupts(|| {
-                    // Tell APIC timer to use divider 16.
-                    wrmsr(IA32_X2APIC_DIV_CONF, 0x3);
-                    // Set the initial count to -1.
-                    wrmsr(IA32_X2APIC_INIT_COUNT, 0xFFFFFFFF);
-
-                    // wait for 10 ms.
-                    countdown(10000);
-
-                    APIC_UP.store(true, Ordering::Release);
-                    // Stop the timer so that we can read from it.
-                    wrmsr(IA32_X2APIC_LVT_TIMER, 0x10000);
-                    let apic_timer_current = 0xFFFFFFFF - rdmsr(IA32_X2APIC_CUR_COUNT);
-                    // Now we know how often the APIC timer has ticked in 10ms.
-
-                    // Start timer as periodic on IRQ 0, divider 16, with the number of ticks we counted
-                    wrmsr(IA32_X2APIC_LVT_TIMER, 0x20 | 0x20000);
-                    wrmsr(IA32_X2APIC_DIV_CONF, 0x3);
-                    wrmsr(IA32_X2APIC_INIT_COUNT, apic_timer_current);
-
-                    kinfo!("init_apic_timer(): successfully initialized APIC timer.");
-
-                    // Disable the old PIT and switches to APIC timer.
-                    // This time, IRQ 0 is automatically reigstered for APIC timer.
-                    disable_irq(0x0);
-                });
-            }
-
-            Ok(())
-        }
+        _ => LOCAL_APIC.read().get(&cpu_id()).unwrap().init_timer(),
     }
 }

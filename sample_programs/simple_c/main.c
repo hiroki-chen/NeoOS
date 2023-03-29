@@ -18,20 +18,23 @@ int main() {
   printf("      '.          .'\n");
   printf("        '-......-'\n");
 
-  char buf[100];
-  getcwd(buf, sizeof(buf));
-  printf("The current working directory is %s\n", buf);
+  int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  struct sockaddr_in server_address;
+  server_address.sin_family = AF_INET;
+  server_address.sin_port = htons(80);
+  server_address.sin_addr.s_addr = inet_addr("10.0.1.2");
 
-  int pid = getpid();
-  printf("pid is %d\n", pid);
+  int bind_status =
+      bind(s, (struct sockaddr*)(&server_address), sizeof(server_address));
+  int listen_status = listen(s, 0);
+  printf("got socket %d with bind status %d and listen status %d\n", s,
+         bind_status, listen_status);
 
-  char* env = getenv("PATH");
-  printf("path = %s\n", env);
-
-  for (;;) {
-    char buf[10] = {0};
-    scanf("%s", buf);
-    printf("read %s\n", buf);
+  size_t len = 0;
+  int accept_result =
+      accept(s, (struct sockaddr*)(&server_address), (socklen_t*)&len);
+  printf("accept with %d\n", accept_result);
+  while (1) {
   }
 
   return 0;

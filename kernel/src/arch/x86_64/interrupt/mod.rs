@@ -111,7 +111,7 @@ use self::{
     syscall::__sysreturn,
 };
 
-use super::apic::X2Apic;
+use super::{apic::LOCAL_APIC, cpu::cpu_id};
 
 // Defines a enumeration over CPU auto-generated interrupts.
 pub const DIVIDE_BY_ZERO_INTERRUPT: usize = 0x00;
@@ -345,8 +345,7 @@ pub unsafe fn disable() {
 pub fn eoi(irq: u8) {
     match IRQ_TYPE.load(Ordering::Acquire) {
         IrqType::Apic => {
-            let lapic = X2Apic;
-            lapic.eoi();
+            LOCAL_APIC.read().get(&cpu_id()).unwrap().eoi();
         }
         IrqType::Pic => {
             MASTER_PIC.write().ack();

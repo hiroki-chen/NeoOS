@@ -39,13 +39,11 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
     match tf.trap_num {
         BREAKPOINT_INTERRUPT => dump_all(tf),
         GENERAL_PROTECTION_INTERRUPT => {
-            kerror!("__trap_dispatcher(): segmentation fault!");
-            arch::cpu::die()
+            panic!("__trap_dispatcher(): segmentation fault! dumped {:#x?}", tf);
         }
         PAGE_FAULT_INTERRUPT => page_fault(tf),
         DOUBLE_FAULT_INTERRUPT => {
-            kerror!("__trap_dispatcher(): interrupt cannot be handled! CPU is dead.");
-            arch::cpu::die()
+            panic!("__trap_dispatcher(): interrupt cannot be handled! CPU is dead.");
         }
         IRQ_MIN..=IRQ_MAX => {
             handle_irq(tf.trap_num as _, false, None);

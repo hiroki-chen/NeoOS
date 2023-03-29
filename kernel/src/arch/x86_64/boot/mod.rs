@@ -43,20 +43,20 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     // Initialize the serial port for logging.
     init_all_serial_ports();
 
-    kwarn!("_start(): logger started!");
-    kinfo!("_start(): logging level is {}", *LOG_LEVEL);
-    kinfo!("_start(): heap starts at {:#x}", heap);
+    kwarn!("logger started!");
+    kinfo!("logging level is {}", *LOG_LEVEL);
+    kinfo!("heap starts at {:#x}", heap);
 
     if let Err(errno) = init_kernel_page_table() {
         panic!(
-            "_start(): failed to initialize kernel page tables! Errno: {:?}",
+            "failed to initialize kernel page tables! Errno: {:?}",
             errno
         );
     }
-    kinfo!("_start(): initialized kernel page tables");
+    kinfo!("initialized kernel page tables");
 
     // Print boot header.
-    kdebug!("_start(): boot header:\n{:#x?}", header);
+    kdebug!("boot header:\n{:#x?}", header);
     // Initialize the memory management (paging).
     if let Err(errno) = init_mm(header) {
         panic!(
@@ -64,7 +64,7 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
             errno
         );
     }
-    kinfo!("_start(): initialized memory management.");
+    kinfo!("initialized memory management.");
 
     // Initialize the interrupt-related data structures and handlers.
     if let Err(errno) = init_interrupt_all() {
@@ -73,41 +73,36 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
             errno
         );
     }
-    kinfo!("_start(): initialized traps, syscalls and interrupts.");
+    kinfo!("initialized traps, syscalls and interrupts.");
 
     if let Err(errno) = init_cpu() {
-        panic!("_start(): failed to initialize CPU #0. Errno: {:?}", errno);
+        panic!("failed to initialize CPU #0. Errno: {:?}", errno);
     }
-    kinfo!("_start(): initialized x2APIC.");
+    kinfo!("initialized xAPIC/x2APIC.");
 
     print_cpu_topology();
 
     if let Err(errno) = init_pci() {
-        panic!("_start(): failed to initialize PCI. Errno: {:?}", errno);
+        panic!("failed to initialize PCI. Errno: {:?}", errno);
     }
-    kinfo!("_start(): initialized PCI devices.");
+    kinfo!("initialized PCI devices.");
 
     init_keyboard();
-    kinfo!("_start(): initialized keyboard.");
+    kinfo!("initialized keyboard.");
 
     if let Err(errno) = init_acpi(header) {
-        panic!(
-            "_start(): failed to initialize the ACPI table! Errno: {:?}",
-            errno
-        );
+        panic!("failed to initialize the ACPI table! Errno: {:?}", errno);
     }
-    kinfo!("_start(): initialized ACPI.");
+    kinfo!("initialized ACPI.");
 
     measure_frequency();
 
     if TIMER_SOURCE.load(Ordering::Relaxed) != TimerSource::Hpet {
         if let Err(errno) = init_apic_timer() {
-            panic!(
-                "_start(): failed to initialize the APIC timer due to {:?}",
-                errno
-            );
+            panic!("failed to initialize the APIC timer due to {:?}", errno);
         }
     }
+    kinfo!("initialized APIC timer");
 
     FIFO_SCHEDULER.init();
     crate::process::thread::debug_threading();
@@ -133,7 +128,7 @@ pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
     }
 
     let header = ApHeader::from_raw(ap_header);
-    kdebug!("_start_ap(): reading header: {:#x?}", header);
+    kdebug!("reading header: {:#x?}", header);
 
     // Setup interrupt and related data structures.
     if let Err(errno) = init_interrupt_all() {
@@ -142,7 +137,7 @@ pub unsafe extern "C" fn _start_ap(ap_header: *mut ApHeader) -> ! {
             errno
         );
     }
-    kinfo!("_start(): initialized traps, syscalls and interrupts.");
+    kinfo!("initialized traps, syscalls and interrupts.");
 
     if let Err(errno) = init_cpu() {
         let cpu_id = cpu_id();

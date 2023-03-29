@@ -34,8 +34,10 @@ DISKUTIL_GET	?= diskutil list | grep /dev | tail -1 | awk '{print $$1}'
 
 ifeq ($(UNAME), Darwin)
 	UEFI := $(shell brew list qemu | grep edk2-x86_64-code.fd)
+	BUILD_COMMAND := cargo build
 else
 	UEFI := /usr/share/OVMF/OVMF_CODE.fd
+	BUILD_COMMAND := cargo build --features=x2apic
 endif
 
 # Need to add `sudo` to make sure QEMU can access /dev/net/tun: but why changing permission and user group
@@ -106,7 +108,7 @@ debug: kernel
 
 kernel: efi
 	@cd kernel && RUSTFLAGS=-g RUST_BACKTRACE=$(BACKTRACE) OS_LOG_LEVEL=$(OS_LOG_LEVEL) \
-			cargo build
+			$(BUILD_COMMAND)
 	@cp $(KERNEL_TARGET) $(KERNEL_IMAGE)
 
 efi:
