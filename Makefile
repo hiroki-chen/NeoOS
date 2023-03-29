@@ -29,7 +29,9 @@ TEST_IMAGE	?= $(KERNEL_IMAGE)
 DEBUG		?= 0
 DISK		?= disk.img
 DISK_SIZE	?= 10G
-QEMU_COMMAND	?= qemu-system-x86_64 -enable-kvm \
+# Need to add `sudo` to make sure QEMU can access /dev/net/tun: but why changing permission and user group
+# won't take any effect? Strange.
+QEMU_COMMAND	?= sudo qemu-system-x86_64 -enable-kvm \
 			-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
 			-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
 			-drive format=raw,file=fat:rw:esp \
@@ -37,6 +39,8 @@ QEMU_COMMAND	?= qemu-system-x86_64 -enable-kvm \
 			-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
 			-device ahci,id=ahci0 \
 			-device ide-hd,drive=sfsimg,bus=ahci0.0 \
+			-netdev type=tap,id=net0,script=no,downscript=no \
+			-device e1000e,netdev=net0 \
 			-cpu host
 
 ifeq ($(DEBUG), 1)
@@ -94,7 +98,7 @@ clean:
 	@rm -rf $(WORK_DIR)
 
 $(TEST_IMAGE): $(TEST_KERNEL)
-	gcc $^ -o $@ -no-pie -nostartfiles
+	@gcc $^ -o $@ -no-pie -nostartfiles
 
 test_run: efi $(TEST_IMAGE) hard_disk
 	@cp boot.cfg $(BOOT_DIR)

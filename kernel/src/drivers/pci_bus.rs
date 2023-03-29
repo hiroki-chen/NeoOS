@@ -8,7 +8,7 @@ use pci::{CSpaceAccessMethod, Location, PCIDevice, PortOps, BAR};
 use x86_64::instructions::port::Port;
 
 use crate::{
-    drivers::{block::init_ahci, intel_100e::init_network, PCI_DRIVERS},
+    drivers::{block::init_ahci, intel_e1000::init_network, PCI_DRIVERS},
     error::KResult,
     function, kdebug, kinfo,
     memory::phys_to_virt,
@@ -84,7 +84,7 @@ fn init_device(device: &PCIDevice) -> KResult<()> {
         // Mass storage class
         // SATA subclass
         if let Some(BAR::Memory(addr, len, _, _)) = device.bars[5] {
-            kinfo!("Found AHCI dev {:?} BAR5 {:x?}", device, addr);
+            kinfo!("found AHCI dev {:x?} BAR5 {:x?}", device, addr);
             unsafe { enable_irq(device.loc) }.unwrap_or_default();
 
             let vaddr = phys_to_virt(addr);
@@ -100,7 +100,11 @@ fn init_device(device: &PCIDevice) -> KResult<()> {
     if device.id.vendor_id == 0x8086 && [0x100e, 0x10d3, 0x100f].contains(&device.id.device_id) {
         if let Some(BAR::Memory(addr, len, _, _)) = device.bars[0] {
             // Intel ethernet controller.
-            kinfo!("found Intel ethernet controller!");
+            kinfo!(
+                "found Intel ethernet controller {:x?} BAR0 {:x?}",
+                device,
+                addr
+            );
             let irq = unsafe { enable_irq(device.loc) }.map(|irq| irq as u8);
 
             let vaddr = phys_to_virt(addr);
@@ -154,17 +158,13 @@ unsafe fn enable_irq(loc: Location) -> Option<usize> {
             // enable MSI interrupt, assuming 64bit for now
             am.write32(ops, loc, cap_ptr + PCI_MSI_CTRL_CAP, orig_ctrl | 0x10000);
             kdebug!(
-                "enable_irq(): MSI control {:#b}, enabling MSI interrupt {}",
+                " MSI control {:#b}, enabling MSI interrupt {}",
                 orig_ctrl >> 16,
                 irq
             );
             msi_found = true;
         }
-        kdebug!(
-            "enable_irq(): PCI device has cap id {} at {:#X}",
-            cap_id,
-            cap_ptr
-        );
+        kinfo!("PCI device has cap id {} at {:#X}", cap_id, cap_ptr);
         cap_ptr = am.read8(ops, loc, cap_ptr + 1) as u16;
     }
 
@@ -172,10 +172,10 @@ unsafe fn enable_irq(loc: Location) -> Option<usize> {
         // Use PCI legacy interrupt instead
         // IO Space | MEM Space | Bus Mastering | Special Cycles
         am.write32(ops, loc, PCI_COMMAND, (orig | 0xf) as u32);
-        kdebug!("enable_irq(): MSI not found, using PCI interrupt");
+        kinfo!("MSI not found, using PCI interrupt");
     }
 
-    kinfo!("enable_irq(): pci device enable done");
+    kinfo!(" pci device enable done");
 
     assigned_irq
 }

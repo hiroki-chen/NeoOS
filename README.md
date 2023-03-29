@@ -55,6 +55,7 @@ target remote :1234
 * Implement more device drivers.
 * Implement more system calls.
 * Implement the socket.
+  * `accept()` will block the process forever because `poll()` returns false forever.
 * Reduce memory consumption.
 * Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
 

@@ -121,7 +121,7 @@ pub async fn trap_dispatcher_user(
                 true
             }
         }
-        IRQ_MIN..IRQ_MAX => handle_irq(tf as _, true, Some(should_yield)),
+        IRQ_MIN..=IRQ_MAX => handle_irq(tf as _, true, Some(should_yield)),
         SYSCALL => {
             *exited = handle_syscall(thread, ctx).await;
             true

@@ -202,7 +202,18 @@ impl IntelEthernetController {
 
 impl Driver for IntelEthernetController {
     fn dispatch(&self, irq: Option<u64>) -> bool {
-        true
+        // By default we check by matching the irq.
+        if irq.map(|irq| irq as u8).unwrap_or(u8::MAX) == self.irq.unwrap_or(u8::MAX) {
+            match self.driver.inner.lock().handle_interrupt() {
+                true => {
+                    self.poll();
+                    true
+                }
+                false => false,
+            }
+        } else {
+            false
+        }
     }
 
     fn ty(&self) -> Type {
@@ -314,6 +325,9 @@ pub fn init_network(
         IRQ_MANAGER
             .write()
             .register_irq(irq as _, driver.clone(), false);
+        kinfo!("irq {:#x} registerd for e1000", irq);
+    } else {
+        kwarn!("There is MSI assigned for this network card. The system may be in an offline mode; check the configuration");
     }
     Ok(driver)
 }

@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, vec};
 use smoltcp::{
     socket::tcp::{Socket, SocketBuffer},
-    wire::{IpAddress, IpListenEndpoint, Ipv4Address},
+    wire::IpListenEndpoint,
 };
 
 use core::{
@@ -16,7 +16,7 @@ use crate::{
     net::{RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET},
 };
 
-use super::{Shutdown, Socket as SocketTrait, SocketWrapper};
+use super::{convert_addr, Shutdown, Socket as SocketTrait, SocketWrapper};
 
 /// This enum represents the state of a TCP connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +61,8 @@ pub struct TcpStream {
     socket: SocketWrapper,
     /// The socket's address.
     addr: Option<SocketAddr>,
+    /// Peer's address.
+    peer: Option<SocketAddr>,
     /// Is this socket still alive?
     state: TcpState,
 }
@@ -75,6 +77,7 @@ impl TcpStream {
         Self {
             socket,
             addr: None,
+            peer: None,
             state: TcpState::Uninit,
         }
     }
@@ -82,6 +85,11 @@ impl TcpStream {
     #[inline]
     pub fn state(&self) -> TcpState {
         self.state
+    }
+
+    #[inline]
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer
     }
 }
 
@@ -123,14 +131,16 @@ impl SocketTrait for TcpStream {
                     // Listen.
                     let mut socket_set = SOCKET_SET.lock();
                     let socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(self.socket.0);
+
+                    // Ignore.
+                    if socket.is_listening() {
+                        return Ok(());
+                    }
+
                     let local_endpoint = IpListenEndpoint {
-                        addr: Some(IpAddress::Ipv4(Ipv4Address::from_bytes(
-                            &addr.ip().octets(),
-                        ))),
+                        addr: Some(convert_addr(&addr)),
                         port: addr.port(),
                     };
-
-                    kinfo!("listening to {:?}", addr);
                     socket.listen(local_endpoint).map_err(|_| Errno::EINVAL)?;
                     self.state = TcpState::Listening;
 
@@ -147,10 +157,9 @@ impl SocketTrait for TcpStream {
         let lock = NETWORK_DRIVERS.read();
         let driver = lock.first().ok_or(Errno::ENODEV)?;
 
-        kinfo!("connecting to {:?}", addr);
-
         driver.connect(addr, self.socket.0)?;
         self.state = TcpState::Alive;
+        kinfo!("connecting to {:?}", addr);
         Ok(())
     }
 
@@ -158,9 +167,7 @@ impl SocketTrait for TcpStream {
         let local_endpoint = self.addr.ok_or(Errno::EINVAL)?;
         if let SocketAddr::V4(local_endpoint) = local_endpoint {
             let local_endpoint = IpListenEndpoint {
-                addr: Some(IpAddress::Ipv4(Ipv4Address::from_bytes(
-                    &local_endpoint.ip().octets(),
-                ))),
+                addr: Some(convert_addr(&local_endpoint)),
                 port: local_endpoint.port(),
             };
 
@@ -170,37 +177,38 @@ impl SocketTrait for TcpStream {
                 let socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(self.socket.0);
 
                 // Check the state.
-                if self.state == TcpState::Listening && socket.is_active() {
-                    let remote_endpoint = socket.remote_endpoint().ok_or(Errno::EINVAL)?;
-                    drop(socket);
+                if self.state == TcpState::Listening && socket.is_listening() {
+                    if let Some(remote_endpoint) = socket.remote_endpoint() {
+                        drop(socket);
 
-                    // May have security issues: syn flood.
-                    let rx_buffer = SocketBuffer::new(vec![0; RECVBUF_LEN]);
-                    let tx_buffer = SocketBuffer::new(vec![0; SENDBUF_LEN]);
+                        // May have security issues: syn flood.
+                        let rx_buffer = SocketBuffer::new(vec![0; RECVBUF_LEN]);
+                        let tx_buffer = SocketBuffer::new(vec![0; SENDBUF_LEN]);
 
-                    let mut socket = Socket::new(rx_buffer, tx_buffer);
-                    // TODO: Timeout? ==> return EWOULDBLOCK.
-                    socket
-                        .listen(local_endpoint)
-                        .map_err(|_| Errno::ECONNREFUSED)?;
-                    let old = core::mem::replace(&mut self.socket.0, socket_set.add(socket));
+                        let mut socket = Socket::new(rx_buffer, tx_buffer);
+                        // TODO: Timeout? ==> return EWOULDBLOCK.
+                        socket
+                            .listen(local_endpoint)
+                            .map_err(|_| Errno::ECONNREFUSED)?;
+                        let old = core::mem::replace(&mut self.socket.0, socket_set.add(socket));
 
-                    let boxed_socket = Box::new(TcpStream {
-                        socket: SocketWrapper(old),
-                        addr: self.addr,
-                        // The old one should be destroyed.
-                        state: TcpState::Dead,
-                    });
+                        let boxed_socket = Box::new(TcpStream {
+                            socket: SocketWrapper(old),
+                            addr: self.addr,
+                            peer: None, // The old one should be destroyed.
+                            state: TcpState::Dead,
+                        });
 
-                    drop(socket_set);
-                    NETWORK_DRIVERS.read().first().unwrap().poll();
+                        drop(socket_set);
+                        NETWORK_DRIVERS.read().first().unwrap().poll();
 
-                    let ip_bytes = remote_endpoint.addr.as_bytes();
-                    let socket_addr = SocketAddr::V4(SocketAddrV4::new(
-                        Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]),
-                        remote_endpoint.port,
-                    ));
-                    return Ok((boxed_socket, socket_addr));
+                        let ip_bytes = remote_endpoint.addr.as_bytes();
+                        let socket_addr = SocketAddr::V4(SocketAddrV4::new(
+                            Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]),
+                            remote_endpoint.port,
+                        ));
+                        return Ok((boxed_socket, socket_addr));
+                    }
                 }
 
                 drop(socket);

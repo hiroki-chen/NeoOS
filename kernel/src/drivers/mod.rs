@@ -1,5 +1,5 @@
 pub mod block;
-pub mod intel_100e;
+pub mod intel_e1000;
 pub mod keyboard;
 pub mod pci_bus;
 pub mod rtc;
@@ -19,7 +19,7 @@ use spin::RwLock;
 use crate::{drivers::rtc::ClockDriver, irq::IrqManager};
 
 use self::block::BlockDriver;
-use self::intel_100e::NetworkDriver;
+use self::intel_e1000::NetworkDriver;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Type {

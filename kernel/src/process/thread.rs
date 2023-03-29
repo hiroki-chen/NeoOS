@@ -513,13 +513,11 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading() {
-    for _ in 0..4 {
-        let debug_inode = ROOT_INODE.lookup("./bin/sample_c").unwrap();
+    let debug_inode = ROOT_INODE.lookup("./bin/sample_c").unwrap();
 
-        let args = vec!["sample_c".into()];
-        let envp = vec!["PATH=/bin".into()];
-        let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
+    let args = vec!["sample_c".into()];
+    let envp = vec!["PATH=/bin".into()];
+    let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
 
-        spawn(thread).unwrap();
-    }
+    spawn(thread).unwrap();
 }

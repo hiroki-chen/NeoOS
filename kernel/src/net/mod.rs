@@ -2,9 +2,15 @@
 
 use alloc::{boxed::Box, collections::BTreeSet, vec::Vec};
 use lazy_static::lazy_static;
-use smoltcp::iface::{SocketHandle, SocketSet};
+use smoltcp::{
+    iface::{SocketHandle, SocketSet},
+    wire::{IpAddress, Ipv4Address},
+};
 
-use core::{net::SocketAddr, time::Duration};
+use core::{
+    net::{SocketAddr, SocketAddrV4},
+    time::Duration,
+};
 
 use crate::{arch::cpu::rdrand, error::KResult, sync::mutex::SpinLock as Mutex};
 
@@ -36,6 +42,12 @@ pub fn get_free_port() -> u16 {
             return port;
         }
     }
+}
+
+/// Converts [`SocketAddrV4`] into [`IpAddress`].
+#[inline]
+pub fn convert_addr(src: &SocketAddrV4) -> IpAddress {
+    IpAddress::Ipv4(Ipv4Address::from_bytes(&src.ip().octets()))
 }
 
 /// Possible values which can be passed to the [`TcpStream::shutdown`] method.
