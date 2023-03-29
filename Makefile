@@ -15,10 +15,11 @@
 
 .phony: all clean clean_app test efi debug clippy sample_program
 
+UNAME := $(shell uname)
 BACKTRACE	?= 5
 OS_LOG_LEVEL	?= info
 TEST_KERNEL	?= ./test_jump.S
-FILE_SYSTEM ?= sfs
+FILE_SYSTEM 	?= apfs
 WORK_DIR 	?= ./test
 BOOT_DIR 	:= $(WORK_DIR)/esp/efi/boot
 EFI_TARGET	?= target/x86_64-unknown-uefi/debug/boot.efi
@@ -29,19 +30,32 @@ TEST_IMAGE	?= $(KERNEL_IMAGE)
 DEBUG		?= 0
 DISK		?= disk.img
 DISK_SIZE	?= 10G
+DISKUTIL_GET	?= diskutil list | grep /dev | tail -1 | awk '{print $$1}'
+
+ifeq ($(UNAME), Darwin)
+	UEFI := $(shell brew list qemu | grep edk2-x86_64-code.fd)
+else
+	UEFI := /usr/share/OVMF/OVMF_CODE.fd
+endif
+
 # Need to add `sudo` to make sure QEMU can access /dev/net/tun: but why changing permission and user group
 # won't take any effect? Strange.
-QEMU_COMMAND	?= sudo qemu-system-x86_64 -enable-kvm \
-			-drive if=pflash,format=raw,readonly=on,file=OVMF_CODE.fd \
-			-drive if=pflash,format=raw,readonly=on,file=OVMF_VARS.fd \
+QEMU_COMMAND	?= sudo qemu-system-x86_64 \
+			-drive if=pflash,format=raw,readonly=on,file=$(UEFI) \
 			-drive format=raw,file=fat:rw:esp \
 			-nographic -smp cores=4 -no-reboot -m 8G -rtc clock=vm \
 			-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
 			-device ahci,id=ahci0 \
 			-device ide-hd,drive=sfsimg,bus=ahci0.0 \
+			-cpu host
+
+ifeq ($(UNAME), Darwin)
+	QEMU_COMMAND += -accel hvf -machine type=q35
+else
+	QEMU_COMMAND += -enable-kvm \
 			-netdev type=tap,id=net0,script=no,downscript=no \
 			-device e1000e,netdev=net0 \
-			-cpu host
+endif
 
 ifeq ($(DEBUG), 1)
 	QEMU_COMMAND += -s -S
@@ -62,12 +76,24 @@ ifeq ($(FILE_SYSTEM), sfs)
 	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
 	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)
 else
-	@cd $(WORK_DIR) && dd if=/dev/zero bs=1M count=400 > $(DISK) && mkfs.apfs $(DISK)
+	@cd $(WORK_DIR) && dd if=/dev/zero bs=1M count=400 > $(DISK)
+
+ifeq ($(UNAME), Darwin)
+	@cd $(WORK_DIR) && \
+		hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount $(DISK) | \
+		xargs -I {} newfs_apfs -v "untitled" {}
+	@$(DISKUTIL_GET) | xargs -I {} diskutil mountDisk {}
+# Assuming no conflicting name.
+	@cd /Volumes/untitled && mkdir dev lib proc
+	@cd $(WORK_DIR) && cp -r bin /Volumes/untitled
+	@$(DISKUTIL_GET) | xargs -I {} hdiutil detach {}
+else
+	@cd $(WORK_DIR) && mkfs.apfs $(DISK)
 	@cd $(WORK_DIR) && sudo mount -o loop,readwrite $(DISK) /mnt
-# TODO: Add meaningful files/directories.
 	@cd /mnt && mkdir dev lib proc
 	@cd $(WORK_DIR) && cp -r bin /mnt
 	@sudo umount /mnt
+endif
 	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
 	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)
 endif
@@ -90,7 +116,6 @@ efi:
 
 run: kernel hard_disk
 	@cp boot.cfg $(BOOT_DIR)
-	@cd $(WORK_DIR) && cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_VARS.fd .
 	@cd $(WORK_DIR) && $(QEMU_COMMAND)
 
 clean:
@@ -102,7 +127,6 @@ $(TEST_IMAGE): $(TEST_KERNEL)
 
 test_run: efi $(TEST_IMAGE) hard_disk
 	@cp boot.cfg $(BOOT_DIR)
-	@cd $(WORK_DIR) && cp /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_VARS.fd .
 	@cd $(WORK_DIR) && $(QEMU_COMMAND)
 
 clippy:

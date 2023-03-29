@@ -9,7 +9,6 @@ all: $(OUTPUT)
 
 $(OUTPUT): $(SOURCE)
 	@$(CC) -o $@ $^ $(C_FLAGS) $(LINK) $(INCLUDE)
-	@objdump -D $(OUTPUT) -M intel > $(OBJDUMP)
 
 clean:
 	@rm -rf $(OUTPUT) $(OBJDUMP)
