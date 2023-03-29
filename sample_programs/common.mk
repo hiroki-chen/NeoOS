@@ -1,6 +1,6 @@
 UNAME		:= $(shell uname)
 
-ifeq ($(UNAME),\Darwin)
+ifeq ($(UNAME), Darwin)
 	MUSL_LIB_PATH 	:= /usr/local/lib/x86_64-linux-musl
 	MUSL_INC_PATH	:= /usr/local/include/x86_64-linux-musl
 else
