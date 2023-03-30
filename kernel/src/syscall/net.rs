@@ -138,7 +138,7 @@ pub fn sys_listen(
 /// connection request on the queue of pending connections for the listening socket, sockfd, creates a new connected socket
 /// and returns a new file descriptor referring to that socket.  The newly created socket is not in the listening state.
 /// The original socket sockfd is unaffected by this call.
-pub fn sys_accept(
+pub async fn sys_accept(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
@@ -151,7 +151,11 @@ pub fn sys_accept(
     let socket = proc.get_fd(sockfd)?;
 
     if let FileObject::Socket(socket) = socket {
-        let (accepted, addr) = socket.accept()?;
+        let socket = socket
+            .as_any_mut()
+            .downcast_mut::<TcpStream>()
+            .ok_or(Errno::EINVAL)?;
+        let (accepted, addr) = socket.accept().await?;
         if let SocketAddr::V4(addr) = addr {
             // Write back to user space.
             proc.add_file(FileObject::Socket(accepted))?;

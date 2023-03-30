@@ -54,10 +54,9 @@ target remote :1234
   * Memory corrupted (e.g., B-Tree panics when visiting nodes). Perhaps due to lock problems.
 * Implement more device drivers.
 * Implement more system calls.
-* Implement the socket.
-  * `accept()` will block the process forever because `poll()` returns false forever.
+* Implement the socket:
+  * TCP ACKed, but immediately RSTed.
 * Reduce memory consumption.
-* Support xAPIC (macOS does not support x2APIC).
 * Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
 
 ## Advanced Programmable Interrupt Controller (APIC)

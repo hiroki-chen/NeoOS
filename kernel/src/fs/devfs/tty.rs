@@ -14,7 +14,7 @@ use rcore_fs::vfs::{make_rdev, FileType, FsError, INode, Metadata, PollStatus, T
 use spin::RwLock;
 
 use crate::{
-    function, kerror, kinfo, print,
+    function, kerror, print,
     process::{
         event::{Event, EventBus},
         search_by_group_id,
@@ -251,8 +251,6 @@ impl INode for TtyInode {
     }
 
     fn io_control(&self, cmd: u32, data: usize) -> rcore_fs::vfs::Result<usize> {
-        kinfo!("io_control: {:#x}, data: {:#x}", cmd, data);
-
         match cmd {
             TIOCGWINSZ => {
                 let ptr = data as *mut Winsize;

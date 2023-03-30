@@ -345,7 +345,9 @@ pub unsafe fn disable() {
 pub fn eoi(irq: u8) {
     match IRQ_TYPE.load(Ordering::Acquire) {
         IrqType::Apic => {
-            LOCAL_APIC.read().get(&cpu_id()).unwrap().eoi();
+            if let Some(apic) = LOCAL_APIC.read().get(&cpu_id()) {
+                apic.eoi();
+            }
         }
         IrqType::Pic => {
             MASTER_PIC.write().ack();

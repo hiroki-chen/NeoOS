@@ -1,6 +1,6 @@
 //! The network stacks including socket.
 
-use alloc::{boxed::Box, collections::BTreeSet, vec::Vec};
+use alloc::{collections::BTreeSet, vec::Vec};
 use lazy_static::lazy_static;
 use smoltcp::{
     iface::{SocketHandle, SocketSet},
@@ -8,12 +8,14 @@ use smoltcp::{
 };
 
 use core::{
+    any::Any,
     net::{SocketAddr, SocketAddrV4},
     time::Duration,
 };
 
 use crate::{arch::cpu::rdrand, error::KResult, sync::mutex::SpinLock as Mutex};
 
+// mod raw;
 pub mod tcp;
 pub mod udp;
 
@@ -86,9 +88,6 @@ pub trait Socket: Send + Sync {
     /// Binds to a given address.
     fn bind(&mut self, addr: SocketAddr) -> KResult<()>;
 
-    /// Accepts an incoming connection.
-    fn accept(&mut self) -> KResult<(Box<dyn Socket>, SocketAddr)>;
-
     /// Listens to a given address.
     fn listen(&mut self) -> KResult<()>;
 
@@ -119,12 +118,9 @@ pub trait Socket: Send + Sync {
     /// Set the nonblocking bit.
     fn set_nonblocking(&mut self, non_blocking: bool) -> KResult<()>;
 
-    /// Clones self as a boxed type.
-    fn clone_box(&self) -> Box<dyn Socket>;
-}
+    /// Cast between trait objects as reference.
+    fn as_any_ref(&self) -> &dyn Any;
 
-impl Clone for Box<dyn Socket> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
+    /// Cast between trait objects as reference.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }

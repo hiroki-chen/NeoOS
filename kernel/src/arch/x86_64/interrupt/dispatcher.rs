@@ -166,10 +166,10 @@ fn handle_irq(trapno: u8, user: bool, should_yield: Option<&mut bool>) -> bool {
     } else {
         // Dispatch.
         if let Err(errno) = IRQ_MANAGER.read().dispatch_irq(irq as u64) {
-            kerror!("__trap_dispatcher(): IRQ manager returned {:?}", errno);
+            kerror!("IRQ manager returned {:?} for IRQ {:#x}", errno, irq);
             false
         } else {
-            ktrace!("__trap_dispatcher() IRQ handled.");
+            ktrace!("IRQ handled.");
             true
         }
     }

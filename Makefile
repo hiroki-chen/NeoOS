@@ -52,7 +52,8 @@ QEMU_COMMAND	?= sudo qemu-system-x86_64 \
 			-cpu host
 
 ifeq ($(UNAME), Darwin)
-	QEMU_COMMAND += -accel hvf -machine type=q35
+	QEMU_COMMAND += -accel hvf -machine type=q35 \
+			-nic vmnet-host,mac=52:54:0:12:34:57
 else
 	QEMU_COMMAND += -enable-kvm \
 			-netdev type=tap,id=net0,script=no,downscript=no \

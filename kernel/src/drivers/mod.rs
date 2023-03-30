@@ -7,7 +7,6 @@ pub mod serial;
 
 mod isomorphic_drivers;
 
-use crate::sync::condvar::CondVar;
 use crate::sync::mutex::SpinLock as Mutex;
 
 use alloc::vec::Vec;
@@ -61,6 +60,4 @@ lazy_static! {
     pub static ref BLOCK_DRIVERS: RwLock<Vec<Arc<dyn BlockDriver>>> = RwLock::new(Vec::new());
     /// Network driver.
     pub static ref NETWORK_DRIVERS: RwLock<Vec<Arc<dyn NetworkDriver>>> = RwLock::new(Vec::new());
-    /// Socket condvar.
-    pub static ref SOCKET_CONDVAR: CondVar = CondVar::new();
 }

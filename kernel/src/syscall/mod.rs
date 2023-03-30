@@ -449,7 +449,7 @@ async fn do_handle_syscall(
         SYS_ARCH_PRCTL => sys_arch_prctl(thread, ctx, syscall_registers),
 
         SYS_SOCKET => sys_socket(thread, ctx, syscall_registers),
-        SYS_ACCEPT => sys_accept(thread, ctx, syscall_registers),
+        SYS_ACCEPT => sys_accept(thread, ctx, syscall_registers).await,
         SYS_CONNECT => sys_connect(thread, ctx, syscall_registers),
         SYS_BIND => sys_bind(thread, ctx, syscall_registers),
         SYS_LISTEN => sys_listen(thread, ctx, syscall_registers),

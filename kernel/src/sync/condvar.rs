@@ -87,6 +87,7 @@ impl CondVar {
     ///
     /// To wake up only one thread, see `notify_one()`.
     pub fn notify_all(&self) -> bool {
+        kinfo!("notifying all!!!");
         let mut queue = self.queue.lock();
         while let Some(thread) = queue.pop_front() {
             self.call(&thread);

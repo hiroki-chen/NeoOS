@@ -22,7 +22,7 @@ int main() {
   struct sockaddr_in server_address;
   server_address.sin_family = AF_INET;
   server_address.sin_port = htons(80);
-  server_address.sin_addr.s_addr = inet_addr("10.0.1.2");
+  server_address.sin_addr.s_addr = inet_addr("10.130.30.233");
 
   int bind_status =
       bind(s, (struct sockaddr*)(&server_address), sizeof(server_address));

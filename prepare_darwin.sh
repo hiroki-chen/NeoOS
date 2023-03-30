@@ -5,6 +5,12 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
   exit 1
 fi
 
+echo "[-] Preparing packages"
+
+brew install nasm qemu
+
+echo "[-] Preparing packages OK"
+
 echo "[-] Preparing musl-gcc"
 
 brew install filosottile/musl-cross/musl-cross

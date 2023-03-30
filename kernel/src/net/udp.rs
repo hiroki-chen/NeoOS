@@ -1,9 +1,9 @@
-use alloc::{boxed::Box, vec};
+use alloc::vec;
 use smoltcp::socket::udp::{PacketBuffer, PacketMetadata, Socket};
 
-use core::{net::SocketAddr, time::Duration};
+use core::{any::Any, net::SocketAddr, time::Duration};
 
-use crate::error::{Errno, KResult};
+use crate::error::KResult;
 
 use super::{Shutdown, Socket as SocketTrait, SocketWrapper, RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET};
 
@@ -89,11 +89,11 @@ impl SocketTrait for UdpStream {
         todo!()
     }
 
-    fn clone_box(&self) -> Box<dyn SocketTrait> {
-        todo!()
+    fn as_any_ref(&self) -> &dyn Any {
+        self
     }
 
-    fn accept(&mut self) -> KResult<(Box<dyn SocketTrait>, SocketAddr)> {
-        Err(Errno::EINVAL)
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }

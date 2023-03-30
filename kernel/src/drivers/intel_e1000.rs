@@ -28,11 +28,20 @@ use super::{
         net::ethernet::{intel::e1000::E1000, structs::EthernetAddress},
         provider::Provider,
     },
-    Driver, Type, DRIVERS, IRQ_MANAGER, NETWORK_DRIVERS, NETWORK_UUID, SOCKET_CONDVAR,
+    Driver, Type, DRIVERS, IRQ_MANAGER, NETWORK_DRIVERS, NETWORK_UUID,
 };
 
 /// A dummy mac address.
-const MAC_ADDRESS: &[u8] = &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+const MAC_ADDRESS: &[u8] = &[0x52, 0x54, 0x0, 0x12, 0x34, 0x57];
+/// Some pre-defined CIDR addresses.
+const IP_CIDR_TAP: IpAddress = IpAddress::v4(10, 0, 2, 1);
+// Not sure how to determine it.
+const IP_CIDR_HOST: IpAddress = IpAddress::v4(172, 16, 253, 233);
+/// Default gateway address.
+const DEFAULT_GATEWAY: Ipv4Address = Ipv4Address([0, 0, 0, 0]);
+/// Default gateway address for macOS. For Linux tap-based virtual network, one needs to change this To
+/// 10.0.2.0
+const IP_GATEWAY: Ipv4Address = Ipv4Address([172, 16, 253, 1]);
 
 pub struct RxTokenIntel(Vec<u8>);
 pub struct TxTokenIntel(IntelEthernetDriverWrapper);
@@ -124,7 +133,7 @@ impl TxToken for TxTokenIntel {
         let res = f(&mut buf[..len]);
 
         let mut driver = self.0.inner.lock();
-        driver.send(&buf);
+        driver.send(&buf[..len]);
 
         res
     }
@@ -184,12 +193,19 @@ impl IntelEthernetController {
         let mut interface = Interface::new(config, &mut driver);
 
         // Set the default netowrk gateway.
-        let ip_addrs = [IpCidr::new(IpAddress::v4(10, 0, 1, 2), 24)];
         interface.update_ip_addrs(|ip| {
-            ip.extend_from_slice(&ip_addrs).unwrap();
+            let cidr = [IpCidr::new(IP_CIDR_HOST, 24)];
+            ip.extend_from_slice(&cidr).unwrap();
+            kinfo!("gateway set for {:?}", cidr);
         });
 
-        kinfo!("gateway set for 10.0.1.2/24");
+        // Update the route table.
+        interface
+            .routes_mut()
+            .add_default_ipv4_route(IP_GATEWAY)
+            .unwrap();
+
+        // interface.set_any_ip(any_ip)
 
         Self {
             driver,
@@ -256,7 +272,7 @@ impl NetworkDriver for IntelEthernetController {
             .lock()
             .poll(timestamp, &mut cloned_device, &mut socket_set)
         {
-            SOCKET_CONDVAR.notify_all();
+            kinfo!("poll ok");
         }
     }
 
@@ -285,10 +301,7 @@ impl NetworkDriver for IntelEthernetController {
                         let mut socket_set = SOCKET_SET.lock();
                         let socket = socket_set.get_mut::<TcpSocket>(socket_handle);
                         match socket.state() {
-                            State::SynSent => {
-                                drop(socket);
-                                SOCKET_CONDVAR.wait(socket_set);
-                            }
+                            State::SynSent => continue,
                             State::Established => break,
                             _ => return Err(Errno::ECONNREFUSED),
                         }
@@ -327,7 +340,8 @@ pub fn init_network(
             .register_irq(irq as _, driver.clone(), false);
         kinfo!("irq {:#x} registerd for e1000", irq);
     } else {
-        kwarn!("There is MSI assigned for this network card. The system may be in an offline mode; check the configuration");
+        kwarn!("There is no MSI assigned for this network card");
+        kwarn!("If you are using qemu, make sure networking is configured correctly");
     }
     Ok(driver)
 }
