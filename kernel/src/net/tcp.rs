@@ -4,20 +4,16 @@ use smoltcp::{
     wire::IpListenEndpoint,
 };
 
-use core::{
-    any::Any,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    time::Duration,
-};
+use core::{any::Any, net::SocketAddr, time::Duration};
 
 use crate::{
     drivers::NETWORK_DRIVERS,
     error::{Errno, KResult},
     function, kerror, kinfo,
-    net::{RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET},
+    net::{LISTEN_TABLE, RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET},
 };
 
-use super::{convert_addr, Shutdown, Socket as SocketTrait, SocketWrapper};
+use super::{convert_addr, Shutdown, Socket as SocketTrait, SocketType, SocketWrapper};
 
 /// This enum represents the state of a TCP connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +55,7 @@ pub enum TcpState {
 #[derive(Debug, Clone)]
 pub struct TcpStream {
     /// The inner socket instance.
-    socket: SocketWrapper,
+    socket: Option<SocketWrapper>,
     /// The socket's address.
     addr: Option<SocketAddr>,
     /// Peer's address.
@@ -76,7 +72,7 @@ impl TcpStream {
         );
         let socket = SocketWrapper(SOCKET_SET.lock().add(tcp_socket_inner));
         Self {
-            socket,
+            socket: Some(socket),
             addr: None,
             peer: None,
             state: TcpState::Uninit,
@@ -93,7 +89,12 @@ impl TcpStream {
         self.peer
     }
 
-    pub async fn accept(&mut self) -> KResult<(Box<dyn SocketTrait>, SocketAddr)> {
+    pub fn accept(&mut self) -> KResult<Box<dyn SocketTrait>> {
+        if self.state != TcpState::Listening {
+            kerror!("This socket is not listening.");
+            return Err(Errno::EINVAL);
+        }
+
         let local_endpoint = self.addr.ok_or(Errno::EINVAL)?;
         if let SocketAddr::V4(local_endpoint) = local_endpoint {
             let local_endpoint = IpListenEndpoint {
@@ -101,45 +102,27 @@ impl TcpStream {
                 port: local_endpoint.port(),
             };
 
-            // Block the current thread.
             loop {
-                let mut socket_set = SOCKET_SET.lock();
-                let socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(self.socket.0);
+                // Polls each driver.
+                NETWORK_DRIVERS.read().iter().for_each(|driver| {
+                    driver.poll();
+                });
 
-                // Check the state.
-                if self.state == TcpState::Listening && socket.is_active() {
-                    if let Some(remote_endpoint) = socket.remote_endpoint() {
-                        // May have security issues: syn flood.
-                        let rx_buffer = SocketBuffer::new(vec![0; RECVBUF_LEN]);
-                        let tx_buffer = SocketBuffer::new(vec![0; SENDBUF_LEN]);
-
-                        let mut socket = Socket::new(rx_buffer, tx_buffer);
-                        // TODO: Timeout? ==> return EWOULDBLOCK.
-                        socket
-                            .listen(local_endpoint)
-                            .map_err(|_| Errno::ECONNREFUSED)?;
-                        let old = core::mem::replace(&mut self.socket.0, socket_set.add(socket));
-
-                        let boxed_socket = Box::new(TcpStream {
-                            socket: SocketWrapper(old),
-                            addr: self.addr,
-                            peer: None, // The old one should be destroyed.
-                            state: TcpState::Dead,
-                        });
-
-                        let ip_bytes = remote_endpoint.addr.as_bytes();
-                        let socket_addr = SocketAddr::V4(SocketAddrV4::new(
-                            Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]),
-                            remote_endpoint.port,
-                        ));
-                        return Ok((boxed_socket, socket_addr));
+                match LISTEN_TABLE.write().accept(local_endpoint.port) {
+                    Ok((socket_handle, remove_address)) => {
+                        return Ok(Box::new(Self {
+                            socket: Some(SocketWrapper(socket_handle)),
+                            addr: Some(self.addr.unwrap()),
+                            peer: Some(remove_address),
+                            state: TcpState::Alive,
+                        }));
                     }
-                } else {
-                    drop(socket);
-                    drop(socket_set);
-                    NETWORK_DRIVERS.read().iter().for_each(|driver| {
-                        driver.poll();
-                    });
+
+                    Err(Errno::EAGAIN) => continue,
+                    Err(errno) => {
+                        kerror!("cannot accept incoming connection.");
+                        return Err(errno);
+                    }
                 }
             }
         } else {
@@ -183,25 +166,19 @@ impl SocketTrait for TcpStream {
             TcpState::Alive | TcpState::Listening => Ok(()),
             TcpState::Uninit => {
                 if let Some(SocketAddr::V4(addr)) = self.addr {
-                    // Listen.
-                    let mut socket_set = SOCKET_SET.lock();
-                    let socket = socket_set.get_mut::<smoltcp::socket::tcp::Socket>(self.socket.0);
-
-                    // Ignore.
-                    if socket.is_listening() {
+                    if self.socket.is_none() {
                         return Ok(());
                     }
 
-                    let local_endpoint = IpListenEndpoint {
-                        addr: Some(convert_addr(&addr)),
-                        port: addr.port(),
-                    };
-                    socket.listen(local_endpoint).map_err(|_| Errno::EINVAL)?;
+                    LISTEN_TABLE.write().listen(addr.port())?;
+                    kinfo!("socket is listening on port {}", addr.port());
+                    // Moves this socket handle.
+                    let handle = self.socket.take();
+                    SOCKET_SET.lock().remove(handle.unwrap().0);
                     self.state = TcpState::Listening;
 
                     Ok(())
                 } else {
-                    kerror!("no address provided.");
                     Err(Errno::EINVAL)
                 }
             }
@@ -212,7 +189,7 @@ impl SocketTrait for TcpStream {
         let lock = NETWORK_DRIVERS.read();
         let driver = lock.first().ok_or(Errno::ENODEV)?;
 
-        driver.connect(addr, self.socket.0)?;
+        driver.connect(addr, self.socket.as_ref().unwrap().0)?;
         self.state = TcpState::Alive;
         kinfo!("connecting to {:?}", addr);
         Ok(())
@@ -227,7 +204,7 @@ impl SocketTrait for TcpStream {
     }
 
     fn peer_addr(&self) -> Option<SocketAddr> {
-        todo!()
+        self.peer.clone()
     }
 
     fn addr(&self) -> Option<SocketAddr> {
@@ -256,6 +233,10 @@ impl SocketTrait for TcpStream {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn ty(&self) -> SocketType {
+        SocketType::Tcp
     }
 }
 

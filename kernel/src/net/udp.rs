@@ -5,7 +5,10 @@ use core::{any::Any, net::SocketAddr, time::Duration};
 
 use crate::error::KResult;
 
-use super::{Shutdown, Socket as SocketTrait, SocketWrapper, RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET};
+use super::{
+    Shutdown, Socket as SocketTrait, SocketType, SocketWrapper, RECVBUF_LEN, SENDBUF_LEN,
+    SOCKET_SET,
+};
 
 pub const UDP_META_LEN: usize = 1024;
 
@@ -95,5 +98,9 @@ impl SocketTrait for UdpStream {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn ty(&self) -> SocketType {
+        SocketType::Udp
     }
 }

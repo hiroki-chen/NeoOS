@@ -60,12 +60,11 @@ smoltcp = { version = "0.9.1", default-features = false, features = [
   "proto-ipv4",
   "alloc",
   "log",
-  "socket-raw",
-  "socket-tcp",
-  "socket-icmp",
-  "socket-dns",
-  "socket-udp",
   "medium-ethernet",
+  "socket-raw",
+  "socket-icmp",
+  "socket-udp",
+  "socket-tcp",
 ] }
 spin = { version = "0.9.5", default-features = false, features = [
   'rwlock',

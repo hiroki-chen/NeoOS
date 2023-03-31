@@ -1,7 +1,7 @@
 //! The driver for the network card on the PCI bus. On Qemu, this is 0x8086, 0x100e, a.k.a.:
 //! Intel Corporation 82545EM Gigabit Ethernet Controller.
 
-use core::net::SocketAddr;
+use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use alloc::{string::String, sync::Arc, vec, vec::Vec};
 use smoltcp::{
@@ -10,16 +10,17 @@ use smoltcp::{
     socket::tcp::{Socket as TcpSocket, State},
     time::Instant,
     wire::{
-        EthernetAddress as MacAddress, HardwareAddress, IpAddress, IpCidr, IpEndpoint, Ipv4Address,
+        EthernetAddress as MacAddress, EthernetFrame, HardwareAddress, IpAddress, IpCidr,
+        IpEndpoint, IpProtocol, Ipv4Address, Ipv4Packet, TcpPacket,
     },
 };
 
 use crate::{
     arch::{interrupt::timer::tick_millisecond, PAGE_SIZE},
     error::{Errno, KResult},
-    function, kerror, kinfo, kwarn,
+    function, kdebug, kerror, kinfo, kwarn,
     memory::{allocate_frame_contiguous, deallocate_frame, phys_to_virt, virt_to_phys},
-    net::{get_free_port, SOCKET_SET},
+    net::{get_free_port, LISTEN_TABLE, SOCKET_SET},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
@@ -119,6 +120,33 @@ impl RxToken for RxTokenIntel {
     where
         F: FnOnce(&mut [u8]) -> R,
     {
+        // Preprocess something if there is any incoming TCP connections.
+        let mut ethernet_frame = EthernetFrame::new_unchecked(self.0.clone());
+        if let Ok(mut ip_frame) = Ipv4Packet::new_checked(ethernet_frame.payload_mut()) {
+            if ip_frame.next_header() == IpProtocol::Tcp {
+                let ip_src = ip_frame.src_addr().as_bytes().to_vec();
+                let ip_dst = ip_frame.dst_addr().as_bytes().to_vec();
+                if let Ok(tcp_packet) = TcpPacket::new_checked(ip_frame.payload_mut()) {
+                    if tcp_packet.syn() && !tcp_packet.ack() {
+                        kdebug!("TCP packet received as {:02x?}", tcp_packet);
+
+                        let src_addr = SocketAddr::V4(SocketAddrV4::new(
+                            Ipv4Addr::new(ip_src[0], ip_src[1], ip_src[2], ip_src[3]),
+                            tcp_packet.src_port(),
+                        ));
+                        let dst_addr = SocketAddr::V4(SocketAddrV4::new(
+                            Ipv4Addr::new(ip_dst[0], ip_dst[1], ip_dst[2], ip_dst[3]),
+                            tcp_packet.dst_port(),
+                        ));
+                        LISTEN_TABLE
+                            .write()
+                            .add_incoming_connection(src_addr, dst_addr)
+                            .unwrap();
+                    }
+                }
+            }
+        }
+
         f(&mut self.0)
     }
 }
@@ -133,6 +161,7 @@ impl TxToken for TxTokenIntel {
         let res = f(&mut buf[..len]);
 
         let mut driver = self.0.inner.lock();
+        kinfo!("sending packet {:02x?}", &buf[..len]);
         driver.send(&buf[..len]);
 
         res
@@ -163,7 +192,7 @@ impl smoltcp::phy::Device for IntelEthernetDriverWrapper {
     fn capabilities(&self) -> DeviceCapabilities {
         let mut cap = DeviceCapabilities::default();
         cap.max_burst_size = Some(64);
-        cap.max_transmission_unit = 1500;
+        cap.max_transmission_unit = 1536;
         cap
     }
 }
@@ -272,7 +301,7 @@ impl NetworkDriver for IntelEthernetController {
             .lock()
             .poll(timestamp, &mut cloned_device, &mut socket_set)
         {
-            kinfo!("poll ok");
+            kdebug!("polled ok");
         }
     }
 

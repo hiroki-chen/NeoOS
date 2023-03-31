@@ -1,19 +1,30 @@
 //! The network stacks including socket.
 
-use alloc::{collections::BTreeSet, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    vec,
+    vec::Vec,
+};
 use lazy_static::lazy_static;
 use smoltcp::{
     iface::{SocketHandle, SocketSet},
+    socket::tcp::SocketBuffer,
     wire::{IpAddress, Ipv4Address},
 };
+use spin::RwLock;
 
 use core::{
     any::Any,
-    net::{SocketAddr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     time::Duration,
 };
 
-use crate::{arch::cpu::rdrand, error::KResult, sync::mutex::SpinLock as Mutex};
+use crate::{
+    arch::cpu::rdrand,
+    error::{Errno, KResult},
+    function, kinfo,
+    sync::mutex::SpinLock as Mutex,
+};
 
 // mod raw;
 pub mod tcp;
@@ -27,6 +38,8 @@ lazy_static! {
     pub static ref SOCKET_SET: Mutex<SocketSet<'static>> = Mutex::new(SocketSet::new(Vec::new()));
     /// A port record map.
     pub static ref PORT_IN_USE: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
+    /// A table used to track which socket handle is listening because listening socket is no longer valid for other usage.
+    pub static ref LISTEN_TABLE: RwLock<ListenTable> = RwLock::new(ListenTable::new());
 }
 
 pub const RECVBUF_LEN: usize = 4096;
@@ -50,6 +63,17 @@ pub fn get_free_port() -> u16 {
 #[inline]
 pub fn convert_addr(src: &SocketAddrV4) -> IpAddress {
     IpAddress::Ipv4(Ipv4Address::from_bytes(&src.ip().octets()))
+}
+
+/// Socket types.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SocketType {
+    /// A UDP socket.
+    Udp,
+    /// A TCP socket.
+    Tcp,
+    /// A raw socket working on the transmission layer.
+    Raw,
 }
 
 /// Possible values which can be passed to the [`TcpStream::shutdown`] method.
@@ -76,6 +100,117 @@ pub enum Shutdown {
 /// The handle to the socket itself which serves as a reference count to any alive connections.
 #[derive(Debug, Clone)]
 pub struct SocketWrapper(SocketHandle);
+
+/// A listening table wrapper.
+pub struct ListenTable(BTreeMap<u16, ListenTableEntry>);
+pub struct ListenTableEntry(VecDeque<SocketHandle>);
+
+impl ListenTable {
+    pub fn new() -> Self {
+        Self(BTreeMap::new())
+    }
+
+    /// If a new connection arrives, the main thread polls the driver which adds this connection into the listen table.
+    pub fn add_incoming_connection(&mut self, src: SocketAddr, dst: SocketAddr) -> KResult<()> {
+        if let Some(entry) = self.0.get_mut(&dst.port()) {
+            if entry.0.len() >= 64 {
+                return Err(Errno::ENOMEM);
+            }
+
+            let mut socket = smoltcp::socket::tcp::Socket::new(
+                SocketBuffer::new(vec![0u8; RECVBUF_LEN]),
+                SocketBuffer::new(vec![0u8; SENDBUF_LEN]),
+            );
+            if socket.listen(dst.port()).is_ok() {
+                let socket_handle = SOCKET_SET.lock().add(socket);
+                entry.0.push_back(socket_handle);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Checks whether a port can be used to listen.
+    #[inline]
+    pub fn is_free(&self, port: u16) -> bool {
+        !self.0.contains_key(&port)
+    }
+
+    /// Listens to a port.
+    pub fn listen(&mut self, port: u16) -> KResult<()> {
+        if !self.is_free(port) {
+            Err(Errno::EEXIST)
+        } else {
+            // Occupy this entry, but does not add socket handles.
+            self.0.insert(port, ListenTableEntry::new());
+            Ok(())
+        }
+    }
+
+    #[inline]
+    /// Removes a port from listening.
+    pub fn remove(&mut self, port: u16) -> KResult<()> {
+        if self.0.contains_key(&port) {
+            self.0.remove(&port);
+        }
+
+        Ok(())
+    }
+
+    /// Accepts incoming tcp connections from the other side.
+    pub fn accept(&mut self, port: u16) -> KResult<(SocketHandle, SocketAddr)> {
+        if let Some(entry) = self.0.get_mut(&port) {
+            if let Some(&first) = entry.0.front() {
+                let socket_set = SOCKET_SET.lock();
+                let socket = socket_set.get::<smoltcp::socket::tcp::Socket>(first.clone());
+
+                let state = socket.state();
+                if matches!(
+                    state,
+                    smoltcp::socket::tcp::State::Listen | smoltcp::socket::tcp::State::SynReceived,
+                ) {
+                    entry.0.pop_front();
+
+                    let remote_endpoint = socket.remote_endpoint().ok_or(Errno::EINVAL)?;
+                    let remote_endpoint = remote_endpoint.addr.as_bytes();
+                    let socket_addr = SocketAddr::V4(SocketAddrV4::new(
+                        Ipv4Addr::new(
+                            remote_endpoint[0],
+                            remote_endpoint[1],
+                            remote_endpoint[2],
+                            remote_endpoint[3],
+                        ),
+                        port,
+                    ));
+                    return Ok((first, socket_addr));
+                }
+
+                Err(Errno::EAGAIN)
+            } else {
+                // No incoming.
+                return Err(Errno::EAGAIN);
+            }
+        } else {
+            // No such port.
+            Err(Errno::EACCES)
+        }
+    }
+}
+
+impl ListenTableEntry {
+    pub fn new() -> Self {
+        Self(VecDeque::new())
+    }
+}
+
+impl Drop for ListenTableEntry {
+    fn drop(&mut self) {
+        let mut socket_set = SOCKET_SET.lock();
+        while let Some(socket_handle) = self.0.pop_front() {
+            socket_set.remove(socket_handle);
+        }
+    }
+}
 
 /// Defines a set of socket-like behaviors for tcp, udp, quic, etc. protocols.
 pub trait Socket: Send + Sync {
@@ -123,4 +258,7 @@ pub trait Socket: Send + Sync {
 
     /// Cast between trait objects as reference.
     fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    /// Gets the type of this socket.
+    fn ty(&self) -> SocketType;
 }

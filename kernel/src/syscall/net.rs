@@ -1,6 +1,6 @@
 //! Networking syscall interfaces.
 
-use core::net::SocketAddr;
+use core::net::IpAddr;
 
 use alloc::{boxed::Box, sync::Arc};
 
@@ -40,9 +40,7 @@ pub fn sys_socket(
         AF_INET | AF_UNIX => match socket_type {
             SocketType::SockStream => Box::new(TcpStream::new()),
             SocketType::SockDgram => Box::new(UdpStream::new()),
-            SocketType::SockRaw => {
-                todo!()
-            }
+            SocketType::SockRaw => unimplemented!(),
         },
 
         _ => return Err(Errno::EINVAL), // unsupported.
@@ -155,8 +153,10 @@ pub async fn sys_accept(
             .as_any_mut()
             .downcast_mut::<TcpStream>()
             .ok_or(Errno::EINVAL)?;
-        let (accepted, addr) = socket.accept().await?;
-        if let SocketAddr::V4(addr) = addr {
+        let accepted = socket.accept()?;
+        let peer = accepted.peer_addr().unwrap();
+
+        if let IpAddr::V4(addr) = peer.ip() {
             // Write back to user space.
             proc.add_file(FileObject::Socket(accepted))?;
             let ptr = Ptr::new(sockaddr as *mut SockAddr);
@@ -167,8 +167,8 @@ pub async fn sys_accept(
                     sa_family: AF_INET as _,
                     sa_data_min: {
                         let mut buf = [0u8; 14];
-                        buf[..2].copy_from_slice(&addr.port().to_be_bytes());
-                        buf[2..].copy_from_slice(&addr.ip().octets());
+                        buf[..2].copy_from_slice(&peer.port().to_be_bytes());
+                        buf[2..].copy_from_slice(&addr.octets());
                         buf
                     },
                 })?;
