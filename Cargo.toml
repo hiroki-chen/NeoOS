@@ -1,4 +1,4 @@
 [workspace]
 members = ["boot", "boot_header", "kernel"]
 
-exclude = ["test"]
+exclude = ["test", "tools"]
