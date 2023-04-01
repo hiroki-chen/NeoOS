@@ -1,9 +1,12 @@
 //! The driver for the network card on the PCI bus. On Qemu, this is 0x8086, 0x100e, a.k.a.:
 //! Intel Corporation 82545EM Gigabit Ethernet Controller.
 
-use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use core::{
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    ops::DerefMut,
+};
 
-use alloc::{string::String, sync::Arc, vec, vec::Vec};
+use alloc::{collections::VecDeque, string::String, sync::Arc, vec, vec::Vec};
 use smoltcp::{
     iface::{Config, Interface, SocketHandle},
     phy::{DeviceCapabilities, RxToken, TxToken},
@@ -16,9 +19,9 @@ use smoltcp::{
 };
 
 use crate::{
-    arch::{interrupt::timer::tick_millisecond, PAGE_SIZE},
+    arch::{interrupt::timer::tick_microsecond, PAGE_SIZE},
     error::{Errno, KResult},
-    function, kdebug, kerror, kinfo, kwarn,
+    function, kerror, kinfo, kwarn,
     memory::{allocate_frame_contiguous, deallocate_frame, phys_to_virt, virt_to_phys},
     net::{get_free_port, LISTEN_TABLE, SOCKET_SET},
     sync::mutex::SpinLockNoInterrupt as Mutex,
@@ -44,8 +47,9 @@ const DEFAULT_GATEWAY: Ipv4Address = Ipv4Address([0, 0, 0, 0]);
 /// 10.0.2.0
 const IP_GATEWAY: Ipv4Address = Ipv4Address([172, 16, 253, 1]);
 
+#[derive(Clone)]
 pub struct RxTokenIntel(Vec<u8>);
-pub struct TxTokenIntel(IntelEthernetDriverWrapper);
+pub struct TxTokenIntel(Arc<Mutex<E1000<NetProvider>>>);
 
 pub trait NetworkDriver: Driver {
     /// Returns the MAC address of the physical netowrk card.
@@ -105,12 +109,25 @@ impl Provider for NetProvider {
 #[derive(Clone)]
 pub struct IntelEthernetDriverWrapper {
     pub inner: Arc<Mutex<E1000<NetProvider>>>,
+    pub receive_queue: VecDeque<RxTokenIntel>,
 }
 
 impl IntelEthernetDriverWrapper {
     pub fn new(header: usize, size: usize, mac: EthernetAddress) -> Self {
         Self {
             inner: Arc::new(Mutex::new(E1000::new(header, size, mac))),
+            receive_queue: VecDeque::new(),
+        }
+    }
+
+    pub fn receive(&mut self) -> Option<RxTokenIntel> {
+        self.receive_queue.pop_front()
+    }
+
+    fn poll(&mut self) {
+        let mut inner = self.inner.lock();
+        while let Some(data) = inner.receive() {
+            self.receive_queue.push_back(RxTokenIntel(data));
         }
     }
 }
@@ -128,8 +145,6 @@ impl RxToken for RxTokenIntel {
                 let ip_dst = ip_frame.dst_addr().as_bytes().to_vec();
                 if let Ok(tcp_packet) = TcpPacket::new_checked(ip_frame.payload_mut()) {
                     if tcp_packet.syn() && !tcp_packet.ack() {
-                        kdebug!("TCP packet received as {:02x?}", tcp_packet);
-
                         let src_addr = SocketAddr::V4(SocketAddrV4::new(
                             Ipv4Addr::new(ip_src[0], ip_src[1], ip_src[2], ip_src[3]),
                             tcp_packet.src_port(),
@@ -156,13 +171,12 @@ impl TxToken for TxTokenIntel {
     where
         F: FnOnce(&mut [u8]) -> R,
     {
-        let mut buf = vec![0u8; PAGE_SIZE];
+        let mut buf = vec![0u8; 1536];
         // Construct a valid packet for sending.
         let res = f(&mut buf[..len]);
 
-        let mut driver = self.0.inner.lock();
-        kinfo!("sending packet {:02x?}", &buf[..len]);
-        driver.send(&buf[..len]);
+        // kinfo!("sending packet {:02x?}", &buf[..len]);
+        self.0.lock().send(&buf[..len]);
 
         res
     }
@@ -176,15 +190,13 @@ impl smoltcp::phy::Device for IntelEthernetDriverWrapper {
         &mut self,
         timestamp: smoltcp::time::Instant,
     ) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        self.inner
-            .lock()
-            .receive()
-            .map(|data| (RxTokenIntel(data), TxTokenIntel(self.clone())))
+        self.receive()
+            .map(|data| (data, TxTokenIntel(self.inner.clone())))
     }
 
     fn transmit(&mut self, timestamp: smoltcp::time::Instant) -> Option<Self::TxToken<'_>> {
         match self.inner.lock().can_send() {
-            true => Some(TxTokenIntel(self.clone())),
+            true => Some(TxTokenIntel(self.inner.clone())),
             false => None,
         }
     }
@@ -192,14 +204,14 @@ impl smoltcp::phy::Device for IntelEthernetDriverWrapper {
     fn capabilities(&self) -> DeviceCapabilities {
         let mut cap = DeviceCapabilities::default();
         cap.max_burst_size = Some(64);
-        cap.max_transmission_unit = 1536;
+        cap.max_transmission_unit = 1520;
         cap
     }
 }
 
 pub struct IntelEthernetController {
     /// The driver implementation.
-    driver: IntelEthernetDriverWrapper,
+    driver: Mutex<IntelEthernetDriverWrapper>,
     /// The ethernet interface for networking.
     interface: Mutex<Interface>,
     /// Interrupt request.
@@ -234,10 +246,8 @@ impl IntelEthernetController {
             .add_default_ipv4_route(IP_GATEWAY)
             .unwrap();
 
-        // interface.set_any_ip(any_ip)
-
         Self {
-            driver,
+            driver: Mutex::new(driver),
             interface: Mutex::new(interface),
             irq,
             name,
@@ -248,14 +258,10 @@ impl IntelEthernetController {
 impl Driver for IntelEthernetController {
     fn dispatch(&self, irq: Option<u64>) -> bool {
         // By default we check by matching the irq.
-        if irq.map(|irq| irq as u8).unwrap_or(u8::MAX) == self.irq.unwrap_or(u8::MAX) {
-            match self.driver.inner.lock().handle_interrupt() {
-                true => {
-                    self.poll();
-                    true
-                }
-                false => false,
-            }
+        if irq.map(|irq| irq as u8).unwrap_or(u8::MIN) == self.irq.unwrap_or(u8::MAX) {
+            self.driver.lock().inner.lock().handle_interrupt();
+            self.poll();
+            true
         } else {
             false
         }
@@ -284,25 +290,20 @@ impl NetworkDriver for IntelEthernetController {
     }
 
     fn send(&self, buf: &[u8]) -> KResult<usize> {
-        TxTokenIntel(self.driver.clone()).consume(buf.len(), |data| {
+        TxTokenIntel(self.driver.lock().inner.clone()).consume(buf.len(), |data| {
             data.copy_from_slice(buf);
             Ok(data.len())
         })
     }
 
     fn poll(&self) {
-        let time = tick_millisecond();
-        // But why smotltcp requires i64?
-        let timestamp = Instant::from_millis(time.as_millis() as i64);
+        let mut driver = self.driver.lock();
+        driver.poll();
+
+        let timestamp = Instant::from_micros(tick_microsecond().as_micros() as i64);
+        let mut interface = self.interface.lock();
         let mut socket_set = SOCKET_SET.lock();
-        let mut cloned_device = self.driver.clone();
-        if self
-            .interface
-            .lock()
-            .poll(timestamp, &mut cloned_device, &mut socket_set)
-        {
-            kdebug!("polled ok");
-        }
+        interface.poll(timestamp, driver.deref_mut(), &mut socket_set);
     }
 
     fn connect(&self, addr: SocketAddr, socket_handle: SocketHandle) -> KResult<()> {

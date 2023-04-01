@@ -359,6 +359,7 @@ impl FileObject {
     pub fn write(&self, buf: &[u8]) -> KResult<usize> {
         match self {
             FileObject::File(file) => file.write_buf(buf),
+            FileObject::Socket(socket) => socket.write(buf, None),
 
             _ => unimplemented!(),
         }
@@ -367,6 +368,7 @@ impl FileObject {
     pub async fn read(&self, buf: &mut [u8]) -> KResult<usize> {
         match self {
             FileObject::File(file) => file.read_buf(buf).await,
+            FileObject::Socket(socket) => socket.read(buf),
 
             _ => unimplemented!(),
         }

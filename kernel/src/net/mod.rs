@@ -22,13 +22,18 @@ use core::{
 use crate::{
     arch::cpu::rdrand,
     error::{Errno, KResult},
-    function, kinfo,
     sync::mutex::SpinLock as Mutex,
+    sys::SocketOptions,
 };
 
-// mod raw;
+#[cfg(feature = "raw_socket")]
+mod raw;
+
 pub mod tcp;
 pub mod udp;
+
+#[cfg(feature = "raw_socket")]
+pub use raw::*;
 
 pub use tcp::*;
 pub use udp::*;
@@ -218,10 +223,13 @@ pub trait Socket: Send + Sync {
     fn read(&self, buf: &mut [u8]) -> KResult<usize>;
 
     /// Writes to this socket.
-    fn write(&mut self, buf: &[u8]) -> KResult<usize>;
+    fn write(&self, buf: &[u8], dst: Option<SocketAddr>) -> KResult<usize>;
 
     /// Binds to a given address.
     fn bind(&mut self, addr: SocketAddr) -> KResult<()>;
+
+    /// Assigns this socket with a fd.
+    fn set_fd(&mut self, fd: u64);
 
     /// Listens to a given address.
     fn listen(&mut self) -> KResult<()>;
@@ -230,7 +238,7 @@ pub trait Socket: Send + Sync {
     fn connect(&mut self, addr: SocketAddr) -> KResult<()>;
 
     /// Sets the socket options.
-    fn setsocketopt(&mut self) -> KResult<()>;
+    fn setsocketopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()>;
 
     /// Reads the timeout field.
     fn timeout(&self) -> Option<Duration>;
@@ -248,7 +256,7 @@ pub trait Socket: Send + Sync {
     fn shutdown(&mut self, how: Shutdown) -> KResult<()>;
 
     /// Gets the raw file descriptor of this socket.
-    fn as_raw_fd(&self) -> u64;
+    fn as_raw_fd(&self) -> KResult<u64>;
 
     /// Set the nonblocking bit.
     fn set_nonblocking(&mut self, non_blocking: bool) -> KResult<()>;

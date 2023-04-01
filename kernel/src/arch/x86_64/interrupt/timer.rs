@@ -32,10 +32,10 @@ lazy_static! {
 }
 
 /// Returns the tick after.
-pub fn tick_millisecond() -> Duration {
-    let tick = TICK.load(Ordering::Relaxed);
+pub fn tick_microsecond() -> Duration {
+    let tick = TICK_WALL.load(Ordering::Acquire);
     // Our timer interrupt ticks per 10,000 us.
-    Duration::from_millis(10000 * tick as u64)
+    Duration::from_micros(10000 * tick as u64)
 }
 
 pub fn handle_timer() {

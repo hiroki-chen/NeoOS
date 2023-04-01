@@ -6,11 +6,12 @@ use core::sync::atomic::{fence, Ordering};
 
 use bit_field::*;
 use bitflags::*;
-use log::*;
 use volatile::Volatile;
 
-use crate::drivers::isomorphic_drivers::net::ethernet::structs::EthernetAddress;
-use crate::drivers::isomorphic_drivers::provider::Provider;
+use crate::drivers::isomorphic_drivers::{
+    net::ethernet::structs::EthernetAddress, provider::Provider,
+};
+use crate::{function, kinfo};
 
 // At the beginning, all transmit descriptors have there status non-zero,
 // so we need to track whether we are using the descriptor for the first time.
@@ -95,10 +96,6 @@ impl<P: Provider> E1000<P> {
         let mut recv_buffers = Vec::with_capacity(recv_queue.len());
 
         let e1000 = unsafe { slice::from_raw_parts_mut(header as *mut Volatile<u32>, size / 4) };
-        debug!(
-            "status before setup: {:#?}",
-            E1000Status::from_bits_truncate(e1000[E1000_STATUS].read())
-        );
 
         // 4.6 Software Initialization Sequence
 
@@ -115,9 +112,9 @@ impl<P: Provider> E1000<P> {
         e1000[E1000_TDH].write(0); // TDH
         e1000[E1000_TDT].write(0); // TDT
 
-        for element in send_queue.iter_mut() {
+        for i in 0..send_queue.len() {
             let (buffer_page_va, buffer_page_pa) = P::alloc_dma(P::PAGE_SIZE);
-            element.addr = buffer_page_pa as u64;
+            send_queue[i].addr = buffer_page_pa as u64;
             send_buffers.push(buffer_page_va);
         }
 
@@ -130,10 +127,10 @@ impl<P: Provider> E1000<P> {
         let mut ral: u32 = 0;
         let mut rah: u32 = 0;
         for i in 0..4 {
-            ral |= (mac.as_bytes()[i] as u32) << (i * 8);
+            ral = ral | (mac.as_bytes()[i] as u32) << (i * 8);
         }
         for i in 0..2 {
-            rah |= (mac.as_bytes()[i + 4] as u32) << (i * 8);
+            rah = rah | (mac.as_bytes()[i + 4] as u32) << (i * 8);
         }
 
         e1000[E1000_RAL].write(ral); // RAL
@@ -141,8 +138,8 @@ impl<P: Provider> E1000<P> {
         e1000[E1000_RAH].write(rah | (1 << 31)); // RAH
 
         // MTA
-        for element in e1000.iter_mut().take(E1000_RAL).skip(E1000_MTA) {
-            element.write(0);
+        for i in E1000_MTA..E1000_RAL {
+            e1000[i].write(0);
         }
 
         // Program the descriptor base address with the address of the region.
@@ -159,20 +156,16 @@ impl<P: Provider> E1000<P> {
         e1000[E1000_RDT].write((recv_queue.len() - 1) as u32); // RDT
 
         // Receive buffers of appropriate size should be allocated and pointers to these buffers should be stored in the descriptor ring.
-        for element in recv_queue.iter_mut() {
+        kinfo!("recv queue length is {:#x}", recv_queue.len());
+        for i in 0..recv_queue.len() {
             let (buffer_page_va, buffer_page_pa) = P::alloc_dma(P::PAGE_SIZE);
-            element.addr = buffer_page_pa as u64;
+            recv_queue[i].addr = buffer_page_pa as u64;
             recv_buffers.push(buffer_page_va);
         }
 
         // EN | BAM | BSIZE=3 | BSEX | SECRC
         // BSIZE=3 | BSEX means buffer size = 4096
         e1000[E1000_RCTL].write((1 << 1) | (1 << 15) | (3 << 16) | (1 << 25) | (1 << 26)); // RCTL
-
-        debug!(
-            "status after setup: {:#?}",
-            E1000Status::from_bits_truncate(e1000[E1000_STATUS].read())
-        );
 
         // enable interrupt
         // clear interrupt
@@ -229,7 +222,6 @@ impl<P: Provider> E1000<P> {
                 recv_desc.len as usize,
             )
         };
-
         recv_desc.status.set_bit(0, false);
 
         rdt = index;
@@ -253,7 +245,7 @@ impl<P: Provider> E1000<P> {
 
         let target =
             unsafe { slice::from_raw_parts_mut(self.send_buffers[index] as *mut u8, buffer.len()) };
-        target.copy_from_slice(buffer);
+        target.copy_from_slice(&buffer);
 
         send_desc.len = buffer.len() as u16 + 4;
         send_desc.cmd = (1 << 3) | (1 << 1) | (1 << 0); // RS | IFCS | EOP

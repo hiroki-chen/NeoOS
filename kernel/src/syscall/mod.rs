@@ -449,10 +449,13 @@ async fn do_handle_syscall(
         SYS_ARCH_PRCTL => sys_arch_prctl(thread, ctx, syscall_registers),
 
         SYS_SOCKET => sys_socket(thread, ctx, syscall_registers),
-        SYS_ACCEPT => sys_accept(thread, ctx, syscall_registers).await,
+        SYS_ACCEPT => sys_accept(thread, ctx, syscall_registers),
         SYS_CONNECT => sys_connect(thread, ctx, syscall_registers),
         SYS_BIND => sys_bind(thread, ctx, syscall_registers),
         SYS_LISTEN => sys_listen(thread, ctx, syscall_registers),
+        SYS_SETSOCKOPT => sys_setsockopt(thread, ctx, syscall_registers),
+        SYS_SENDTO => sys_sendto(thread, ctx, syscall_registers),
+        SYS_RECVFROM => sys_recvfrom(thread, ctx, syscall_registers),
 
         _ => {
             kerror!("unrecognized syscall number {:#x}", syscall_number);

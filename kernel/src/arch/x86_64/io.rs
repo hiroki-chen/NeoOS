@@ -6,7 +6,6 @@ use core::{
 };
 
 use alloc::{string::ToString, sync::Arc, vec::Vec};
-use x86_64::instructions::interrupts::without_interrupts;
 
 use crate::{drivers::SERIAL_DRIVERS, error::KResult, process::thread::Thread, utils::ptr::Ptr};
 
@@ -16,13 +15,12 @@ pub fn writefmt(arg: Arguments) {
     // To ensure printing can proceed, we need to prevent timer interrupt so that the lock can be properly
     // dropped; otherwise, if we do something in the handler that requries the logger, read/write causes
     // deadlock, and it never ends.
-    without_interrupts(|| {
-        SERIAL_DRIVERS
-            .write()
-            .first()
-            .unwrap()
-            .write(arg.to_string().as_bytes());
-    })
+
+    SERIAL_DRIVERS
+        .write() // remember to make it write.
+        .first()
+        .unwrap()
+        .write(arg.to_string().as_bytes());
 }
 
 /// IoVec (short for "I/O vector") is a data structure used to describe a block of data to be read or written

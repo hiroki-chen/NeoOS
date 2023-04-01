@@ -1,9 +1,9 @@
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use smoltcp::socket::udp::{PacketBuffer, PacketMetadata, Socket};
 
 use core::{any::Any, net::SocketAddr, time::Duration};
 
-use crate::error::KResult;
+use crate::{error::KResult, sys::SocketOptions};
 
 use super::{
     Shutdown, Socket as SocketTrait, SocketType, SocketWrapper, RECVBUF_LEN, SENDBUF_LEN,
@@ -44,7 +44,7 @@ impl SocketTrait for UdpStream {
         todo!()
     }
 
-    fn write(&mut self, buf: &[u8]) -> KResult<usize> {
+    fn write(&self, buf: &[u8], dst: Option<SocketAddr>) -> KResult<usize> {
         todo!()
     }
 
@@ -60,7 +60,7 @@ impl SocketTrait for UdpStream {
         todo!()
     }
 
-    fn setsocketopt(&mut self) -> KResult<()> {
+    fn setsocketopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()> {
         todo!()
     }
 
@@ -84,7 +84,7 @@ impl SocketTrait for UdpStream {
         todo!()
     }
 
-    fn as_raw_fd(&self) -> u64 {
+    fn as_raw_fd(&self) -> KResult<u64> {
         todo!()
     }
 
@@ -102,5 +102,9 @@ impl SocketTrait for UdpStream {
 
     fn ty(&self) -> SocketType {
         SocketType::Udp
+    }
+
+    fn set_fd(&mut self, fd: u64) {
+        todo!()
     }
 }

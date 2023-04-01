@@ -5,7 +5,7 @@ use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use bitflags::bitflags;
 use rcore_fs::vfs::Metadata;
 
-use crate::fs::apfs::meta::get_timestamp;
+use crate::{fs::apfs::meta::get_timestamp, arch::io::IoVec};
 
 pub const AT_EMPTY_PATH: u64 = 0x1000;
 pub const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
@@ -213,6 +213,66 @@ bitflags! {
         const EPOLLONESHOT = 0x40000000;
         const EPOLLET = 0x80000000;
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u64)]
+/// The socket options.
+pub enum SocketOptions {
+    /* Setsockoptions(2) level. Thanks to BSD these must match IPPROTO_xxx */
+    SolIp = 0,
+    SolTcp = 6,
+    SolUdp = 17,
+    SolIpv6 = 41,
+    SolIcmpv6 = 58,
+    SolSctp = 132,
+    SolUdplite = 136, /* UDP-Lite (RFC 3828) */
+    SolRaw = 255,
+    SolIpx = 256,
+    SolAx25 = 257,
+    SolAtalk = 258,
+    SolNetrom = 259,
+    SolRose = 260,
+    SolDecnet = 261,
+    SolX25 = 262,
+    SolPacket = 263,
+    SolAtm = 264, /* ATM layer (cell level) */
+    SolAal = 265, /* ATM Adaption Layer (packet level) */
+    SolIrda = 266,
+    SolNetbeui = 267,
+    SolLlc = 268,
+    SolDccp = 269,
+    SolNetlink = 270,
+    SolTipc = 271,
+    SolRxrpc = 272,
+    SolPppol2tp = 273,
+    SolBluetooth = 274,
+    SolPnpipe = 275,
+    SolRds = 276,
+    SolIucv = 277,
+    SolCaif = 278,
+    SolAlg = 279,
+    SolNfc = 280,
+    SolKcm = 281,
+    SolTls = 282,
+    SolXdp = 283,
+    SolMptcp = 284,
+    SolMctp = 285,
+    SolSmc = 286,
+}
+
+/// The `MsgHdr` struct is used to specify the message header in a call to `sendmsg` or `recvmsg` on a socket.
+/// This struct is defined in the system header file `sys/socket.h`.
+#[derive(Debug)]
+#[repr(C)]
+pub struct MsrHdr {
+    pub msg_name: *mut SockAddr,
+    pub msg_namelen: u64,
+    pub msg_iov: *mut IoVec,
+    pub msg_iovlen: u64,
+    pub msg_control: u64,
+    pub msg_controllen: u64,
+    pub msg_flags: u64,
 }
 
 #[derive(Debug, Clone)]

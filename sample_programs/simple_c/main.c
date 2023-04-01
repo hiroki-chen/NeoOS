@@ -31,10 +31,22 @@ int main() {
          bind_status, listen_status);
 
   size_t len = 0;
-  int accept_result =
+  int client_socket =
       accept(s, (struct sockaddr*)(&server_address), (socklen_t*)&len);
-  printf("accept with %d\n", accept_result);
+  printf("accept with %d\n", client_socket);
   while (1) {
+    char buf[1024] = {0};
+    int read_len = recv(client_socket, buf, 1024, 0);
+
+    if (read_len == 0) {
+      continue;
+    }
+
+    printf("Message received as %s\n", buf);
+
+    int send_len = send(client_socket, "hello!!", 8, 0);
+
+    printf("Message sent\n");
   }
 
   return 0;

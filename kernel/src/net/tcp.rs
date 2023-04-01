@@ -1,6 +1,6 @@
-use alloc::{boxed::Box, vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
 use smoltcp::{
-    socket::tcp::{Socket, SocketBuffer},
+    socket::tcp::{RecvError, Socket, SocketBuffer},
     wire::IpListenEndpoint,
 };
 
@@ -9,8 +9,9 @@ use core::{any::Any, net::SocketAddr, time::Duration};
 use crate::{
     drivers::NETWORK_DRIVERS,
     error::{Errno, KResult},
-    function, kerror, kinfo,
+    function, kdebug, kerror, kinfo,
     net::{LISTEN_TABLE, RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET},
+    sys::SocketOptions,
 };
 
 use super::{convert_addr, Shutdown, Socket as SocketTrait, SocketType, SocketWrapper};
@@ -62,6 +63,11 @@ pub struct TcpStream {
     peer: Option<SocketAddr>,
     /// Is this socket still alive?
     state: TcpState,
+    /// The socket options.
+    options: BTreeMap<SocketOptions, Vec<u8>>,
+    /// The fd.
+    fd: Option<u64>,
+    // ADD "socket flags" like non-blocking.
 }
 
 impl TcpStream {
@@ -76,17 +82,14 @@ impl TcpStream {
             addr: None,
             peer: None,
             state: TcpState::Uninit,
+            options: BTreeMap::new(),
+            fd: None,
         }
     }
 
     #[inline]
     pub fn state(&self) -> TcpState {
         self.state
-    }
-
-    #[inline]
-    pub fn peer_addr(&self) -> Option<SocketAddr> {
-        self.peer
     }
 
     pub fn accept(&mut self) -> KResult<Box<dyn SocketTrait>> {
@@ -115,6 +118,9 @@ impl TcpStream {
                             addr: Some(self.addr.unwrap()),
                             peer: Some(remove_address),
                             state: TcpState::Alive,
+                            options: BTreeMap::new(),
+                            // Assign later.
+                            fd: None,
                         }));
                     }
 
@@ -122,7 +128,7 @@ impl TcpStream {
                     Err(errno) => {
                         kerror!("cannot accept incoming connection.");
                         return Err(errno);
-                    }
+                    } // TODO: EWOULDBLOCK if timeout.
                 }
             }
         } else {
@@ -133,11 +139,76 @@ impl TcpStream {
 
 impl SocketTrait for TcpStream {
     fn read(&self, buf: &mut [u8]) -> KResult<usize> {
-        todo!()
+        // Check the status.
+        if self.state != TcpState::Alive {
+            return Err(Errno::ECONNREFUSED);
+        }
+        loop {
+            NETWORK_DRIVERS.read().iter().for_each(|driver| {
+                driver.poll();
+            });
+            // Receive from the socket handle.
+            let mut socket_set = SOCKET_SET.lock();
+            let socket = socket_set.get_mut::<Socket>(self.socket.as_ref().unwrap().0);
+
+            // Check the socket status again.
+            if !socket.is_active() {
+                return Err(Errno::ECONNREFUSED);
+            }
+            if !socket.may_recv() {
+                return Ok(0);
+            }
+
+            let res = socket.recv(|buffer| {
+                let recvd_len = buffer.len();
+                let mut data = buffer.to_vec();
+                if !data.is_empty() {
+                    data = data.split(|&b| b == b'\n').collect::<Vec<_>>().concat();
+                }
+
+                (recvd_len, data)
+            });
+            drop(socket);
+            drop(socket_set);
+
+            match res {
+                Ok(data) => {
+                    if !data.is_empty() {
+                        buf[..data.len()].copy_from_slice(&data);
+                        return Ok(data.len());
+                    }
+                }
+                Err(RecvError::Finished) => return Ok(0),
+                Err(err) => {
+                    kerror!("smoltcp encountered read error {:?}", err);
+                    return Err(Errno::ECONNREFUSED);
+                }
+            }
+        }
     }
 
-    fn write(&mut self, buf: &[u8]) -> KResult<usize> {
-        todo!()
+    // destination is explicitly ignored even if syscall gives us this input.
+    fn write(&self, buf: &[u8], _dst: Option<SocketAddr>) -> KResult<usize> {
+        if self.state != TcpState::Alive {
+            return Err(Errno::ECONNREFUSED);
+        }
+
+        let mut socket_set = SOCKET_SET.lock();
+        let socket = socket_set.get_mut::<Socket>(self.socket.as_ref().unwrap().0);
+
+        if !socket.is_active() {
+            return Err(Errno::ECONNREFUSED);
+        }
+
+        let res = socket.send_slice(buf);
+        drop(socket);
+        drop(socket_set);
+
+        res.map_err(|_| Errno::ECONNREFUSED)
+    }
+
+    fn set_fd(&mut self, fd: u64) {
+        self.fd.replace(fd);
     }
 
     fn bind(&mut self, addr: SocketAddr) -> KResult<()> {
@@ -171,7 +242,7 @@ impl SocketTrait for TcpStream {
                     }
 
                     LISTEN_TABLE.write().listen(addr.port())?;
-                    kinfo!("socket is listening on port {}", addr.port());
+                    kdebug!("socket is listening on port {}", addr.port());
                     // Moves this socket handle.
                     let handle = self.socket.take();
                     SOCKET_SET.lock().remove(handle.unwrap().0);
@@ -195,32 +266,63 @@ impl SocketTrait for TcpStream {
         Ok(())
     }
 
-    fn setsocketopt(&mut self) -> KResult<()> {
-        todo!()
+    fn setsocketopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()> {
+        self.options
+            .entry(key)
+            .and_modify(|v| {
+                *v = value;
+            })
+            .or_default();
+        Ok(())
     }
 
     fn timeout(&self) -> Option<Duration> {
-        todo!()
+        SOCKET_SET
+            .lock()
+            .get::<Socket>(self.socket.as_ref().unwrap().0)
+            .timeout()
+            .map(|timeout| timeout.into())
     }
 
     fn peer_addr(&self) -> Option<SocketAddr> {
-        self.peer.clone()
+        self.peer
     }
 
     fn addr(&self) -> Option<SocketAddr> {
-        todo!()
+        self.addr
     }
 
     fn set_timeout(&mut self, timeout: Duration) {
-        todo!()
+        let mut socket_set = SOCKET_SET.lock();
+        let socket = socket_set.get_mut::<Socket>(self.socket.as_ref().unwrap().0);
+        socket.set_timeout(Some(timeout.into()));
     }
 
     fn shutdown(&mut self, how: Shutdown) -> KResult<()> {
-        todo!()
+        if self.state == TcpState::Dead {
+            // Allow this operation.
+            return Ok(());
+        }
+
+        let mut socket_set = SOCKET_SET.lock();
+        let socket = socket_set.get_mut::<Socket>(self.socket.as_ref().unwrap().0);
+        if !socket.is_active() {
+            return Ok(());
+        }
+
+        // Elegant way?
+        match how {
+            Shutdown::Both => socket.abort(),
+            Shutdown::Read => unimplemented!(),
+            // This only closes the transimission half.
+            Shutdown::Write => socket.close(),
+        }
+
+        Ok(())
     }
 
-    fn as_raw_fd(&self) -> u64 {
-        todo!()
+    fn as_raw_fd(&self) -> KResult<u64> {
+        self.fd.ok_or(Errno::EBADF)
     }
 
     fn set_nonblocking(&mut self, non_blocking: bool) -> KResult<()> {

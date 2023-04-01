@@ -20,7 +20,7 @@ use crate::{
         search_by_group_id,
     },
     signal::{send_signal, SigInfo, Signal},
-    sync::mutex::SpinLock as Mutex,
+    sync::mutex::SpinLockNoInterrupt as Mutex,
 };
 
 lazy_static! {

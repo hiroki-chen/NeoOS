@@ -49,11 +49,12 @@ QEMU_COMMAND	?= sudo qemu-system-x86_64 \
 			-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
 			-device ahci,id=ahci0 \
 			-device ide-hd,drive=sfsimg,bus=ahci0.0 \
-			-cpu host
+			-cpu host \
+			-monitor telnet:127.0.0.1:23333,server,nowait
 
 ifeq ($(UNAME), Darwin)
 	QEMU_COMMAND += -accel hvf -machine type=q35 \
-			-nic vmnet-host,mac=52:54:0:12:34:57
+			-nic vmnet-host,mac=52:54:0:12:34:57,model=e1000e \
 else
 	QEMU_COMMAND += -enable-kvm \
 			-netdev type=tap,id=net0,script=no,downscript=no \
