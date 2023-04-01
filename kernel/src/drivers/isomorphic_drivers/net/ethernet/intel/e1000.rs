@@ -11,7 +11,7 @@ use volatile::Volatile;
 use crate::drivers::isomorphic_drivers::{
     net::ethernet::structs::EthernetAddress, provider::Provider,
 };
-use crate::{function, kinfo};
+use crate::{function, kdebug};
 
 // At the beginning, all transmit descriptors have there status non-zero,
 // so we need to track whether we are using the descriptor for the first time.
@@ -156,25 +156,27 @@ impl<P: Provider> E1000<P> {
         e1000[E1000_RDT].write((recv_queue.len() - 1) as u32); // RDT
 
         // Receive buffers of appropriate size should be allocated and pointers to these buffers should be stored in the descriptor ring.
-        kinfo!("recv queue length is {:#x}", recv_queue.len());
         for i in 0..recv_queue.len() {
             let (buffer_page_va, buffer_page_pa) = P::alloc_dma(P::PAGE_SIZE);
             recv_queue[i].addr = buffer_page_pa as u64;
             recv_buffers.push(buffer_page_va);
         }
 
-        // EN | BAM | BSIZE=3 | BSEX | SECRC
+        // EN | SBP | BAM | BSIZE=3 | BSEX | SECRC
         // BSIZE=3 | BSEX means buffer size = 4096
-        e1000[E1000_RCTL].write((1 << 1) | (1 << 15) | (3 << 16) | (1 << 25) | (1 << 26)); // RCTL
-
-        // enable interrupt
-        // clear interrupt
+        e1000[E1000_RCTL]
+            .write((1 << 1) | (1 << 2) | (1 << 15) | (3 << 16) | (1 << 25) | (1 << 26)); // RCTL
+        e1000[E1000_RDTR].write(0); // interrupt after every received packet (no timer)
+        e1000[E1000_RADV].write(0); // interrupt after every packet (no timer)
+                                    // enable interrupt
+                                    // clear interrupt
         e1000[E1000_ICR].write(e1000[E1000_ICR].read());
         // RXT0
         e1000[E1000_IMS].write(1 << 7); // IMS
 
         // clear interrupt
         e1000[E1000_ICR].write(e1000[E1000_ICR].read());
+        e1000[E1000_STATUS].read();
 
         E1000 {
             header,
@@ -202,32 +204,37 @@ impl<P: Provider> E1000<P> {
     }
 
     pub fn receive(&mut self) -> Option<Vec<u8>> {
-        let tdt = self.registers[E1000_TDT].read() as usize;
-        let index = tdt % self.send_queue.len();
-        let send_desc = &mut self.send_queue[index];
+        let mut recv_packets = Vec::new();
+        let mut rindex =
+            ((self.registers[E1000_RDT].read() + 1) % (self.recv_queue.len() as u32)) as usize;
 
-        let mut rdt = self.registers[E1000_RDT].read() as usize;
-        let index = (rdt + 1) % self.recv_queue.len();
-        let recv_desc = &mut self.recv_queue[index];
+        while self.recv_queue[rindex].status & 0x1 != 0 {
+            let len = self.recv_queue[rindex].len as usize;
+            let mbuf = unsafe {
+                core::slice::from_raw_parts_mut(self.recv_buffers[rindex] as *mut u8, len)
+            };
 
-        let transmit_avail = self.first_trans || send_desc.status.get_bit(0);
-        let receive_avail = recv_desc.status.get_bit(0);
+            // HACK: For some reason, status is corrupted and cannot indicate a valid network packet;
+            // so we use this method to check validity for the time being.
+            if mbuf.into_iter().all(|d| *d == 0) {
+                break;
+            }
 
-        if !(transmit_avail && receive_avail) {
-            return None;
+            recv_packets.push(mbuf.to_vec());
+
+            self.recv_queue[rindex].status = 0;
+            self.registers[E1000_RDT].write(rindex as u32);
+
+            self.registers[E1000_STATUS].read();
+            rindex = (rindex + 1) % self.recv_queue.len();
         }
-        let buffer = unsafe {
-            slice::from_raw_parts(
-                self.recv_buffers[index] as *const u8,
-                recv_desc.len as usize,
-            )
-        };
-        recv_desc.status.set_bit(0, false);
-
-        rdt = index;
-        self.registers[E1000_RDT].write(rdt as u32);
-
-        Some(buffer.to_vec())
+        match recv_packets.len() {
+            0 => None,
+            _ => {
+                kdebug!("res is {:02x?}", recv_packets);
+                Some(recv_packets.into_iter().flatten().collect())
+            }
+        }
     }
 
     pub fn can_send(&self) -> bool {
@@ -296,3 +303,5 @@ const E1000_TDT: usize = 0x3818 / 4;
 const E1000_MTA: usize = 0x5200 / 4;
 const E1000_RAL: usize = 0x5400 / 4;
 const E1000_RAH: usize = 0x5404 / 4;
+const E1000_RDTR: usize = 0x02820 / 4; /* RX Delay Timer */
+const E1000_RADV: usize = 0x0282C / 4; /* RX Interrupt Absolute Delay Timer */
