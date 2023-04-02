@@ -20,6 +20,7 @@ BACKTRACE	?= 5
 OS_LOG_LEVEL	?= info
 TEST_KERNEL	?= ./test_jump.S
 FILE_SYSTEM 	?= apfs
+MONITOR		?= 0
 WORK_DIR 	?= ./test
 BOOT_DIR 	:= $(WORK_DIR)/esp/efi/boot
 EFI_TARGET	?= target/x86_64-unknown-uefi/debug/boot.efi
@@ -37,7 +38,7 @@ ifeq ($(UNAME), Darwin)
 	BUILD_COMMAND := cargo build
 else
 	UEFI := /usr/share/OVMF/OVMF_CODE.fd
-	BUILD_COMMAND := cargo build --features=x2apic
+	BUILD_COMMAND := cargo build --features=x2apic,linux_gateway
 endif
 
 # Need to add `sudo` to make sure QEMU can access /dev/net/tun: but why changing permission and user group
@@ -49,15 +50,18 @@ QEMU_COMMAND	?= sudo qemu-system-x86_64 \
 			-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
 			-device ahci,id=ahci0 \
 			-device ide-hd,drive=sfsimg,bus=ahci0.0 \
-			-cpu host \
-			-monitor telnet:127.0.0.1:23333,server,nowait
+			-cpu host
+
+ifeq ($(MONITOR), 1)
+	QEMU_COMMAND += -monitor telnet:127.0.0.1:23333,server,nowait
+endif
 
 ifeq ($(UNAME), Darwin)
 	QEMU_COMMAND += -accel hvf -machine type=q35 \
 			-nic vmnet-host,mac=52:54:0:12:34:57,model=e1000e
 else
 	QEMU_COMMAND += -enable-kvm \
-			-netdev type=tap,id=net0,script=no,downscript=no \
+			-netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
 			-device e1000e,netdev=net0
 endif
 

@@ -423,6 +423,7 @@ async fn do_handle_syscall(
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
         SYS_READV => sys_readv(thread, ctx, syscall_registers),
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
+        SYS_LSEEK => sys_lseek(thread, ctx, syscall_registers),
         SYS_IOCTL => sys_ioctl(thread, ctx, syscall_registers),
         SYS_STAT => sys_stat(thread, ctx, syscall_registers),
         SYS_NEWFSTATAT => sys_newfstatat(thread, ctx, syscall_registers),
@@ -453,8 +454,12 @@ async fn do_handle_syscall(
         SYS_CONNECT => sys_connect(thread, ctx, syscall_registers),
         SYS_BIND => sys_bind(thread, ctx, syscall_registers),
         SYS_LISTEN => sys_listen(thread, ctx, syscall_registers),
+        SYS_GETSOCKNAME => sys_getsockname(thread, ctx, syscall_registers),
+        SYS_GETPEERNAME => sys_getpeername(thread, ctx, syscall_registers),
         SYS_SETSOCKOPT => sys_setsockopt(thread, ctx, syscall_registers),
+        SYS_GETSOCKOPT => sys_getsockopt(thread, ctx, syscall_registers),
         SYS_SENDTO => sys_sendto(thread, ctx, syscall_registers),
+        SYS_SENDMMSG => sys_sendmsg(thread, ctx, syscall_registers),
         SYS_RECVFROM => sys_recvfrom(thread, ctx, syscall_registers),
 
         _ => {

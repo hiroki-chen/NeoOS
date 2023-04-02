@@ -1,0 +1,9 @@
+[build]
+target = "x86_64-unknown-neoos-musl.json"
+
+[target.x86_64-unknown-neoos-musl]
+rustflags = ["-C", "relocation-model=static"]
+
+[unstable]
+build-std = ["core", "alloc"]
+build-std-features = ["compiler-builtins-mem"]

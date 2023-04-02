@@ -1,18 +1,58 @@
 //! Networking syscall interfaces.
 
-use core::net::IpAddr;
+use core::net::{IpAddr, SocketAddr};
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use smoltcp::wire::IpProtocol;
 
 use crate::{
-    arch::interrupt::SYSCALL_REGS_NUM,
+    arch::{interrupt::SYSCALL_REGS_NUM, io::IoVec},
     error::{Errno, KResult},
     fs::file::FileObject,
-    net::{Socket, TcpStream, UdpStream},
+    net::{RawSocket, Socket, TcpStream, UdpStream},
     process::thread::{Thread, ThreadContext},
-    sys::{IpProto, SockAddr, SocketOptions, SocketType, AF_INET, AF_UNIX},
+    sys::{IpProto, MsgHdr, SockAddr, SocketOptions, SocketType, AF_INET, AF_UNIX},
     utils::ptr::Ptr,
 };
+
+fn get_socket_name<T>(
+    socket: &mut Box<dyn Socket>,
+    sockaddr: u64,
+    len: usize,
+    is_self: bool,
+) -> KResult<usize> {
+    let addr = if is_self {
+        match socket.addr() {
+            Some(SocketAddr::V4(addr)) => addr,
+            Some(_) | None => return Ok(0), // Nothing is changed.
+        }
+    } else {
+        match socket.peer_addr() {
+            Some(SocketAddr::V4(addr)) => addr,
+            Some(_) | None => return Ok(0), // Nothing is changed.
+        }
+    };
+
+    let ptr = Ptr::new(sockaddr as *mut SockAddr);
+    if ptr.is_null() {
+        return Err(Errno::EFAULT);
+    }
+
+    unsafe {
+        ptr.write(SockAddr {
+            // Mark as fixed.
+            sa_family: AF_INET as _,
+            sa_data_min: {
+                let mut buf = [0u8; 14];
+                buf[..2].copy_from_slice(&addr.port().to_be_bytes());
+                buf[2..6].copy_from_slice(&addr.ip().octets());
+                buf
+            },
+        })?;
+    }
+
+    Ok(0)
+}
 
 /// `socket()` creates an endpoint for communication and returns a file descriptor that refers to that endpoint.
 /// The file descriptor returned by a successful call will be the lowest-numbered file descriptor not currently
@@ -40,7 +80,7 @@ pub fn sys_socket(
         AF_INET | AF_UNIX => match socket_type {
             SocketType::SockStream => Box::new(TcpStream::new()),
             SocketType::SockDgram => Box::new(UdpStream::new()),
-            SocketType::SockRaw => unimplemented!(),
+            SocketType::SockRaw => Box::new(RawSocket::new(IpProtocol::from(ipproto_type as u8))),
         },
 
         _ => return Err(Errno::EINVAL), // unsupported.
@@ -79,7 +119,7 @@ pub fn sys_connect(
 
         socket.connect(ipv4_addr).map(|_| 0)
     } else {
-        Err(Errno::EBADF)
+        Err(Errno::ENOTSOCK)
     }
 }
 
@@ -107,7 +147,7 @@ pub fn sys_bind(
 
         socket.bind(ipv4_addr).map(|_| 0)
     } else {
-        Err(Errno::EBADF)
+        Err(Errno::ENOTSOCK)
     }
 }
 
@@ -178,7 +218,7 @@ pub fn sys_accept(
             Err(Errno::EINVAL)
         }
     } else {
-        Err(Errno::EBADF)
+        Err(Errno::ENOTSOCK)
     }
 }
 
@@ -205,9 +245,65 @@ pub fn sys_setsockopt(
         let value =
             unsafe { core::slice::from_raw_parts(option_value as *const u8, option_len as _) }
                 .to_vec();
-        socket.setsocketopt(option_name, value).map(|_| 0)
+        socket.setsockopt(option_name, value).map(|_| 0)
     } else {
         Err(Errno::EBADF)
+    }
+}
+
+/// getsockopt() and setsockopt() manipulate options for the socket referred to by the file descriptor sockfd.
+pub fn sys_getsockopt(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let sockfd = syscall_registers[0];
+    let level = syscall_registers[1];
+    let optname = syscall_registers[2];
+    let optval = syscall_registers[3];
+    let optlen = syscall_registers[4];
+
+    let opt_ptr = Ptr::new(optname as *mut u8);
+    let len_ptr = Ptr::new(optlen as *mut u64);
+    if opt_ptr.is_null() || len_ptr.is_null() {
+        return Err(Errno::EFAULT);
+    }
+
+    let mut proc = thread.parent.lock();
+    let socket = proc.get_fd(sockfd)?;
+
+    if let FileObject::Socket(socket) = socket {
+        let optname = unsafe { core::mem::transmute::<u64, SocketOptions>(optname) };
+        match socket.getsockopt(optname) {
+            Ok(val) => unsafe {
+                opt_ptr.write_slice(&val);
+                len_ptr.write(val.len() as _).map(|_| val.len())
+            },
+            Err(_) => Ok(0),
+        }
+    } else {
+        Err(Errno::ENOTSOCK)
+    }
+}
+
+/// getpeername() returns the address of the peer connected to the socket sockfd, in the buffer pointed to by addr.
+/// The addrlen argument should be initialized to indicate the amount of space pointed to by addr.
+pub fn sys_getpeername(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let sockfd = syscall_registers[0];
+    let sockaddr = syscall_registers[1];
+    let socklen = syscall_registers[2];
+
+    let mut proc = thread.parent.lock();
+    let socket = proc.get_fd(sockfd)?;
+
+    if let FileObject::Socket(socket) = socket {
+        get_socket_name::<SockAddr>(socket, sockaddr, socklen as _, false)
+    } else {
+        Err(Errno::ENOTSOCK)
     }
 }
 
@@ -245,10 +341,45 @@ pub fn sys_sendto(
         let buf = unsafe { core::slice::from_raw_parts(buf as *const u8, len as _) };
         socket.write(buf, dst_addr)
     } else {
-        Err(Errno::EINVAL)
+        Err(Errno::ENOTSOCK)
     }
 }
 
+pub fn sys_sendmsg(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let sockfd = syscall_registers[0];
+    let msghdr = syscall_registers[1];
+    let flags = syscall_registers[2];
+
+    let mut proc = thread.parent.lock();
+    let socket = proc.get_fd(sockfd)?;
+
+    if let FileObject::Socket(socket) = socket {
+        let msg_ptr = unsafe { Ptr::new_with_const(msghdr as *const MsgHdr) };
+        // FIXME: Check pointer.
+        let msg = unsafe { msg_ptr.read() }?;
+        // Read messages from iovec.
+        let iovec = msg.msg_iov;
+        let iovec_len = msg.msg_iovlen;
+        let iovec = IoVec::get_all_iovecs(thread, iovec, iovec_len as _, true)?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        // Get destination address.
+        let dst = match unsafe { Ptr::new(msg.msg_name).read() } {
+            Ok(addr) => Some(addr.to_core_sockaddr()),
+            Err(_) => None,
+        };
+
+        socket.write(&iovec, dst)
+    } else {
+        Err(Errno::ENOTSOCK)
+    }
+}
 /// The recv(), recvfrom(), and recvmsg() calls are used to receive messages from a socket. They may be used to receive data
 /// on both connectionless and connection-oriented sockets. This page first describes common features of all three system
 /// calls, and then describes the differences between the calls.
@@ -268,10 +399,49 @@ pub fn sys_recvfrom(
     let socket = proc.get_fd(sockfd)?;
     if let FileObject::Socket(socket) = socket {
         let buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len as _) };
+        let (len, addr) = socket.read(buf)?;
 
-        // TODO: We need to write to the `src_addr` (e.g., for UDP connections).
-        socket.read(buf)
+        let ptr = Ptr::new(src_addr as *mut SockAddr);
+        if let (false, Some(SocketAddr::V4(addr))) = (ptr.is_null(), addr) {
+            // We need to write to the `src_addr` (e.g., for UDP connections).
+            unsafe {
+                ptr.write(SockAddr {
+                    // Mark as fixed.
+                    sa_family: AF_INET as _,
+                    sa_data_min: {
+                        let mut buf = [0u8; 14];
+                        buf[..2].copy_from_slice(&addr.port().to_be_bytes());
+                        buf[2..6].copy_from_slice(&addr.ip().octets());
+                        buf
+                    },
+                })?;
+            }
+        }
+
+        Ok(len)
     } else {
-        Err(Errno::EINVAL)
+        Err(Errno::ENOTSOCK)
+    }
+}
+
+/// getsockname() returns the current address to which the socket sockfd is bound, in the buffer pointed to by addr. The
+/// addrlen argument should be initialized to indicate the amount of space (in bytes) pointed to by addr. On return it
+/// contains the actual size of the socket address.
+pub fn sys_getsockname(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let sockfd = syscall_registers[0];
+    let sockaddr = syscall_registers[1];
+    let socklen = syscall_registers[2];
+
+    let mut proc = thread.parent.lock();
+    let socket = proc.get_fd(sockfd)?;
+
+    if let FileObject::Socket(socket) = socket {
+        get_socket_name::<SockAddr>(socket, sockaddr, socklen as _, true)
+    } else {
+        Err(Errno::ENOTSOCK)
     }
 }

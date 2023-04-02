@@ -5,7 +5,7 @@ use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use bitflags::bitflags;
 use rcore_fs::vfs::Metadata;
 
-use crate::{fs::apfs::meta::get_timestamp, arch::io::IoVec};
+use crate::{arch::io::IoVec, fs::apfs::meta::get_timestamp};
 
 pub const AT_EMPTY_PATH: u64 = 0x1000;
 pub const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
@@ -97,6 +97,12 @@ pub const AF_MCTP: u64 = 45; /* Management component
                               * transport protocol
                               */
 pub const AF_MAX: u64 = 46; /* For now.. */
+
+pub const SEEK_SET: u64 = 0; /* seek relative to beginning of file */
+pub const SEEK_CUR: u64 = 1; /* seek relative to current file position */
+pub const SEEK_END: u64 = 2; /* seek relative to end of file */
+pub const SEEK_DATA: u64 = 3; /* seek to the next data */
+pub const SEEK_HOLE: u64 = 4; /* seek to the next hole */
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -221,6 +227,9 @@ bitflags! {
 pub enum SocketOptions {
     /* Setsockoptions(2) level. Thanks to BSD these must match IPPROTO_xxx */
     SolIp = 0,
+    /// This option is used to allow an application to provide its own IP header instead of relying
+    /// on the kernel to generate it.
+    IpHdrincl = 3,
     SolTcp = 6,
     SolUdp = 17,
     SolIpv6 = 41,
@@ -265,7 +274,7 @@ pub enum SocketOptions {
 /// This struct is defined in the system header file `sys/socket.h`.
 #[derive(Debug)]
 #[repr(C)]
-pub struct MsrHdr {
+pub struct MsgHdr {
     pub msg_name: *mut SockAddr,
     pub msg_namelen: u64,
     pub msg_iov: *mut IoVec,

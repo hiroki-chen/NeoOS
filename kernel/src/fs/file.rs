@@ -179,7 +179,7 @@ impl File {
                         let errno = fserror_to_kerror(errno);
                         match errno {
                             // Read again as inode is not ready.
-                            Errno::EAGAIN | Errno::EWOULDBLOCK => {
+                            Errno::EAGAIN => {
                                 self.inode.async_poll().await.map_err(fserror_to_kerror)?;
                             }
 
@@ -368,7 +368,7 @@ impl FileObject {
     pub async fn read(&self, buf: &mut [u8]) -> KResult<usize> {
         match self {
             FileObject::File(file) => file.read_buf(buf).await,
-            FileObject::Socket(socket) => socket.read(buf),
+            FileObject::Socket(socket) => socket.read(buf).map(|(len, _)| len),
 
             _ => unimplemented!(),
         }

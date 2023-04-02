@@ -120,7 +120,7 @@ where
             if timeout <= now {
                 // Immediately return a `EWOULDBLOCK` status and wake it up.
                 current_thread.sleeping = true;
-                return Poll::Ready(Err(Errno::EWOULDBLOCK));
+                return Poll::Ready(Err(Errno::EAGAIN));
             }
         }
 

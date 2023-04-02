@@ -14,11 +14,11 @@ use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, io::IoVec},
     error::{fserror_to_kerror, Errno, KResult},
     fs::{
-        file::{File, FileObject, FileOpenOption, FileType},
+        file::{File, FileObject, FileOpenOption, FileType, Seek},
         AT_FDCWD,
     },
     process::thread::{Thread, ThreadContext},
-    sys::{Stat, AT_SYMLINK_NOFOLLOW},
+    sys::{Stat, AT_SYMLINK_NOFOLLOW, SEEK_CUR, SEEK_END, SEEK_SET},
     utils::{ptr::Ptr, read_user_string, split_path},
 };
 
@@ -58,6 +58,37 @@ impl Oflags {
         }
 
         file_option
+    }
+}
+
+/// Upon successful completion, lseek() returns the resulting offset location as measured in bytes from the beginning of the
+/// file. On error, the value (off_t) -1 is returned and errno is set to indicate the error.
+pub fn sys_lseek(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let fd = syscall_registers[0];
+    let offset = syscall_registers[1];
+    let whence = syscall_registers[2];
+
+    let mut proc = thread.parent.lock();
+    let file = proc.get_fd(fd)?;
+
+    if let FileObject::File(file) = file {
+        let position = match whence {
+            // The file offset is set to `offset` bytes.
+            SEEK_SET => Seek::Start(offset as _),
+            // The file offset is set to its current location plus `offset` bytes.
+            SEEK_CUR => Seek::Cur(offset as _),
+            // The file offset is set to the size of the file plus `offset` bytes.
+            SEEK_END => Seek::End(offset as _),
+            _ => return Err(Errno::EINVAL),
+        };
+
+        file.seek(position)
+    } else {
+        Err(Errno::ESPIPE)
     }
 }
 
@@ -144,9 +175,7 @@ pub fn sys_close(
     let fd = syscall_registers[0];
     // Remove the file if opened.
     let mut proc = thread.parent.lock();
-    proc.remove_file(fd)?;
-
-    Ok(0)
+    proc.remove_file(fd).map(|_| 0)
 }
 
 pub fn sys_ioctl(

@@ -16,7 +16,8 @@ mount_apfs = []
 mount_sfs = []
 multiprocessor = []
 x2apic = []
-"raw_socket" = []
+raw_socket = []
+linux_gateway = []
 
 [dependencies]
 acpi = "4.1.1"

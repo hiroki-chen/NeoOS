@@ -48,14 +48,13 @@ target remote :1234
 ## Some TODOs
 
 * ~~Implement keyboard drivers. (QEMU --> serial --> ? some sort of tty)~~
+* Add support for graphic cards.
 * Fix multi-core scheduling:
   * Strange page fault address (e.g., 0x0, 0x8).
   * No thread running.
   * Memory corrupted (e.g., B-Tree panics when visiting nodes). Perhaps due to lock problems.
 * Implement more device drivers.
 * Implement more system calls.
-* Implement the socket:
-  * E1000 driver will receive nothing after 7 packets are received.
 * Reduce memory consumption.
 * Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
 

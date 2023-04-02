@@ -39,7 +39,7 @@ int main() {
     int read_len = recv(client_socket, buf, 1024, 0);
 
     if (read_len == 0) {
-      continue;
+      break;
     }
 
     printf("Message received as %s\n", buf);

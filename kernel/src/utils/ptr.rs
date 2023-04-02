@@ -120,6 +120,11 @@ impl<T> Ptr<T> {
         // Write a null byte to the end of the buffer.
         (self.ptr as *mut u8).add(src.len()).write(0u8);
     }
+
+    /// Writes a byte array to the area pointed by this pointer.
+    pub unsafe fn write_slice(&self, src: &[T]) {
+        core::ptr::copy(src.as_ptr(), self.ptr, src.len());
+    }
 }
 
 impl ToString for Ptr<u8> {

@@ -49,7 +49,7 @@ lazy_static! {
 
 pub const RECVBUF_LEN: usize = 4096;
 pub const SENDBUF_LEN: usize = 4096;
-
+pub const IPV4_HDR_LEN: usize = 20;
 /// Allocates a port between 49152 and 65535 as requied by smoltcp.
 pub fn get_free_port() -> u16 {
     loop {
@@ -220,7 +220,7 @@ impl Drop for ListenTableEntry {
 /// Defines a set of socket-like behaviors for tcp, udp, quic, etc. protocols.
 pub trait Socket: Send + Sync {
     /// Reads from this socket.
-    fn read(&self, buf: &mut [u8]) -> KResult<usize>;
+    fn read(&self, buf: &mut [u8]) -> KResult<(usize, Option<SocketAddr>)>;
 
     /// Writes to this socket.
     fn write(&self, buf: &[u8], dst: Option<SocketAddr>) -> KResult<usize>;
@@ -238,7 +238,10 @@ pub trait Socket: Send + Sync {
     fn connect(&mut self, addr: SocketAddr) -> KResult<()>;
 
     /// Sets the socket options.
-    fn setsocketopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()>;
+    fn setsockopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()>;
+
+    /// Gets the socket options.
+    fn getsockopt(&self, key: SocketOptions) -> KResult<Vec<u8>>;
 
     /// Reads the timeout field.
     fn timeout(&self) -> Option<Duration>;

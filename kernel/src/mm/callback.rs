@@ -300,8 +300,9 @@ where
                 true => return true,
                 false => {
                     kerror!(
-                        "entry exists but access type violation was found. Access type: {:#x?}",
-                        access_type
+                        "entry exists but access type violation was found. Access type: {:#x?}, fault address is {:#x}",
+                        access_type,
+                        addr,
                     );
                     return false;
                 }

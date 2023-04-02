@@ -1,10 +1,19 @@
 use std::{
+    env,
     io::{Read, Write},
     net::TcpStream,
 };
 
 fn main() {
-    let mut socket = TcpStream::connect("172.16.253.233:80").unwrap();
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() != 3 {
+        println!("Usage: ./tcp_ip [addr] [port]");
+        return;
+    }
+
+    let addr = format!("{}:{}", args[1], args[2]);
+    let mut socket = TcpStream::connect(&addr).unwrap();
 
     loop {
         let mut input = String::new();

@@ -40,7 +40,7 @@ unsafe impl Send for UdpStream {}
 unsafe impl Sync for UdpStream {}
 
 impl SocketTrait for UdpStream {
-    fn read(&self, buf: &mut [u8]) -> KResult<usize> {
+    fn read(&self, buf: &mut [u8]) -> KResult<(usize, Option<SocketAddr>)> {
         todo!()
     }
 
@@ -60,7 +60,11 @@ impl SocketTrait for UdpStream {
         todo!()
     }
 
-    fn setsocketopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()> {
+    fn setsockopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()> {
+        todo!()
+    }
+
+    fn getsockopt(&self, key: SocketOptions) -> KResult<Vec<u8>> {
         todo!()
     }
 

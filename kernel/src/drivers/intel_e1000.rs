@@ -37,15 +37,16 @@ use super::{
 
 /// A dummy mac address.
 const MAC_ADDRESS: &[u8] = &[0x52, 0x54, 0x0, 0x12, 0x34, 0x57];
-/// Some pre-defined CIDR addresses.
-const IP_CIDR_TAP: IpAddress = IpAddress::v4(10, 0, 2, 1);
-// Not sure how to determine it.
-const IP_CIDR_HOST: IpAddress = IpAddress::v4(172, 16, 253, 233);
+/// Linux setups for tap0.
+pub const IP_CIDR_TAP: IpAddress = IpAddress::v4(192, 168, 179, 233);
+// macOS vmnet-host default address.
+pub const IP_CIDR_HOST: IpAddress = IpAddress::v4(172, 16, 253, 233);
 /// Default gateway address.
 const DEFAULT_GATEWAY: Ipv4Address = Ipv4Address([0, 0, 0, 0]);
-/// Default gateway address for macOS. For Linux tap-based virtual network, one needs to change this To
-/// 10.0.2.0
+/// Default gateway address for macOS.
 const IP_GATEWAY: Ipv4Address = Ipv4Address([172, 16, 253, 1]);
+/// Default tap0 gateway address for Linux.
+const IP_GATEWAY_TAP: Ipv4Address = Ipv4Address([192, 168, 179, 1]);
 
 #[derive(Clone)]
 pub struct RxTokenIntel(Vec<u8>);
@@ -235,15 +236,22 @@ impl IntelEthernetController {
 
         // Set the default netowrk gateway.
         interface.update_ip_addrs(|ip| {
-            let cidr = [IpCidr::new(IP_CIDR_HOST, 24)];
+            let cidr = [IpCidr::new(IP_CIDR_HOST, 24), IpCidr::new(IP_CIDR_TAP, 24)];
             ip.extend_from_slice(&cidr).unwrap();
-            kinfo!("gateway set for {:?}", cidr);
+            kinfo!("ip address set for {:?}", cidr);
         });
 
         // Update the route table.
+        #[cfg(not(feature = "linux_gateway"))]
         interface
             .routes_mut()
             .add_default_ipv4_route(IP_GATEWAY)
+            .unwrap();
+
+        #[cfg(feature = "linux_gateway")]
+        interface
+            .routes_mut()
+            .add_default_ipv4_route(IP_GATEWAY_TAP)
             .unwrap();
 
         Self {

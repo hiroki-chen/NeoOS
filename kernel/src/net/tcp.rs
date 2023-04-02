@@ -138,7 +138,7 @@ impl TcpStream {
 }
 
 impl SocketTrait for TcpStream {
-    fn read(&self, buf: &mut [u8]) -> KResult<usize> {
+    fn read(&self, buf: &mut [u8]) -> KResult<(usize, Option<SocketAddr>)> {
         // Check the status.
         if self.state != TcpState::Alive {
             return Err(Errno::ECONNREFUSED);
@@ -156,7 +156,7 @@ impl SocketTrait for TcpStream {
                 return Err(Errno::ECONNREFUSED);
             }
             if !socket.may_recv() {
-                return Ok(0);
+                return Ok((0, None));
             }
 
             let res = socket.recv(|buffer| {
@@ -175,10 +175,10 @@ impl SocketTrait for TcpStream {
                 Ok(data) => {
                     if !data.is_empty() {
                         buf[..data.len()].copy_from_slice(&data);
-                        return Ok(data.len());
+                        return Ok((data.len(), None));
                     }
                 }
-                Err(RecvError::Finished) => return Ok(0),
+                Err(RecvError::Finished) => return Ok((0, None)),
                 Err(err) => {
                     kerror!("smoltcp encountered read error {:?}", err);
                     return Err(Errno::ECONNREFUSED);
@@ -266,7 +266,7 @@ impl SocketTrait for TcpStream {
         Ok(())
     }
 
-    fn setsocketopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()> {
+    fn setsockopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()> {
         self.options
             .entry(key)
             .and_modify(|v| {
@@ -274,6 +274,10 @@ impl SocketTrait for TcpStream {
             })
             .or_default();
         Ok(())
+    }
+
+    fn getsockopt(&self, key: SocketOptions) -> KResult<Vec<u8>> {
+        self.options.get(&key).cloned().ok_or(Errno::ENOENT)
     }
 
     fn timeout(&self) -> Option<Duration> {

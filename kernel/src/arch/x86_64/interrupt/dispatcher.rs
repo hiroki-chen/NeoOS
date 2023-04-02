@@ -103,6 +103,10 @@ pub async fn trap_dispatcher_user(
             let cr2 = get_pf_addr();
 
             if !handle_page_fault(cr2, ctx.get_user_context().errno) {
+                kerror!(
+                    "cannot handle page fault! Dumepd context is {:#x?}",
+                    ctx.get_user_context()
+                );
                 // Report SEGSEV.
                 send_signal(
                     thread.parent.clone(),

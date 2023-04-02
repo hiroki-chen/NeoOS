@@ -5,6 +5,7 @@ use crate::{
     error::{fserror_to_kerror, Errno, KResult},
     fs::{epoll::EpollInstance, file::FileObject, AT_FDCWD, MAXIMUM_FOLLOW, ROOT_INODE},
     mm::MemoryManager,
+    net::Shutdown,
     process::event::Event,
     signal::{SigAction, SigInfo, SigSet},
     sync::{futex::SimpleFutex, mutex::SpinLockNoInterrupt as Mutex},
@@ -169,7 +170,10 @@ impl Process {
 
     #[inline]
     pub fn remove_file(&mut self, fd: u64) -> KResult<()> {
-        self.opened_files.remove(&fd).ok_or(Errno::EBADF)?;
+        let file = self.opened_files.remove(&fd).ok_or(Errno::EBADF)?;
+        if let FileObject::Socket(mut socket) = file {
+            socket.shutdown(Shutdown::Both)?;
+        }
 
         Ok(())
     }
