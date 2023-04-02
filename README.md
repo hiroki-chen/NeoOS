@@ -1,5 +1,9 @@
 # A Simple Operating System Kernel for Educational Purposes
 
+## Screenshots
+
+![fig](./screenshots/preview.png)
+
 This kernel is built with Rust (nightly channel); you must install the corresponding toolchain first. Also, the emulator QEMU must be installed, and KVM support should be enabled (you may also need to add yourself into KVM group and then do `su - $USER`).
 
 ## Build Rust Documentations
