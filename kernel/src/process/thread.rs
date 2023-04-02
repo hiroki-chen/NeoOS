@@ -514,9 +514,9 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading() {
     // FIXME: ELF loader may have some problems.
-    let debug_inode = ROOT_INODE.lookup("./bin/sample_c").unwrap();
+    let debug_inode = ROOT_INODE.lookup("./bin/hello_rust").unwrap();
 
-    let args = vec!["sample_c".into()];
+    let args = vec!["hello_rust".into()];
     let envp = vec!["PATH=/bin".into()];
     let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
 

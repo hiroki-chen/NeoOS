@@ -1,13 +1,19 @@
 include ../common.mk
 
-CARGO_OUTPUT_DIR	:= $(CURDIR)/target/x86_64-unknown-neoos-musl/release
-CARGO_BINARY		:= $(CARGO_OUTPUT_DIR)/rust
+CARGO_DEBUG	?= 1
 
-.phony: all clean
+ifeq ($(CARGO_DEBUG), 1)
+	CARGO_OUTPUT = $(CURDIR)/target/x86_64-unknown-neoos-musl/debug
+else
+	CARGO_COMMAND += --release
+	CARGO_OUTPUT = $(CURDIR)/target/x86_64-unknown-neoos-musl/release
+endif
 
-all:
-	@cargo build --release
-	@cp $(CARGO_BINARY) $(OUTPUT_PATH)
+.phony: hello all clean
+
+hello:
+	cargo build $(CARGO_COMMAND) --bin hello_rust
+	@cp "$(CARGO_OUTPUT)/hello_rust" $(OUTPUT_PATH)
 
 clean:
 	@cargo clean
