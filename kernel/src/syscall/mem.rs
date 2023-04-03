@@ -1,13 +1,16 @@
 //! Memory and paging related syscall interfaces.
 
-use alloc::sync::Arc;
+use alloc::{boxed::Box, sync::Arc};
 
 use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, PAGE_SIZE},
     dummy_impl,
     error::{Errno, KResult},
-    memory::is_page_aligned,
-    mm::ArenaFlags,
+    memory::{is_page_aligned, KernelFrameAllocator},
+    mm::{
+        callback::{ArenaCallback, UserArenaCallback},
+        Arena, ArenaFlags,
+    },
     process::thread::{Thread, ThreadContext},
     sys::{Prot, MAP_ANONYMOUS, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, MAP_SHARED_VALIDATE},
 };
@@ -26,10 +29,6 @@ pub fn sys_mmap(
     let length = syscall_registers[1];
     let prot = syscall_registers[2];
     let flags = syscall_registers[3];
-
-    kinfo!("memory mapping addr {addr:#x}, length {length:#x}, prot {prot:#x}, flags {flags:#x}");
-    // let fd = syscall_registers[4];
-    // let offset = syscall_registers[5];
 
     // The argument `addr` is just a hint to the kernel that the thread recommends, but eventually it is up to the
     // kernel to decide which address is the best one.
@@ -62,6 +61,7 @@ pub fn sys_mmap(
         // mapping(s) will be discarded.  If the specified address
         // cannot be used, mmap() will fail.
         // thread.vm.lock().
+        thread.vm.lock().remove_addr(addr, length as _)?;
     } else {
         // We follow the hint, but if there is no free memory, we force
         // use another address to map.
@@ -73,8 +73,31 @@ pub fn sys_mmap(
     }
 
     // Then, we push the region back again into the process memory area.
+    if flags & MAP_ANONYMOUS != 0 {
+        let callback: Box<dyn ArenaCallback> = match flags & MAP_SHARED != 0 {
+            true => todo!(),
+            false => Box::new(UserArenaCallback::new(KernelFrameAllocator)),
+        };
 
-    Ok(0)
+        thread.vm.lock().add(Arena {
+            range: addr..addr + length,
+            flags: prot.into(),
+            callback,
+        });
+
+        Ok(addr as _)
+    } else {
+        // Get the file descriptor.
+        let fd = syscall_registers[4];
+        let offset = syscall_registers[5];
+
+        let file = proc.get_fd(fd)?;
+        let _ = Arena {
+            range: addr..addr + length,
+            flags: todo!(),
+            callback: todo!(),
+        };
+    }
 }
 
 /// The reverse of `mmap` syscall.

@@ -799,7 +799,7 @@ impl INode for AppleFileSystemInode {
                 // Check if `offset` is valid.
                 if offset >= file_extent.len() {
                     kwarn!(
-                        "`offset` is larger than the file length: got {:#x}, expected <= {:#x}. Nothing is done.",
+                        "`offset` is larger than the file length: got {:#x}, expected < {:#x}. Nothing is done.",
                         offset,
                         file_extent.len()
                     );
@@ -1008,10 +1008,10 @@ pub fn read_omap(device: &Arc<dyn Device>, oid: Oid) -> KResult<Omap> {
 }
 
 /// Reads the filesystem map for a given container/volumn into the memory.
-pub fn read_fs_tree(device: &Arc<dyn Device>, oid: Oid) -> KResult<FsMap> {
+pub fn read_fs_tree(device: &Arc<dyn Device>, oid: Oid, omap: &ObjectMap) -> KResult<FsMap> {
     let buf = read_object(device, oid)?;
     let fs_tree = unsafe { &*(buf.as_ptr() as *const BTreeNodePhysical) }.clone();
-    fs_tree.parse_as_fs_tree(device)
+    fs_tree.parse_as_fs_tree(device, omap)
 }
 
 /// Reads a file object from the disk at a given address.
@@ -1027,4 +1027,10 @@ pub fn read_object(device: &Arc<dyn Device>, addr: u64) -> KResult<Vec<u8>> {
     } else {
         Ok(buf)
     }
+}
+
+pub fn read_object_unchecked(device: &Arc<dyn Device>, addr: u64) -> KResult<Vec<u8>> {
+    let mut buf = vec![0u8; BLOCK_SIZE];
+    device.read_block(addr, 0, &mut buf)?;
+    Ok(buf)
 }

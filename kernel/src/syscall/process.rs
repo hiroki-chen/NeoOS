@@ -96,6 +96,16 @@ pub fn sys_exit_group(
     Ok(0)
 }
 
+/// getppid() returns the process ID of the parent of the calling process.
+pub fn sys_getppid(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    Ok(thread.parent.lock().process_id as _)
+}
+
+/// getpid() returns the process ID of the the calling process.
 pub fn sys_getpid(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,

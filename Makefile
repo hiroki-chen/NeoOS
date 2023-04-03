@@ -98,10 +98,11 @@ ifeq ($(UNAME), Darwin)
 else
 	@cd $(WORK_DIR) && mkfs.apfs $(DISK)
 	@cd $(WORK_DIR) && sudo mount -o loop,readwrite $(DISK) /mnt
-	@cd /mnt && mkdir dev lib proc
+	@cd /mnt && mkdir dev lib proc usr etc
 	@cd $(WORK_DIR) && cp -r bin /mnt
 	@sudo umount /mnt
 endif
+	@cd $(WORK_DIR) && cp $(DISK) $(DISK).backup
 	@cd $(WORK_DIR) && qemu-img convert -f raw $(DISK) -O qcow2 $(DISK).qcow2
 	@cd $(WORK_DIR) && qemu-img resize $(DISK).qcow2 +1G && mv $(DISK).qcow2 $(DISK)
 endif

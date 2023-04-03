@@ -1343,7 +1343,12 @@ pub struct SpacemanPhysical {
 
 impl BTreeNodePhysical {
     /// Traverses the B-Tree level by level. `insert_func` indicates how the caller inserts into a map.
-    pub fn level_traverse<F>(&self, device: &Arc<dyn Device>, mut insert_func: F) -> KResult<()>
+    pub fn level_traverse<F>(
+        &self,
+        device: &Arc<dyn Device>,
+        omap: Option<&ObjectMap>,
+        mut insert_func: F,
+    ) -> KResult<()>
     where
         F: FnMut(&Vec<u8>, &Vec<u8>),
     {
@@ -1360,9 +1365,19 @@ impl BTreeNodePhysical {
                     .iter()
                     .map(|elem| Oid::from_le_bytes(elem.as_slice().try_into().unwrap()))
                     .collect::<Vec<_>>();
+
                 // Insert the next-level nodes.
                 values.iter().for_each(|value| {
-                    let node_oid = *value;
+                    let node_oid = match omap {
+                        Some(omap) => omap
+                            .get(&ObjectMapKey {
+                                ok_oid: *value,
+                                ok_xid: Oid::MIN,
+                            })
+                            .map(|val| val.ov_paddr)
+                            .unwrap_or(*value),
+                        None => *value,
+                    };
                     let node_buf = read_object(device, node_oid).unwrap();
                     let node_cur =
                         unsafe { &*(node_buf.as_ptr() as *const BTreeNodePhysical) }.clone();
@@ -1373,8 +1388,8 @@ impl BTreeNodePhysical {
                     }
                 });
             } else {
-                let keys = self.interpret_as_keys()?;
-                let values = self.interpret_as_values()?;
+                let keys = node.interpret_as_keys()?;
+                let values = node.interpret_as_values()?;
 
                 if keys.len() != values.len() {
                     kerror!("keys and values have different lengths?!");
@@ -1415,7 +1430,7 @@ impl BTreeNodePhysical {
         }
 
         let mut omap = ObjectMap::new();
-        self.level_traverse(device, |key, val| unsafe {
+        self.level_traverse(device, None, |key, val| unsafe {
             let key_obj = (*(key.as_ptr() as *const ObjectMapKey)).clone();
             let val_obj = (*(val.as_ptr() as *const ObjectMapValue)).clone();
             omap.insert(key_obj, val_obj);
@@ -1486,6 +1501,8 @@ impl BTreeNodePhysical {
         let mut values = Vec::new();
         let data_rev = self.btn_data.iter().copied().rev().collect::<Vec<_>>();
 
+        // kinfo!("self = {:x?}", self);
+
         let value_off = if BTreeNodeFlags::from_bits_truncate(self.btn_flags)
             .contains(BTreeNodeFlags::BTNODE_ROOT)
         {
@@ -1494,28 +1511,31 @@ impl BTreeNodePhysical {
             0
         };
 
-        for entry in toc.iter() {
+        for (idx, entry) in toc.iter().enumerate() {
             let offset = match entry {
                 TocEntry::Loc(kv) => kv.v.off,
                 TocEntry::Off(kv) => kv.v,
             };
-            // Convert the endianess.
-            let slice = data_rev[value_off..value_off + offset as usize]
-                .iter()
-                .copied()
-                .rev()
-                .collect::<Vec<_>>();
 
+            let range = if self.btn_level == 0 {
+                value_off..value_off + offset as usize
+            } else {
+                // Because all values stored in non-leaf nodes are object identifiers of the child nodes,
+                // it is always safe to assume that the layout is u64 aligned for values.
+                value_off + idx * QWORD_LEN..value_off + (idx + 1) * QWORD_LEN
+            };
+
+            let slice = data_rev[range].iter().copied().rev().collect::<Vec<_>>();
             values.push(slice);
         }
 
         Ok(values)
     }
 
-    pub fn parse_as_fs_tree(&self, device: &Arc<dyn Device>) -> KResult<FsMap> {
+    pub fn parse_as_fs_tree(&self, device: &Arc<dyn Device>, omap: &ObjectMap) -> KResult<FsMap> {
         let mut fs_map = FsMap::default();
 
-        self.level_traverse(device, |key, val| unsafe {
+        self.level_traverse(device, Some(omap), |key, val| unsafe {
             let ty = &*(key.as_ptr() as *const JKey);
             match ty.get_type() {
                 APFS_TYPE_DIR_REC => {
@@ -1641,7 +1661,7 @@ impl ApfsVolumn {
             .ov_paddr;
 
         // Read the file system tree.
-        let apfs_tree = read_fs_tree(device, apfs_root_addr)?;
+        let apfs_tree = read_fs_tree(device, apfs_root_addr, &apfs_omap.omap)?;
 
         kdebug!("apfs tree: {:x?}", apfs_tree);
 

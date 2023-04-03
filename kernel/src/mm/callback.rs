@@ -60,6 +60,12 @@ pub struct FileArenaCallback<F, A> {
     pub frame_allocator: A,
 }
 
+/// The callback for virtual memory mappings like `mmap` would do.
+#[derive(Clone, Debug)]
+pub struct UserArenaCallback<A> {
+    frame_allocator: A,
+}
+
 /// The callback for normal memory allocators.
 #[derive(Clone, Debug)]
 pub struct SystemArenaCallback<A>
@@ -69,6 +75,7 @@ where
     frame_allocator: A,
 }
 
+/// ??? What does this do
 #[derive(Clone, Debug)]
 pub struct SimpleArenaCallback<A>
 where
@@ -87,6 +94,15 @@ where
 }
 
 impl<A> SimpleArenaCallback<A>
+where
+    A: FrameAlloc,
+{
+    pub fn new(frame_allocator: A) -> Self {
+        Self { frame_allocator }
+    }
+}
+
+impl<A> UserArenaCallback<A>
 where
     A: FrameAlloc,
 {
@@ -399,4 +415,96 @@ where
     }
 
     fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {}
+}
+
+impl<A> ArenaCallback for UserArenaCallback<A>
+where
+    A: FrameAlloc,
+{
+    fn clone_as_box(&self) -> Box<dyn ArenaCallback> {
+        Box::new(self.clone())
+    }
+
+    fn clone_and_map(
+        &self,
+        dst: &mut dyn PageTableBehaviors,
+        src: &mut dyn PageTableBehaviors,
+        addr: VirtAddr,
+        flags: &ArenaFlags,
+    ) {
+        todo!()
+    }
+
+    fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {
+        // Temporarily map `addr` into a dummy physical address and set `present` bit to be 0 to cause a deliberate
+        // page fault that we deal with in `do_handle_page_fault`.
+        let entry = page_table.map(addr, phys!(0));
+        entry.set_present(false);
+        entry.update();
+    }
+
+    fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {
+        match page_table.get_entry(addr) {
+            Ok(entry) => {
+                if entry.present() {
+                    let _ = self.frame_allocator.dealloc(entry.target().as_u64());
+                } else {
+                    entry.set_present(true);
+                }
+
+                page_table.unmap(addr);
+            }
+            Err(_) => kwarn!("Trying to unmap a non-existing page table entry"),
+        }
+    }
+
+    fn do_handle_page_fault(
+        &self,
+        page_table: &mut dyn PageTableBehaviors,
+        addr: u64,
+        access_type: AccessType,
+    ) -> bool {
+        let entry = match page_table.get_entry(VirtAddr::new(addr)) {
+            Ok(e) => e,
+            Err(errno) => return false,
+        };
+
+        if entry.present() {
+            match check_permission(&access_type, entry) {
+                true => return true,
+                false => {
+                    kerror!(
+                        "entry exists but access type violation was found. Access type: {:#x?}, fault address is {:#x}",
+                        access_type,
+                        addr,
+                    );
+                    return false;
+                }
+            }
+        }
+
+        // Allocate a new physical frame for this page table entry.
+        let frame = match self.frame_allocator.alloc() {
+            Ok(f) => f,
+            Err(errno) => {
+                kerror!(
+                    "failed to allocate frame for page table entry. Error: {:?}",
+                    errno
+                );
+                return false;
+            }
+        };
+
+        // Map to this entry.
+        entry.set_target(frame);
+        entry.set_present(true);
+        entry.update();
+
+        let data = page_table.get_page_slice_mut(VirtAddr::new(addr)).unwrap();
+        for d in data {
+            *d = 0;
+        }
+
+        true
+    }
 }

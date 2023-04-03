@@ -6,7 +6,7 @@ use crate::{
     arch::interrupt::SYSCALL_REGS_NUM,
     error::{Errno, KResult},
     process::thread::{Thread, ThreadContext},
-    sys::{Time, Timeval, Timezone, Utsname},
+    sys::{Time, Timespec, Timeval, Timezone, Utsname},
     time::{SystemTime, UNIX_EPOCH},
     utils::ptr::Ptr,
 };
@@ -129,4 +129,27 @@ pub fn sys_time(
     }
 
     Ok(time.as_secs() as _)
+}
+
+pub fn sys_clock_gettime(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    // We do not have clock id and always retrieve global clock.
+    let _clock_id = syscall_registers[0];
+    let tp = syscall_registers[1];
+
+    let p_tp = Ptr::new(tp as *mut Timespec);
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| Errno::EINVAL)?;
+
+    unsafe {
+        p_tp.write(Timespec {
+            tv_sec: time.as_secs(),
+            tv_nsec: time.as_nanos() as _,
+        })
+        .map(|_| 0)
+    }
 }

@@ -343,7 +343,7 @@ pub trait FrameAlloc: Debug + Clone + Send + Sync + 'static {
     fn alloc(&self) -> KResult<PhysAddr>;
     /// Allocates a contiguous physical memory and returns the start virtual address.
     fn alloc_contiguous(&self, size: usize, align_log2: usize) -> KResult<PhysAddr>;
-    /// Decalloate the given virtual address.
+    /// Decalloate the given physical address.
     fn dealloc(&self, addr: u64) -> KResult<()>;
 }
 

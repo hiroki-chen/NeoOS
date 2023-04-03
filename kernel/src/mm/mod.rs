@@ -22,7 +22,7 @@ use crate::{
         PAGE_SIZE,
     },
     error::{Errno, KResult},
-    memory::{is_page_aligned, page_frame_number, page_mask},
+    memory::{is_page_aligned, page_frame_number},
     process::thread::{Thread, CURRENT_THREAD_PER_CPU},
     sync::mutex::SpinLockNoInterrupt as Mutex,
     sys::Prot,
@@ -315,7 +315,102 @@ where
 
     /// Removes the memory region from the process manager (used to, e.g., map another address), if the address is valid;
     /// otherwise, we return [`Errno::EINVAL`]. This function returns the old arena on succcess.
-    pub fn remove_addr(&self, addr: u64, len: usize) -> KResult<Arena> {
+    pub fn remove_addr(&mut self, addr: u64, len: usize) -> KResult<Arena> {
+        let range = addr..addr + len as u64;
+
+        let mut i = 0usize;
+        while i < self.arena.len() {
+            if self.arena[i].overlap_with(&range) {
+                // This range is completely a sub-interval of the requested one.
+                if self.arena[i].range.start >= range.start && self.arena[i].range.end <= range.end
+                {
+                    let cur_arena = self.arena.remove(i);
+                    cur_arena.unmap(&mut self.page_table)?;
+
+                    // Adjust the iterator.
+                    i = i.wrapping_sub(1);
+                } else if self.arena[i].range.start < range.end
+                    && self.arena[i].range.start >= range.start
+                {
+                    // Overlap:
+                    // [          ]          <- requested (range)
+                    //    [         ]        <- cur_arena
+                    // Removed:
+                    //    [      ]           <- cur_arena.range.start, range.end
+                    // Remaining:
+                    //           [  ]        <- range.end, cur_arena.range.end
+                    // Remove the intersecting part, and insert the remaining area back to the managed memory region.
+                    let cur_arena = self.arena.remove(i);
+                    let should_remove = Arena {
+                        range: cur_arena.range.start..range.end,
+                        flags: cur_arena.flags.clone(),
+                        callback: cur_arena.callback.clone_as_box(),
+                    };
+                    should_remove.unmap(&mut self.page_table)?;
+                    let remaining = Arena {
+                        range: range.end..cur_arena.range.end,
+                        flags: cur_arena.flags.clone(),
+                        callback: cur_arena.callback.clone_as_box(),
+                    };
+                    self.arena.insert(i, remaining);
+                } else if self.arena[i].range.end <= range.end
+                    && self.arena[i].range.end > range.start
+                {
+                    // Overlap:
+                    // [          ]          <- cur_arena
+                    //    [         ]        <- requested (range)
+                    // Removed:
+                    //    [      ]           <- range.start, cur_arena.end
+                    // Remaining:
+                    // [  ]        <- cur_arena.start, range.start
+                    // Remove the intersecting part, and insert the remaining area back to the managed memory region.
+                    let cur_arena = self.arena.remove(i);
+                    let should_remove = Arena {
+                        range: range.start..cur_arena.range.end,
+                        flags: cur_arena.flags.clone(),
+                        callback: cur_arena.callback.clone_as_box(),
+                    };
+                    should_remove.unmap(&mut self.page_table)?;
+                    let remaining = Arena {
+                        range: cur_arena.range.start..range.start,
+                        flags: cur_arena.flags.clone(),
+                        callback: cur_arena.callback.clone_as_box(),
+                    };
+                    self.arena.insert(i, remaining);
+                } else {
+                    // Superset.
+                    // [               ]          <- cur_arena
+                    //    [        ]              <- requested (range)
+                    // Removed:
+                    //    [        ]              <- range.start, range.end
+                    // Remaining:
+                    // [  ]         [  ]          <- [cur_arena.start, range.start] + [range.end, cur_arena.end]
+                    let cur_arena = self.arena.remove(i);
+                    let should_remove = Arena {
+                        range: range.start..range.end,
+                        flags: cur_arena.flags.clone(),
+                        callback: cur_arena.callback.clone_as_box(),
+                    };
+                    should_remove.unmap(&mut self.page_table)?;
+                    let remaining_lhs = Arena {
+                        range: cur_arena.range.start..range.start,
+                        flags: cur_arena.flags.clone(),
+                        callback: cur_arena.callback.clone_as_box(),
+                    };
+                    let remaining_rhs = Arena {
+                        range: range.end..cur_arena.range.end,
+                        flags: cur_arena.flags.clone(),
+                        callback: cur_arena.callback.clone_as_box(),
+                    };
+                    self.arena.insert(i, remaining_lhs);
+                    self.arena.insert(i + 1, remaining_rhs);
+                    i += 1;
+                }
+            }
+
+            i = i.wrapping_add(1);
+        }
+
         todo!()
     }
 
@@ -435,7 +530,8 @@ where
 
     /// Returns true if the [addr, addr + size) is not occupied.
     pub fn is_free(&self, addr: u64, size: usize) -> bool {
-        self.arena
+        !self
+            .arena
             .iter()
             .any(|item| item.overlap_with(&(addr..addr + size as u64)))
     }
@@ -444,7 +540,7 @@ where
     pub fn find_free_arena(&self, addr_hint: u64, size: usize) -> KResult<VirtAddr> {
         core::iter::once(addr_hint)
             .chain(self.arena.iter().map(|item| item.range.clone().end))
-            .map(|addr| page_mask(addr + PAGE_SIZE as u64 - 1))
+            .map(|addr| page_frame_number(addr + PAGE_SIZE as u64 - 1))
             .find(|addr| self.is_free(*addr, size))
             .ok_or(Errno::ENOMEM)
             .map(|addr| virt!(addr))
@@ -459,7 +555,7 @@ where
 
     /// Extends this memory space.
     pub fn add(&mut self, other: Arena) {
-        kinfo!("add(): adding {:#x?} to vm...", other);
+        kdebug!("add(): adding {:#x?} to vm...", other);
 
         let start_addr = page_frame_number(other.range.start);
         let end_addr = page_frame_number(other.range.end + PAGE_SIZE as u64);

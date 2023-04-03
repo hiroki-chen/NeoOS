@@ -421,6 +421,7 @@ async fn do_handle_syscall(
     match syscall_number {
         SYS_READ => sys_read(thread, ctx, syscall_registers).await,
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
+        SYS_OPEN => sys_open(thread, ctx, syscall_registers),
         SYS_READV => sys_readv(thread, ctx, syscall_registers).await,
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
         SYS_LSEEK => sys_lseek(thread, ctx, syscall_registers),
@@ -442,6 +443,7 @@ async fn do_handle_syscall(
         SYS_GETEGID => sys_getegid(thread, ctx, syscall_registers),
         SYS_GETGID => sys_getgid(thread, ctx, syscall_registers),
 
+        SYS_GETPPID => sys_getppid(thread, ctx, syscall_registers),
         SYS_GETPID => sys_getpid(thread, ctx, syscall_registers),
         SYS_SET_TID_ADDRESS => sys_set_tid_address(thread, ctx, syscall_registers),
         SYS_EXIT => sys_exit(thread, ctx, syscall_registers),
@@ -451,6 +453,7 @@ async fn do_handle_syscall(
         SYS_ARCH_PRCTL => sys_arch_prctl(thread, ctx, syscall_registers),
         SYS_GETTIMEOFDAY => sys_gettimeofday(thread, ctx, syscall_registers),
         SYS_TIME => sys_time(thread, ctx, syscall_registers),
+        SYS_CLOCK_GETTIME => sys_clock_gettime(thread, ctx, syscall_registers),
 
         SYS_SOCKET => sys_socket(thread, ctx, syscall_registers),
         SYS_ACCEPT => sys_accept(thread, ctx, syscall_registers),

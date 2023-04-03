@@ -180,9 +180,9 @@ pub struct Timeval {
 #[repr(C)]
 pub struct Timespec {
     /// Seconds
-    tv_sec: u64,
+    pub tv_sec: u64,
     /// Nanoseconds
-    tv_nsec: u64,
+    pub tv_nsec: u64,
 }
 
 #[derive(Debug, Clone)]
