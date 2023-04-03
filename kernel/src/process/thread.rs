@@ -36,7 +36,7 @@ use crate::{
         file::{File, FileObject, FileOpenOption, FileType},
         ROOT_INODE,
     },
-    memory::{KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
+    memory::{page_mask, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
     mm::{callback::SystemArenaCallback, Arena, ArenaFlags, FutureWithPageTable, MemoryManager},
     signal::{handle_signal, SigAction, SigSet, SigStack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
@@ -274,6 +274,10 @@ impl Thread {
         let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
         let elf = ElfFile::load(inode)?;
         elf.load_elf_and_map(&mut vm)?;
+
+        let addr_end = (page_mask(vm.iter().last().unwrap().range.end) + 1) * 0x1000;
+        vm.set_heap_end(addr_end);
+
         let auxv = elf.get_auxv()?;
         let stack_top = Self::prepare_user_stack(&mut vm, args, envp, auxv)? as u64;
         let vm = Arc::new(Mutex::new(vm));
@@ -514,9 +518,9 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading() {
     // FIXME: ELF loader may have some problems.
-    let debug_inode = ROOT_INODE.lookup("./bin/hello_rust").unwrap();
+    let debug_inode = ROOT_INODE.lookup("./bin/nginx").unwrap();
 
-    let args = vec!["hello_rust".into()];
+    let args = vec!["nginx".into()];
     let envp = vec!["PATH=/bin".into()];
     let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
 

@@ -798,8 +798,14 @@ impl INode for AppleFileSystemInode {
 
                 // Check if `offset` is valid.
                 if offset >= file_extent.len() {
-                    kerror!("`offset ` is larger than the file length!");
-                    return Err(FsError::InvalidParam);
+                    kwarn!(
+                        "`offset` is larger than the file length: got {:#x}, expected <= {:#x}. Nothing is done.",
+                        offset,
+                        file_extent.len()
+                    );
+                    return Ok(0);
+                } else if buf.len() == 0 {
+                    return Ok(0);
                 }
 
                 // Calculate the block number to be read.

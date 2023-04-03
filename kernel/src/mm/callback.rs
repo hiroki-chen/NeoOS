@@ -10,7 +10,7 @@ use crate::{
     arch::{mm::paging::PageTableBehaviors, PAGE_SIZE},
     error::{fserror_to_kerror, KResult},
     fs::file::ReadAsFile,
-    memory::FrameAlloc,
+    memory::{page_frame_number, FrameAlloc},
 };
 
 use super::{check_permission, AccessType, ArenaFlags};
@@ -108,21 +108,23 @@ where
     ) -> KResult<usize> {
         // Destination virtual memory region.
         let dst = page_table.get_page_slice_mut(addr)?;
-        // Prepare source buffer.
-        let file_offset = addr - self.mem_start + self.file_start; // Memory offset + file base.
+        // Prepare source buffer. Memory offset + file base.
+        // We always copy a page, so there is a need to round up the address.
+        let file_offset = page_frame_number(addr.as_u64()) + self.file_start - self.mem_start;
 
-        let read_size = (self.file_end as isize - file_offset.as_u64() as isize)
+        // This function still contain some minor bug. Fix it.
+        let read_size = (self.file_end as isize - file_offset as isize)
             // If the read_size becomes zero, it usually happens when the file size is smaller than the memory
             // size for some sectiosn like .bss or .data.
-            .max((self.file_end - self.file_start) as _)
-            .min(PAGE_SIZE as isize) as usize;
+            // .max((self.file_end - self.file_start) as _)
+            .min(PAGE_SIZE as isize)
+            .max(0) as usize;
 
-        // TODO: FIXME.
         let read_size = self
             .file
-            .read_at(file_offset.as_u64() as usize, &mut dst[..read_size])?;
+            .read_at(file_offset as usize, &mut dst[..read_size])?;
         if read_size != PAGE_SIZE {
-            dst[read_size..].iter_mut().for_each(|d| *d = 0);
+            dst[read_size..].fill(0);
         }
 
         Ok(read_size)

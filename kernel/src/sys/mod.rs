@@ -192,6 +192,12 @@ pub struct Timezone {
     pub tz_dsttime: u32,
 }
 
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct Time {
+    pub time: i64,
+}
+
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct EpollEvent {

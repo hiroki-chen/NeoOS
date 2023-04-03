@@ -42,7 +42,6 @@ impl IoVec {
         thread: &Arc<Thread>,
         iov_ptr: *const Self,
         iov_count: usize,
-        read_or_write: bool,
     ) -> KResult<Vec<Vec<u8>>> {
         let vm = thread.vm.lock();
         let io_vectors = unsafe { core::slice::from_raw_parts(iov_ptr, iov_count) };
@@ -51,11 +50,8 @@ impl IoVec {
         for iov in io_vectors.iter() {
             if iov.iov_len != 0 {
                 let ptr = unsafe { Ptr::new_with_const(iov.iov_base as *const u8) };
-                match read_or_write {
-                    true => vm.check_read_array(&ptr, iov.iov_len),
-                    false => vm.check_read_array(&ptr, iov.iov_len),
-                }?;
 
+                vm.check_read_array(&ptr, iov.iov_len)?;
                 unsafe {
                     v.push(
                         core::slice::from_raw_parts(iov.iov_base as *const u8, iov.iov_len)
@@ -66,5 +62,27 @@ impl IoVec {
         }
 
         Ok(v)
+    }
+
+    /// Writes all the buffers into the io vectors pointed by `iov_ptr`.
+    pub fn write_all_iovecs(
+        thread: &Arc<Thread>,
+        iov_ptr: *const Self,
+        iov_count: usize,
+        buf: &[u8],
+    ) -> KResult<usize> {
+        let io_vectors = unsafe { core::slice::from_raw_parts(iov_ptr, iov_count) };
+
+        // Denote the position of buf.
+        let mut cur = 0usize;
+        for iov in io_vectors.iter() {
+            let byte_write = (buf.len() - cur + 1).min(iov.iov_len);
+            (0..byte_write).for_each(|i| unsafe {
+                core::ptr::write(iov.iov_base.add(i) as *mut u8, buf[cur + i]);
+            });
+            cur += byte_write;
+        }
+
+        Ok(cur)
     }
 }

@@ -15,6 +15,9 @@ data
 # Special files
 meta
 ap_trampoline
+*.tar.gz
+nginx-*
+output.S
 
 # Stupid macOS property file
 .DS_Store

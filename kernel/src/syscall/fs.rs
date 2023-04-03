@@ -249,7 +249,7 @@ pub fn sys_write(
 /// ```
 ///
 /// Musl invokes this syscall to do `__stdio_write`.
-pub fn sys_readv(
+pub async fn sys_readv(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
@@ -260,10 +260,15 @@ pub fn sys_readv(
 
     let mut proc = thread.parent.lock();
     let file = proc.get_fd(fd)?;
+    let mut buf = [0u8; 4096];
+    let len = file.read(&mut buf).await?;
 
-    // Collec the vector to be read.
-
-    Ok(0)
+    IoVec::write_all_iovecs(
+        thread,
+        iov_addr as *const IoVec,
+        iov_count as _,
+        &buf[..len],
+    )
 }
 
 /// The writev() system call writes iovcnt buffers of data described by iov to the file associated with the file
@@ -286,7 +291,7 @@ pub fn sys_writev(
     let iov_addr = syscall_registers[1];
     let iov_count = syscall_registers[2];
 
-    let io_vectors = IoVec::get_all_iovecs(thread, iov_addr as *const IoVec, iov_count as _, true)?
+    let io_vectors = IoVec::get_all_iovecs(thread, iov_addr as *const IoVec, iov_count as _)?
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();

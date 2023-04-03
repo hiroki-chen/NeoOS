@@ -4,11 +4,12 @@ use alloc::sync::Arc;
 
 use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, PAGE_SIZE},
+    dummy_impl,
     error::{Errno, KResult},
     memory::is_page_aligned,
     mm::ArenaFlags,
     process::thread::{Thread, ThreadContext},
-    sys::{Prot, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, MAP_SHARED_VALIDATE},
+    sys::{Prot, MAP_ANONYMOUS, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, MAP_SHARED_VALIDATE},
 };
 
 /// mmap() creates a new mapping in the virtual address space of the calling process. The starting address for the new
@@ -25,8 +26,10 @@ pub fn sys_mmap(
     let length = syscall_registers[1];
     let prot = syscall_registers[2];
     let flags = syscall_registers[3];
-    let fd = syscall_registers[4];
-    let offset = syscall_registers[5];
+
+    kinfo!("memory mapping addr {addr:#x}, length {length:#x}, prot {prot:#x}, flags {flags:#x}");
+    // let fd = syscall_registers[4];
+    // let offset = syscall_registers[5];
 
     // The argument `addr` is just a hint to the kernel that the thread recommends, but eventually it is up to the
     // kernel to decide which address is the best one.
@@ -47,7 +50,6 @@ pub fn sys_mmap(
 
     let prot = Prot::from_bits_truncate(prot);
     let mut proc = thread.parent.lock();
-    let file = proc.get_fd(fd)?;
 
     if flags & MAP_FIXED != 0 {
         // Don't interpret addr as a hint: place the mapping at
@@ -119,3 +121,5 @@ pub fn sys_mprotect(
 
     Ok(0)
 }
+
+dummy_impl!(sys_brk, Err(Errno::ENOMEM));

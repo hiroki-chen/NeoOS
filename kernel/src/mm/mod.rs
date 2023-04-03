@@ -265,6 +265,9 @@ where
     /// The free chunk list in Linux.
     arena: Vec<Arena>,
     page_table: P,
+    /// The heap start point.
+    heap_end: Option<u64>,
+    free_mem: Option<u64>,
 }
 
 impl<P> MemoryManager<P>
@@ -279,6 +282,34 @@ where
             } else {
                 P::new()
             },
+            heap_end: None,
+            free_mem: None,
+        }
+    }
+
+    /// Sets the limitation on the memory usage (dynamic).
+    pub fn set_limit(&mut self, limit: u64) {
+        self.free_mem.replace(limit);
+    }
+
+    /// Checks the remaining free memory this process can use.
+    pub fn get_free_vm(&self) -> u64 {
+        match self.free_mem {
+            None => u64::MAX,
+            Some(mem) => mem,
+        }
+    }
+
+    /// Sets the heap ending point to `end` after a process is successfully loaded into the memory.
+    pub fn set_heap_end(&mut self, end: u64) {
+        self.heap_end.replace(end);
+    }
+
+    pub fn heap_end(&self) -> u64 {
+        match self.heap_end {
+            Some(end) => end,
+            // Not yet started.
+            None => 0,
         }
     }
 
@@ -397,6 +428,8 @@ where
         Self {
             arena: self.arena.clone(),
             page_table: new_page_table,
+            heap_end: self.heap_end.clone(),
+            free_mem: self.free_mem.clone(),
         }
     }
 
@@ -426,7 +459,7 @@ where
 
     /// Extends this memory space.
     pub fn add(&mut self, other: Arena) {
-        kdebug!("add(): adding {:#x?} to vm...", other);
+        kinfo!("add(): adding {:#x?} to vm...", other);
 
         let start_addr = page_frame_number(other.range.start);
         let end_addr = page_frame_number(other.range.end + PAGE_SIZE as u64);

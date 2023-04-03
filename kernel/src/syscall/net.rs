@@ -364,7 +364,7 @@ pub fn sys_sendmsg(
         // Read messages from iovec.
         let iovec = msg.msg_iov;
         let iovec_len = msg.msg_iovlen;
-        let iovec = IoVec::get_all_iovecs(thread, iovec, iovec_len as _, true)?
+        let iovec = IoVec::get_all_iovecs(thread, iovec, iovec_len as _)?
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
@@ -417,6 +417,34 @@ pub fn sys_recvfrom(
                 })?;
             }
         }
+
+        Ok(len)
+    } else {
+        Err(Errno::ENOTSOCK)
+    }
+}
+
+pub fn sys_recvmsg(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let sockfd = syscall_registers[0];
+    let msghdr = syscall_registers[1];
+    let flags = syscall_registers[2];
+
+    let mut proc = thread.parent.lock();
+    let socket = proc.get_fd(sockfd)?;
+
+    if let FileObject::Socket(socket) = socket {
+        let mgs_ptr = Ptr::new(msghdr as *mut MsgHdr);
+        let msg = unsafe { mgs_ptr.read() }?;
+        let iovec = msg.msg_iov;
+        let iovec_len = msg.msg_iovlen;
+
+        let mut buf = [0u8; 4096];
+        let (len, addr) = socket.read(&mut buf)?;
+        let len = IoVec::write_all_iovecs(thread, iovec, iovec_len as _, &buf[..len])?;
 
         Ok(len)
     } else {

@@ -394,7 +394,7 @@ pub async fn handle_syscall(thread: &Arc<Thread>, ctx: &mut ThreadContext) -> bo
 
     let ret = match do_handle_syscall(thread, ctx, syscall_number, syscall_registers).await {
         Ok(ret) => ret,
-        error => error_to_int(&error) as usize,
+        error => -error_to_int(&error) as usize,
     };
     ctx.get_user_context().regs.rax = ret as _;
 
@@ -421,7 +421,7 @@ async fn do_handle_syscall(
     match syscall_number {
         SYS_READ => sys_read(thread, ctx, syscall_registers).await,
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
-        SYS_READV => sys_readv(thread, ctx, syscall_registers),
+        SYS_READV => sys_readv(thread, ctx, syscall_registers).await,
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
         SYS_LSEEK => sys_lseek(thread, ctx, syscall_registers),
         SYS_IOCTL => sys_ioctl(thread, ctx, syscall_registers),
@@ -431,6 +431,7 @@ async fn do_handle_syscall(
 
         SYS_MMAP => sys_mmap(thread, ctx, syscall_registers),
         SYS_MUNMAP => sys_munmap(thread, ctx, syscall_registers),
+        SYS_BRK => sys_brk(thread, ctx, syscall_registers),
 
         SYS_KILL => sys_kill(thread, ctx, syscall_registers),
         SYS_RT_SIGACTION => sys_rt_sigaction(thread, ctx, syscall_registers),
@@ -448,6 +449,8 @@ async fn do_handle_syscall(
         SYS_SCHED_YIELD => sys_sched_yield(thread, ctx, syscall_registers),
 
         SYS_ARCH_PRCTL => sys_arch_prctl(thread, ctx, syscall_registers),
+        SYS_GETTIMEOFDAY => sys_gettimeofday(thread, ctx, syscall_registers),
+        SYS_TIME => sys_time(thread, ctx, syscall_registers),
 
         SYS_SOCKET => sys_socket(thread, ctx, syscall_registers),
         SYS_ACCEPT => sys_accept(thread, ctx, syscall_registers),
@@ -467,4 +470,19 @@ async fn do_handle_syscall(
             Err(Errno::EINVAL)
         }
     }
+}
+
+/// Declares a dummy syscall that does nothing.
+#[allow(unused)]
+#[macro_export]
+macro_rules! dummy_impl {
+    ($name:ident, $ret:expr) => {
+        pub fn $name(
+            thread: &alloc::sync::Arc<$crate::process::thread::Thread>,
+            ctx: &mut $crate::process::thread::ThreadContext,
+            syscall_registers: [u64; $crate::arch::interrupt::SYSCALL_REGS_NUM],
+        ) -> $crate::error::KResult<usize> {
+            $ret
+        }
+    };
 }

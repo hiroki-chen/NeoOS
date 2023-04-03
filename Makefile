@@ -46,7 +46,7 @@ endif
 QEMU_COMMAND	?= sudo qemu-system-x86_64 \
 			-drive if=pflash,format=raw,readonly=on,file=$(UEFI) \
 			-drive format=raw,file=fat:rw:esp \
-			-nographic -smp cores=4 -no-reboot -m 8G -rtc clock=vm \
+			-nographic -smp cores=4 -no-reboot -m 8G -rtc clock=vm,base=localtime \
 			-drive format=qcow2,file=$(DISK),media=disk,cache=writeback,id=sfsimg,if=none \
 			-device ahci,id=ahci0 \
 			-device ide-hd,drive=sfsimg,bus=ahci0.0 \
