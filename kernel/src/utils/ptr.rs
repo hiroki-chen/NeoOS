@@ -2,10 +2,13 @@
 
 use core::ffi::CStr;
 
-use alloc::string::{String, ToString};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use crate::{
-    error::KResult,
+    error::{Errno, KResult},
     memory::{copy_from_user, copy_to_user},
 };
 
@@ -124,6 +127,34 @@ impl<T> Ptr<T> {
     /// Writes a byte array to the area pointed by this pointer.
     pub unsafe fn write_slice(&self, src: &[T]) {
         core::ptr::copy(src.as_ptr(), self.ptr, src.len());
+    }
+}
+
+impl Ptr<u8> {
+    /// Reads a C-stryle string into the kernel and converts it to a Rust-style one.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// let ptr = 0xdeadbeef as *const u8;
+    /// let s = Ptr::new(ptr as *mut u8).read_c_string().expect("failed to read!");
+    /// ```
+    pub fn read_c_string(&self) -> KResult<String> {
+        let ptr = self.ptr;
+        if ptr.is_null() {
+            Ok("".to_string())
+        } else {
+            let mut s = Vec::new();
+            for i in 0.. {
+                let byte = unsafe { copy_from_user(ptr.add(i)) }?;
+                if byte == 0 {
+                    break;
+                }
+                s.push(byte);
+            }
+
+            String::from_utf8(s).map_err(|_| Errno::EFAULT)
+        }
     }
 }
 

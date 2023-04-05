@@ -16,6 +16,7 @@ use spin::RwLock;
 use crate::{
     error::{fserror_to_kerror, Errno, KResult},
     net::Socket,
+    sys::FcntlCommand,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -253,7 +254,7 @@ impl File {
         let mut file_option = self.file_option.write();
         file_option.offset = match seek {
             Seek::Start(offset) => offset,
-            Seek::Cur(offset) => file_option.offset as usize + offset,
+            Seek::Cur(offset) => (file_option.offset as usize).saturating_add(offset),
             Seek::End(offset) => self
                 .inode
                 .metadata()
@@ -334,6 +335,16 @@ impl File {
             .io_control(cmd as _, arg as _)
             .map_err(fserror_to_kerror)
     }
+
+    pub fn fcntl(&self, cmd: u64, arg: u64) -> KResult<usize> {
+        let cmd = unsafe { core::mem::transmute::<u64, FcntlCommand>(cmd) };
+
+        match cmd {
+            // FcntlCommand::FGetfd => (),
+            FcntlCommand::FSetfd => Ok(0),
+            _ => unimplemented!(),
+        }
+    }
 }
 
 /// Anything that looks like a `file`.
@@ -353,6 +364,13 @@ impl FileObject {
             FileObject::File(file) => file.io_control(cmd, args[0]),
 
             _ => unimplemented!(),
+        }
+    }
+
+    pub fn fcntl(&self, cmd: u64, arg: u64) -> KResult<usize> {
+        match self {
+            FileObject::File(file) => file.fcntl(cmd, arg),
+            FileObject::Socket(_) | FileObject::Epoll(_) => Ok(0),
         }
     }
 

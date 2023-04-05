@@ -1,10 +1,10 @@
 //! Implements the underlying operations by `Arena`.
 
-use core::fmt::Debug;
+use core::{fmt::Debug, marker::PhantomData};
 
 use alloc::{boxed::Box, sync::Arc};
 use rcore_fs::vfs::INode;
-use x86_64::{PhysAddr, VirtAddr};
+use x86_64::VirtAddr;
 
 use crate::{
     arch::{mm::paging::PageTableBehaviors, PAGE_SIZE},
@@ -75,13 +75,13 @@ where
     frame_allocator: A,
 }
 
-/// ??? What does this do
+/// A dummy callback that does nothing.
 #[derive(Clone, Debug)]
-pub struct SimpleArenaCallback<A>
+pub struct DummyArenaCallback<A>
 where
     A: FrameAlloc,
 {
-    frame_allocator: A,
+    _marker: PhantomData<A>,
 }
 
 impl<A> SystemArenaCallback<A>
@@ -93,12 +93,14 @@ where
     }
 }
 
-impl<A> SimpleArenaCallback<A>
+impl<A> DummyArenaCallback<A>
 where
     A: FrameAlloc,
 {
-    pub fn new(frame_allocator: A) -> Self {
-        Self { frame_allocator }
+    pub fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -375,7 +377,7 @@ where
     }
 }
 
-impl<A> ArenaCallback for SimpleArenaCallback<A>
+impl<A> ArenaCallback for DummyArenaCallback<A>
 where
     A: FrameAlloc,
 {
@@ -390,9 +392,7 @@ where
         addr: VirtAddr,
         flags: &ArenaFlags,
     ) {
-        self.map(dst, addr, flags);
-        let data = src.get_page_slice_mut(addr).unwrap();
-        dst.get_page_slice_mut(addr).unwrap().copy_from_slice(data);
+        panic!("trying to use dummy callback @ {addr:#x}");
     }
 
     fn do_handle_page_fault(
@@ -401,20 +401,16 @@ where
         addr: u64,
         access_type: AccessType,
     ) -> bool {
-        false
+        panic!("trying to use dummy callback @ {addr:#x}");
     }
 
     fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {
-        let entry = page_table.map(addr, PhysAddr::new(0));
-        entry.set_present(true);
-        entry.set_execute(!flags.non_executable);
-        entry.set_writable(flags.writable);
-        entry.set_user(flags.user_accessible);
-        entry.set_mmio(flags.mmio);
-        entry.update();
+        panic!("trying to use dummy callback @ {addr:#x}");
     }
 
-    fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {}
+    fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {
+        panic!("trying to use dummy callback @ {addr:#x}");
+    }
 }
 
 impl<A> ArenaCallback for UserArenaCallback<A>

@@ -37,7 +37,10 @@ use crate::{
         ROOT_INODE,
     },
     memory::{page_mask, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
-    mm::{callback::SystemArenaCallback, Arena, ArenaFlags, FutureWithPageTable, MemoryManager},
+    mm::{
+        callback::SystemArenaCallback, Arena, ArenaFlags, ArenaType, FutureWithPageTable,
+        MemoryManager,
+    },
     signal::{handle_signal, SigAction, SigSet, SigStack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
@@ -155,7 +158,7 @@ impl Thread {
             user_accessible: true,
             non_executable: true,
             writable: true,
-            ..Default::default()
+            mmio: 0,
         };
 
         // This stack is allocated for the user thread.
@@ -163,12 +166,14 @@ impl Thread {
             range: user_stack_bottom as u64..(user_stack_top - PAGE_SIZE * 4) as u64,
             flags: flags.clone(),
             callback: Box::new(SystemArenaCallback::new(KernelFrameAllocator)),
+            ty: ArenaType::Stack,
         });
         // This stack is allocated for storing the auxiliary information such as argv, envp, etc.
         vm.add(Arena {
             range: (user_stack_top - PAGE_SIZE * 4) as u64..user_stack_top as u64,
             flags,
             callback: Box::new(SystemArenaCallback::new(KernelFrameAllocator)),
+            ty: ArenaType::Stack,
         });
 
         unsafe {
@@ -265,6 +270,40 @@ impl Thread {
     /// - path: the execution path of this thread.
     /// - args: the argument string. Same as `const char** argv`.
     /// - envp: the environment strings.
+    ///
+    /// For our kernel, the layout of the application memory should look like this:
+    ///
+    /// ```txt
+    /// +--------------+ <----- 0x8000_0000_0000
+    /// |     env      |
+    /// +--------------+
+    /// |     argv     |
+    /// +--------------+
+    /// |     argc     |
+    /// +--------------+
+    /// |              |
+    /// |  user stack  |
+    /// |              |
+    /// +--------------+
+    /// |    dylib     |
+    /// +--------------+
+    /// |  user  heap  |
+    /// +--------------+ <-----   brk()
+    /// |   malloced   |
+    /// +--------------+
+    /// |     .bss     |
+    /// +--------------+
+    /// |.data/.rodata |
+    /// +--------------+
+    /// |  staticlib   |
+    /// +--------------+
+    /// |    main()    |
+    /// +--------------+
+    /// |    crt       |
+    /// +--------------+
+    /// |   reserved   |
+    /// +--------------+
+    /// ```
     pub fn create(
         inode: &Arc<dyn INode>,
         path: &str,
@@ -277,6 +316,7 @@ impl Thread {
 
         let addr_end = (page_mask(vm.iter().last().unwrap().range.end) + 1) * 0x1000;
         vm.set_heap_end(addr_end);
+        vm.set_reserved();
 
         let auxv = elf.get_auxv()?;
         let stack_top = Self::prepare_user_stack(&mut vm, args, envp, auxv)? as u64;

@@ -16,7 +16,7 @@ use crate::{
     memory::KernelFrameAllocator,
     mm::{
         callback::{FileArenaCallback, INodeWrapper},
-        Arena, ArenaFlags, MemoryManager,
+        Arena, ArenaFlags, ArenaType, MemoryManager,
     },
     page,
     process::ld::{AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM},
@@ -107,6 +107,7 @@ impl ElfFile {
                         file_end: ph.p_offset + ph.p_filesz,
                         frame_allocator: KernelFrameAllocator,
                     }),
+                    ty: ArenaType::Elf,
                 })
             }
 

@@ -31,8 +31,9 @@ impl StackWriter {
         self.stack -= (val.len() * core::mem::size_of::<T>()) as u64;
         self.stack -= self.stack % core::mem::align_of::<T>() as u64;
 
-        unsafe { core::slice::from_raw_parts_mut(self.stack as *mut T, val.len()) }
-            .copy_from_slice(val);
+        unsafe {
+            core::ptr::copy(val.as_ptr(), self.stack as *mut T, val.len());
+        }
     }
 
     pub fn write_str(&mut self, s: &str) {
@@ -47,11 +48,12 @@ impl InitInfo {
     /// Returns the stack top.
     pub unsafe fn push_at(&self, stack: u64) -> u64 {
         let mut writer = StackWriter { stack };
+        kinfo!("writing the stack! {:x?}; {:x?}", self.args, self.auxv);
         // Push the program name.
         writer.write_str(&self.args[0]);
 
         // Push environment strings and get their addresses.
-        let envs = self
+        let auxv = self
             .envs
             .iter()
             .map(|env| {
@@ -60,7 +62,7 @@ impl InitInfo {
             })
             .collect::<Vec<_>>();
         // Push arguments.
-        let args = self
+        let argv = self
             .args
             .iter()
             .map(|arg| {
@@ -80,9 +82,10 @@ impl InitInfo {
 
         // Other pointers.
         writer.write(&str_terminator);
-        writer.write(envs.as_slice());
+        writer.write(auxv.as_slice());
         writer.write(&str_terminator);
-        writer.write(args.as_slice());
+        writer.write(argv.as_slice());
+        writer.write(&[argv.len()]);
 
         writer.stack
     }

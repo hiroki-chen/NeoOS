@@ -1,14 +1,6 @@
 //! Some utility functions and data structures that the kernel can take use of.
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
-
-use crate::{
-    error::{Errno, KResult},
-    memory::copy_from_user,
-};
+use crate::error::{Errno, KResult};
 
 pub mod ptr;
 
@@ -38,24 +30,6 @@ pub fn calc_fletcher64(src: &[u8]) -> KResult<u64> {
     upper_32bit = 0xffffffff - ((lower_32bit + value_32bit) % 0xffffffff);
 
     Ok((upper_32bit << 32) | value_32bit)
-}
-
-/// Reads a string from the user space in a byte array form.
-pub fn read_user_string(ptr: *const u8) -> KResult<String> {
-    if ptr.is_null() {
-        Ok("".to_string())
-    } else {
-        let mut s = Vec::new();
-        for i in 0.. {
-            let byte = unsafe { copy_from_user(ptr.add(i)) }?;
-            if byte == 0 {
-                break;
-            }
-            s.push(byte);
-        }
-
-        String::from_utf8(s).map_err(|_| Errno::EFAULT)
-    }
 }
 
 /// Get the path and filename from a fully qualified path.

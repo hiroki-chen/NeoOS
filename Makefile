@@ -99,6 +99,11 @@ else
 	@cd $(WORK_DIR) && mkfs.apfs $(DISK)
 	@cd $(WORK_DIR) && sudo mount -o loop,readwrite $(DISK) /mnt
 	@cd /mnt && mkdir dev lib proc usr etc
+	@mkdir -p /mnt/usr/local/nginx/conf
+	@cd $(WORK_DIR) && cp nginx.conf /mnt/usr/local/nginx/conf
+	@mkdir -p /mnt/usr/local/nginx/logs && touch /mnt/usr/local/nginx/logs/error.log
+	@echo 'nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin' >> /mnt/etc/passwd
+	@echo 'nogroup:x:65534:' >> /mnt/etc/group
 	@cd $(WORK_DIR) && cp -r bin /mnt
 	@sudo umount /mnt
 endif

@@ -76,6 +76,15 @@ unsafe extern "C" fn __copy_to_user<T>(dst: *mut T, src: *const T) -> usize {
     0
 }
 
+/// Allows user application to track memory allocation.
+#[linkage = "weak"]
+#[no_mangle]
+pub extern "C" fn mmap_hook() {}
+
+#[linkage = "weak"]
+#[no_mangle]
+pub extern "C" fn brk_hook() {}
+
 /// A helper function for bitmap allocation that finds a contiguous free memory region given `size`.
 fn find_contiguous(
     ba: &impl BitMapAlloc,

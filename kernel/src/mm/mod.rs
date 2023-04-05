@@ -10,10 +10,7 @@ pub mod callback;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use bitflags::bitflags;
 use core::{future::Future, ops::Range, pin::Pin};
-use x86_64::{
-    structures::paging::{Page, Size4KiB},
-    VirtAddr,
-};
+use x86_64::structures::paging::{Page, Size4KiB};
 
 use crate::{
     arch::{
@@ -22,7 +19,7 @@ use crate::{
         PAGE_SIZE,
     },
     error::{Errno, KResult},
-    memory::{is_page_aligned, page_frame_number},
+    memory::{is_page_aligned, page_frame_number, KernelFrameAllocator},
     process::thread::{Thread, CURRENT_THREAD_PER_CPU},
     sync::mutex::SpinLockNoInterrupt as Mutex,
     sys::Prot,
@@ -30,6 +27,8 @@ use crate::{
 };
 
 use callback::ArenaCallback;
+
+use self::callback::DummyArenaCallback;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ArenaFlags {
@@ -138,6 +137,18 @@ impl From<MmapPerm> for ArenaFlags {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ArenaType {
+    /// This is the heap.
+    Heap,
+    /// This is the stack.
+    Stack,
+    /// This is loaded from the ELF.
+    Elf,
+    /// This is reserved.
+    Reserved,
+}
+
 /// A continuous memory region.
 #[derive(Clone, Debug)]
 pub struct Arena {
@@ -147,6 +158,8 @@ pub struct Arena {
     pub flags: ArenaFlags,
     /// The memory write / read callback. This backend implements all the page table interfaces.
     pub callback: Box<dyn ArenaCallback>,
+    /// The type of this region.
+    pub ty: ArenaType,
 }
 
 impl Arena {
@@ -265,9 +278,8 @@ where
     /// The free chunk list in Linux.
     arena: Vec<Arena>,
     page_table: P,
-    /// The heap start point.
+    /// The heap ending point.
     heap_end: Option<u64>,
-    free_mem: Option<u64>,
 }
 
 impl<P> MemoryManager<P>
@@ -283,33 +295,75 @@ where
                 P::new()
             },
             heap_end: None,
-            free_mem: None,
         }
     }
 
+    /// The address 0x0 - entry_point should be reserved and not touched.
+    /// To prevent this region from reading/writing, we insert a dummy arena into that address and change permission
+    /// to non-read + non-write + non-execute. Any attempt to access this region would cause error.
+    pub fn set_reserved(&mut self) {
+        let end = self.arena.first().unwrap().range.start;
+        let reserved = Arena {
+            range: 0..end,
+            flags: ArenaFlags {
+                writable: false,
+                user_accessible: false,
+                non_executable: true,
+                mmio: 0x0,
+            },
+            callback: Box::new(DummyArenaCallback::<KernelFrameAllocator>::new()),
+            ty: ArenaType::Reserved,
+        };
+
+        self.arena.insert(0, reserved);
+    }
+
+    #[inline]
     /// Sets the limitation on the memory usage (dynamic).
     pub fn set_limit(&mut self, limit: u64) {
-        self.free_mem.replace(limit);
+        self.heap_end.replace(limit);
     }
 
-    /// Checks the remaining free memory this process can use.
-    pub fn get_free_vm(&self) -> u64 {
-        match self.free_mem {
+    #[inline]
+    pub fn get_limit(&self) -> u64 {
+        match self.heap_end {
+            Some(limit) => limit,
+            // FIXME: Need to set below stack bottom.
             None => u64::MAX,
-            Some(mem) => mem,
         }
     }
 
+    #[inline]
+    /// Checks the remaining free memory this process can use.
+    pub fn get_free_vm(&self) -> u64 {
+        match self.heap_end {
+            None => u64::MAX,
+            Some(mem) => mem - self.cur_heap_end(),
+        }
+    }
+
+    #[inline]
     /// Sets the heap ending point to `end` after a process is successfully loaded into the memory.
     pub fn set_heap_end(&mut self, end: u64) {
         self.heap_end.replace(end);
     }
 
-    pub fn heap_end(&self) -> u64 {
-        match self.heap_end {
-            Some(end) => end,
-            // Not yet started.
-            None => 0,
+    pub fn cur_heap_end(&self) -> u64 {
+        let elf_end = self
+            .arena
+            .iter()
+            .rev()
+            .find(|&arena| arena.ty == ArenaType::Elf)
+            .unwrap();
+        let heap_end = self
+            .arena
+            .iter()
+            .rev()
+            .find(|&arena| arena.ty == ArenaType::Heap);
+
+        match heap_end {
+            Some(arena) => arena.range.end,
+            None => elf_end.range.end,
         }
     }
 
@@ -345,12 +399,14 @@ where
                         range: cur_arena.range.start..range.end,
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
+                        ty: cur_arena.ty,
                     };
                     should_remove.unmap(&mut self.page_table)?;
                     let remaining = Arena {
                         range: range.end..cur_arena.range.end,
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
+                        ty: cur_arena.ty,
                     };
                     self.arena.insert(i, remaining);
                 } else if self.arena[i].range.end <= range.end
@@ -369,12 +425,14 @@ where
                         range: range.start..cur_arena.range.end,
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
+                        ty: cur_arena.ty,
                     };
                     should_remove.unmap(&mut self.page_table)?;
                     let remaining = Arena {
                         range: cur_arena.range.start..range.start,
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
+                        ty: cur_arena.ty,
                     };
                     self.arena.insert(i, remaining);
                 } else {
@@ -390,17 +448,20 @@ where
                         range: range.start..range.end,
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
+                        ty: cur_arena.ty,
                     };
                     should_remove.unmap(&mut self.page_table)?;
                     let remaining_lhs = Arena {
                         range: cur_arena.range.start..range.start,
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
+                        ty: cur_arena.ty,
                     };
                     let remaining_rhs = Arena {
                         range: range.end..cur_arena.range.end,
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
+                        ty: cur_arena.ty,
                     };
                     self.arena.insert(i, remaining_lhs);
                     self.arena.insert(i + 1, remaining_rhs);
@@ -524,7 +585,6 @@ where
             arena: self.arena.clone(),
             page_table: new_page_table,
             heap_end: self.heap_end.clone(),
-            free_mem: self.free_mem.clone(),
         }
     }
 
@@ -534,16 +594,6 @@ where
             .arena
             .iter()
             .any(|item| item.overlap_with(&(addr..addr + size as u64)))
-    }
-
-    /// Finds a free arena that can be used for a given size.
-    pub fn find_free_arena(&self, addr_hint: u64, size: usize) -> KResult<VirtAddr> {
-        core::iter::once(addr_hint)
-            .chain(self.arena.iter().map(|item| item.range.clone().end))
-            .map(|addr| page_frame_number(addr + PAGE_SIZE as u64 - 1))
-            .find(|addr| self.is_free(*addr, size))
-            .ok_or(Errno::ENOMEM)
-            .map(|addr| virt!(addr))
     }
 
     /// Returns true if `self.arena` has some memory regions overlapping with `other`.

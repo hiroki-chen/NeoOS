@@ -2,8 +2,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
 
 /* A sample echoing program. */
 int main() {
@@ -18,36 +20,43 @@ int main() {
   printf("      '.          .'\n");
   printf("        '-......-'\n");
 
-  int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  struct sockaddr_in server_address;
-  server_address.sin_family = AF_INET;
-  server_address.sin_port = htons(80);
-  server_address.sin_addr.s_addr = inet_addr("10.130.30.233");
+  int fd = open("/usr/local/nginx/conf/nginx.conf", O_RDONLY, 0);
+  struct stat mystat;
+  printf("addr is %p\n", &mystat);
+  int ret = fstat(fd, &mystat);
+  printf("stat is %lu\n", mystat.st_size);
+  fcntl(fd, 2, 1);
 
-  int bind_status =
-      bind(s, (struct sockaddr*)(&server_address), sizeof(server_address));
-  int listen_status = listen(s, 0);
-  printf("got socket %d with bind status %d and listen status %d\n", s,
-         bind_status, listen_status);
+  // int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  // struct sockaddr_in server_address;
+  // server_address.sin_family = AF_INET;
+  // server_address.sin_port = htons(80);
+  // server_address.sin_addr.s_addr = inet_addr("10.130.30.233");
 
-  size_t len = 0;
-  int client_socket =
-      accept(s, (struct sockaddr*)(&server_address), (socklen_t*)&len);
-  printf("accept with %d\n", client_socket);
-  while (1) {
-    char buf[1024] = {0};
-    int read_len = recv(client_socket, buf, 1024, 0);
+  // int bind_status =
+  //     bind(s, (struct sockaddr*)(&server_address), sizeof(server_address));
+  // int listen_status = listen(s, 0);
+  // printf("got socket %d with bind status %d and listen status %d\n", s,
+  //        bind_status, listen_status);
 
-    if (read_len == 0) {
-      break;
-    }
+  // size_t len = 0;
+  // int client_socket =
+  //     accept(s, (struct sockaddr*)(&server_address), (socklen_t*)&len);
+  // printf("accept with %d\n", client_socket);
+  // while (1) {
+  //   char buf[1024] = {0};
+  //   int read_len = recv(client_socket, buf, 1024, 0);
 
-    printf("Message received as %s\n", buf);
+  //   if (read_len == 0) {
+  //     break;
+  //   }
 
-    int send_len = send(client_socket, "hello!!", 8, 0);
+  //   printf("Message received as %s\n", buf);
 
-    printf("Message sent\n");
-  }
+  //   int send_len = send(client_socket, "hello!!", 8, 0);
+
+  //   printf("Message sent\n");
+  // }
 
   return 0;
 }

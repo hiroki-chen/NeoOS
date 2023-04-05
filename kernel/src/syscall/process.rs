@@ -123,3 +123,14 @@ pub fn sys_sched_yield(
 ) -> KResult<usize> {
     Ok(0)
 }
+
+/// A thread's CPU affinity mask determines the set of CPUs on which it is eligible to run. On a multiprocessor system,
+/// setting the CPU affinity mask can be used to obtain performance benefits. Since our kernel aims to implement the SMP
+/// mechanism, this sycall and setaffinity is important for achieving a better performance.
+pub fn sys_sched_getaffinity(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    Ok(0)
+}

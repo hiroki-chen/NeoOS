@@ -5,6 +5,7 @@
 use alloc::{
     string::{String, ToString},
     sync::Arc,
+    vec,
     vec::Vec,
 };
 use bitflags::bitflags;
@@ -19,7 +20,7 @@ use crate::{
     },
     process::thread::{Thread, ThreadContext},
     sys::{Stat, AT_SYMLINK_NOFOLLOW, SEEK_CUR, SEEK_END, SEEK_SET},
-    utils::{ptr::Ptr, read_user_string, split_path},
+    utils::{ptr::Ptr, split_path},
 };
 
 bitflags! {
@@ -76,6 +77,8 @@ pub fn sys_lseek(
     let file = proc.get_fd(fd)?;
 
     if let FileObject::File(file) = file {
+        kinfo!("fd = {fd:#x}, offset = {offset:#x}, whence = {whence:#x}");
+
         let position = match whence {
             // The file offset is set to `offset` bytes.
             SEEK_SET => Seek::Start(offset as _),
@@ -126,7 +129,8 @@ pub fn sys_openat(
 
     // Open the directory.
     let mut proc = thread.parent.lock();
-    let path = read_user_string(path)?;
+    let p_path = Ptr::new(path as *mut u8);
+    let path = p_path.read_c_string()?;
     let oflags = Oflags::from_bits_truncate(flags);
 
     kinfo!("opening {path} with open flags {:?}", oflags);
@@ -368,6 +372,162 @@ pub fn sys_stat(
     let filename = filename_ptr.to_string();
 
     do_stat(thread, AT_FDCWD as _, filename, statbuf as *mut Stat, 0)
+}
+
+/// pread() reads up to count bytes from file descriptor fd at offset offset (from the start of the file) into the buffer
+/// starting at buf. The file offset is not changed.
+pub async fn sys_pread(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let fd = syscall_registers[0];
+    let buf = syscall_registers[1];
+    let count = syscall_registers[2];
+    let offset = syscall_registers[3];
+
+    let mut proc = thread.parent.lock();
+    let file = proc.get_fd(fd)?;
+
+    if let FileObject::File(file) = file {
+        let p_buf = Ptr::new(buf as *mut u8);
+        let filesz = file.metadata().unwrap().size;
+        let offset = filesz.min(offset as usize);
+        let mut buf = vec![0u8; count as usize];
+        let len = file.read_at(offset, &mut buf).await?;
+
+        unsafe {
+            p_buf.write_slice(&buf);
+        }
+
+        Ok(len)
+    } else {
+        Err(Errno::EBADF)
+    }
+}
+
+pub fn sys_fstat(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let fd = syscall_registers[0];
+    let stat = syscall_registers[1];
+
+    let mut proc = thread.parent.lock();
+    let file = proc.get_fd(fd)?;
+
+    if let FileObject::File(file) = file {
+        let p_stat = Ptr::new(stat as *mut Stat);
+        unsafe {
+            kinfo!("returning {:x?}", file.metadata().unwrap());
+            p_stat.write(Stat::from_metadata(&file.metadata().unwrap()))?;
+        }
+        Ok(0)
+    } else {
+        Err(Errno::EBADF)
+    }
+}
+
+pub fn sys_epoll_create(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    Ok(0)
+}
+
+/// symlink() creates a symbolic link named linkpath which contains the string target.
+pub fn sys_symlink(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let target = syscall_registers[0];
+    let linkpath = syscall_registers[1];
+
+    do_symlink(thread, target as _, AT_FDCWD as _, linkpath as _)
+}
+
+pub fn sys_symlinkat(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let target = syscall_registers[0];
+    let newdirfd = syscall_registers[1];
+    let linkpath = syscall_registers[2];
+
+    do_symlink(thread, target as _, newdirfd, linkpath as _)
+}
+
+/// mkdir() attempts to create a directory named pathname.
+pub fn sys_mkdir(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    Ok(0)
+}
+
+/// The mkdirat() system call operates in exactly the same way as mkdir(), except for the differences described here. If
+/// the pathname given in pathname is relative, then it is interpreted relative to the directory referred to by the file
+/// descriptor dirfd (rather than relative to the current working directory of the calling process, as is done by mkdir()
+/// for a relative pathname).
+pub fn sys_mkdirat(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    Ok(0)
+}
+
+/// fcntl() performs one of the operations on the open file descriptor fd. The operation is determined by cmd.
+pub fn sys_fnctl(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let fd = syscall_registers[0];
+    let cmd = syscall_registers[1];
+    let arg = syscall_registers[2];
+
+    kinfo!("{fd:#x}, {cmd:#x}, {arg:#x}");
+
+    let mut proc = thread.parent.lock();
+    let file = proc.get_fd(fd)?;
+
+    file.fcntl(cmd, arg)
+}
+
+fn do_symlink(
+    thread: &Arc<Thread>,
+    target: *const u8,
+    newdirfd: u64,
+    linkpath: *const u8,
+) -> KResult<usize> {
+    let target = unsafe { Ptr::new_with_const(target as *mut u8).read_c_string() }?;
+    let linkpath = unsafe { Ptr::new_with_const(linkpath as *mut u8).read_c_string() }?;
+
+    let proc = thread.parent.lock();
+    let (dirpath, filename) = split_path(&linkpath)?;
+    let dir_inode = proc.read_inode_at(newdirfd, dirpath, true)?;
+
+    match dir_inode.find(filename) {
+        Err(FsError::EntryNotFound) => {
+            // Only non-existing target can be created!
+            let symlink = dir_inode
+                // Mode is rwxrwxrwx, that is ok.
+                .create(filename, rcore_fs::vfs::FileType::SymLink, 0o777)
+                .map_err(fserror_to_kerror)?;
+            symlink
+                .write_at(0, target.as_bytes())
+                .map_err(fserror_to_kerror)?;
+            Ok(0)
+        }
+        Ok(_) => Err(Errno::EEXIST),
+        Err(errno) => Err(fserror_to_kerror(errno)),
+    }
 }
 
 fn do_stat(

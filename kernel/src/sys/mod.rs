@@ -298,14 +298,16 @@ pub struct Stat {
     st_dev: u64,
     /// Inode number
     st_ino: u64,
-    /// File type and mode
-    st_mode: u32,
     /// Number of hard links
     st_nlink: u32,
+    /// File type and mode
+    st_mode: u32,
     /// User ID of owner
     st_uid: u32,
     /// Group ID of owner
     st_gid: u32,
+    /// Pad
+    _pad: u32,
     /// Device ID (if special file)
     st_rdev: u64,
     /// Total size, in bytes
@@ -328,6 +330,16 @@ pub struct Stat {
     st_ctime: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u64)]
+pub enum FcntlCommand {
+    FDupfd = 0,
+    FGetfd = 1,
+    /// Sets the descriptor flags for descriptor.
+    FSetfd = 2,
+    Unknown,
+}
+
 impl Stat {
     pub fn from_metadata(metadata: &Metadata) -> Self {
         Self {
@@ -337,6 +349,7 @@ impl Stat {
             st_nlink: metadata.nlinks as _,
             st_uid: metadata.uid as _,
             st_gid: metadata.gid as _,
+            _pad: 0,
             st_rdev: metadata.rdev as _,
             st_size: metadata.size as _,
             st_blksize: metadata.blk_size as _,

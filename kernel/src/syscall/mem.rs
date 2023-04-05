@@ -4,12 +4,11 @@ use alloc::{boxed::Box, sync::Arc};
 
 use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, PAGE_SIZE},
-    dummy_impl,
     error::{Errno, KResult},
-    memory::{is_page_aligned, KernelFrameAllocator},
+    memory::{brk_hook, is_page_aligned, mmap_hook, page_frame_number, KernelFrameAllocator},
     mm::{
         callback::{ArenaCallback, UserArenaCallback},
-        Arena, ArenaFlags,
+        Arena, ArenaFlags, ArenaType,
     },
     process::thread::{Thread, ThreadContext},
     sys::{Prot, MAP_ANONYMOUS, MAP_FIXED, MAP_PRIVATE, MAP_SHARED, MAP_SHARED_VALIDATE},
@@ -25,6 +24,8 @@ pub fn sys_mmap(
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
+    mmap_hook();
+
     let mut addr = syscall_registers[0];
     let length = syscall_registers[1];
     let prot = syscall_registers[2];
@@ -65,11 +66,7 @@ pub fn sys_mmap(
     } else {
         // We follow the hint, but if there is no free memory, we force
         // use another address to map.
-        addr = thread
-            .vm
-            .lock()
-            .find_free_arena(addr, length as _)?
-            .as_u64();
+        addr = page_frame_number(thread.vm.lock().cur_heap_end() + PAGE_SIZE as u64 - 1);
     }
 
     // Then, we push the region back again into the process memory area.
@@ -83,6 +80,7 @@ pub fn sys_mmap(
             range: addr..addr + length,
             flags: prot.into(),
             callback,
+            ty: ArenaType::Heap,
         });
 
         Ok(addr as _)
@@ -96,6 +94,7 @@ pub fn sys_mmap(
             range: addr..addr + length,
             flags: todo!(),
             callback: todo!(),
+            ty: ArenaType::Heap,
         };
     }
 }
@@ -145,4 +144,24 @@ pub fn sys_mprotect(
     Ok(0)
 }
 
-dummy_impl!(sys_brk, Err(Errno::ENOMEM));
+/// brk() sets the end of the data segment to the value specified by `addr`, when that value is reasonable, the system has
+/// enough memory, and the process does not exceed its maximum data size. On success, brk() returns zero.
+pub fn sys_brk(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    brk_hook();
+    let addr = syscall_registers[0];
+
+    // Check if `addr` is within the valid range.
+    let vm = thread.vm.lock();
+    let cur_end = vm.cur_heap_end();
+
+    // Only handle `brk(NULL)` request.
+    if addr == 0 {
+        return Ok(cur_end as _);
+    } else {
+        Err(Errno::ENOMEM)
+    }
+}

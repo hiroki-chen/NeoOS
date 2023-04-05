@@ -70,7 +70,7 @@ pub fn sys_uname(
     let buf = syscall_registers[0];
 
     let buf_ptr = Ptr::new(buf as *mut Utsname);
-    thread.vm.lock().check_write_array(&buf_ptr, 1)?;
+    // thread.vm.lock().check_write_array(&buf_ptr, 1)?;
 
     unsafe {
         buf_ptr.write(Utsname::default_uname())?;
@@ -152,4 +152,21 @@ pub fn sys_clock_gettime(
         })
         .map(|_| 0)
     }
+}
+
+/// The Linux-specific prlimit() system call combines and extends the functionality of setrlimit() and getrlimit(). 
+/// It can be used to both set and get the resource limits of an arbitrary process.
+pub fn sys_prlimit64(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let pid = syscall_registers[0];
+    let resource = syscall_registers[1];
+    let new_limit = syscall_registers[2];
+    let old_limit = syscall_registers[3];
+
+    // TODO: Implement me!
+
+    Ok(0)
 }

@@ -353,6 +353,11 @@ pub const SYS_KEXEC_FILE_LOAD: u64 = 320;
 pub const SYS_BPF: u64 = 321;
 pub const SYS_EXECVEAT: u64 = 322;
 
+/// Users can hook this function to do something they want to do (mostly for debugging).
+#[linkage = "weak"]
+#[no_mangle]
+extern "C" fn syscall_hook() {}
+
 lazy_static! {
     /// Records if the process is exited after syscall.
     pub(crate) static ref PROC_EXITED: RwLock<BTreeMap<u64, bool>> = RwLock::new(BTreeMap::new());
@@ -418,15 +423,26 @@ async fn do_handle_syscall(
     syscall_number: u64,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
+    syscall_hook();
+
     match syscall_number {
+        SYS_PREAD64 => sys_pread(thread, ctx, syscall_registers).await,
         SYS_READ => sys_read(thread, ctx, syscall_registers).await,
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
         SYS_OPEN => sys_open(thread, ctx, syscall_registers),
+        SYS_CLOSE => sys_close(thread, ctx, syscall_registers),
         SYS_READV => sys_readv(thread, ctx, syscall_registers).await,
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
         SYS_LSEEK => sys_lseek(thread, ctx, syscall_registers),
         SYS_IOCTL => sys_ioctl(thread, ctx, syscall_registers),
+        SYS_MKDIR => sys_mkdir(thread, ctx, syscall_registers),
+        SYS_MKDIRAT => sys_mkdirat(thread, ctx, syscall_registers),
+        SYS_FCNTL => sys_fnctl(thread, ctx, syscall_registers),
+        SYS_FSTAT => sys_fstat(thread, ctx, syscall_registers),
         SYS_STAT => sys_stat(thread, ctx, syscall_registers),
+        SYS_SYMLINK => sys_symlink(thread, ctx, syscall_registers),
+        SYS_SYMLINKAT => sys_symlinkat(thread, ctx, syscall_registers),
+        SYS_EPOLL_CREATE1 => sys_epoll_create(thread, ctx, syscall_registers),
         SYS_NEWFSTATAT => sys_newfstatat(thread, ctx, syscall_registers),
         SYS_GETCWD => sys_getcwd(thread, ctx, syscall_registers),
 
@@ -448,12 +464,15 @@ async fn do_handle_syscall(
         SYS_SET_TID_ADDRESS => sys_set_tid_address(thread, ctx, syscall_registers),
         SYS_EXIT => sys_exit(thread, ctx, syscall_registers),
         SYS_EXIT_GROUP => sys_exit_group(thread, ctx, syscall_registers),
+        SYS_SCHED_GETAFFINITY => sys_sched_getaffinity(thread, ctx, syscall_registers),
         SYS_SCHED_YIELD => sys_sched_yield(thread, ctx, syscall_registers),
 
         SYS_ARCH_PRCTL => sys_arch_prctl(thread, ctx, syscall_registers),
         SYS_GETTIMEOFDAY => sys_gettimeofday(thread, ctx, syscall_registers),
         SYS_TIME => sys_time(thread, ctx, syscall_registers),
+        SYS_UNAME => sys_uname(thread, ctx, syscall_registers),
         SYS_CLOCK_GETTIME => sys_clock_gettime(thread, ctx, syscall_registers),
+        SYS_PRLIMIT64 => sys_prlimit64(thread, ctx, syscall_registers),
 
         SYS_SOCKET => sys_socket(thread, ctx, syscall_registers),
         SYS_ACCEPT => sys_accept(thread, ctx, syscall_registers),

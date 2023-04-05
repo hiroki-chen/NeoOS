@@ -33,7 +33,8 @@ use self::meta::{
     CheckpointMapPhysical, DrecFlags, FsMap, JDrecHashedKey, JDrecVal, JFileExtentKey,
     JFileExtentVal, JInodeKey, JInodeVal, JKey, NxSuperBlock, ObjectMap, ObjectMapKey,
     ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC,
-    APFS_TYPE_FILE_EXTENT, APFS_TYPE_INODE, J_DREC_LEN_MASK, OBJ_TYPE_SHIFT, ROOT_DIR_RECORD_ID,
+    APFS_TYPE_FILE_EXTENT, APFS_TYPE_INODE, DEFAULT_XF_LEN, J_DREC_LEN_MASK, OBJ_TYPE_SHIFT,
+    ROOT_DIR_RECORD_ID,
 };
 
 use rcore_fs::{
@@ -622,11 +623,13 @@ impl AppleFileSystemInode {
             file_id: current,
             date_added: self.dir_record.read().date_added,
             flags: 0x4,
+            xfields: [0u8; DEFAULT_XF_LEN],
         };
         let parent_jdrec_val = JDrecVal {
             file_id: parent,
             date_added: self.dir_record.read().date_added,
             flags: 0x4,
+            xfields: [0u8; DEFAULT_XF_LEN],
         };
 
         let mut lock = self.volumn.fs_map.write();
@@ -895,12 +898,19 @@ impl INode for AppleFileSystemInode {
         let ty = DrecFlags::from_bits_truncate(drec.flags);
         let (size, blocks) = match ty {
             DrecFlags::DT_REG | DrecFlags::DT_LNK => {
-                let file_extent = self.file_extent.as_ref().unwrap().read();
-                let size = file_extent.len() * BLOCK_SIZE;
-                (size, file_extent.len())
+                let size = self
+                    .inode_inner
+                    .read()
+                    .get_dstream()
+                    .map(|dstream| dstream.size as usize)
+                    // Empty files or directories won't set the data stream, so their sizes are zero.
+                    .unwrap_or_default();
+                let block_len = (size as f64 / BLOCK_SIZE as f64).ceil() as usize;
+
+                (size, block_len)
             }
             // The size of a directory is the number of its directory entries.
-            DrecFlags::DT_DIR => (inode_inner.nchildren as _, 1),
+            DrecFlags::DT_DIR => (inode_inner.nchildren_or_link as _, 1),
             // todo: add other types.
             _ => panic!("unknown file type"),
         };
@@ -918,7 +928,7 @@ impl INode for AppleFileSystemInode {
             // R/W/X
             mode: inode_inner.mode,
             // Meaningless for non-file objects (e.g., directories).
-            nlinks: inode_inner.nlink as _,
+            nlinks: inode_inner.nchildren_or_link as _,
             uid: inode_inner.owner as _,
             gid: inode_inner.group as _,
             // to be set.

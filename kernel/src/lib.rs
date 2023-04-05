@@ -16,6 +16,7 @@
 #![feature(atomic_from_mut)]
 #![feature(naked_functions)]
 #![feature(c_size_t)]
+#![feature(linkage)]
 #![feature(allocator_api)]
 #![feature(core_intrinsics)]
 #![feature(rustc_attrs)]

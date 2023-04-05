@@ -19,7 +19,7 @@ use spin::RwLock;
 use unicode_normalization::char::decompose_canonical;
 
 use crate::{
-    arch::QWORD_LEN,
+    arch::{DWORD_LEN, QWORD_LEN},
     error::{Errno, KResult},
     function, kdebug, kerror, kinfo,
 };
@@ -118,7 +118,47 @@ pub const S_IFLNK: u16 = 0o120000;
 pub const S_IFSOCK: u16 = 0o140000;
 pub const S_IFWHT: u16 = 0o160000;
 
+// Xfields constants.
+pub const DEFAULT_XF_LEN: usize = 1024;
+pub const INO_EXT_TYPE_DSTREAM: u8 = 8;
+
 pub const CASTAGNOLI: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+
+pub trait XFieldsInterepretable: Clone + Debug {
+    /// Gets the raw byte array of the xfields.
+    fn get_xfields(&self) -> &[u8];
+
+    /// Interpret the xfields.
+    fn interpret_xfields(&self, ty: u8) -> KResult<Vec<Vec<u8>>> {
+        let xf_blob = unsafe { &*(self.get_xfields().as_ptr() as *const XfBlob) };
+        let xf_num_exts = xf_blob.xf_num_exts as usize;
+        let xf_used_data = xf_blob.xf_used_data as usize;
+        // Locate the data.
+        let mut xf_data_offset = xf_num_exts * core::mem::size_of::<Xfields>();
+
+        // Iterate over xfields.
+        let mut xfields = Vec::new();
+        for idx in 0..xf_num_exts {
+            let xf = unsafe { &*(xf_blob.xf_data.as_ptr().add(idx * DWORD_LEN) as *const Xfields) };
+            let mut xf_size = xf.x_size as usize;
+
+            // Check the type
+            let xf_type = xf.x_type;
+            if xf_type == ty {
+                xfields.push(xf_blob.xf_data[xf_data_offset..xf_data_offset + xf_size].to_vec());
+            }
+
+            // Since xfields data are aligned to 8-byte, we need to round up the offset
+            // if not properly aligned.
+            if xf_size % QWORD_LEN != 0 {
+                xf_size += QWORD_LEN - xf_size % QWORD_LEN;
+            }
+            xf_data_offset += xf_size;
+        }
+
+        Ok(xfields)
+    }
+}
 
 /// Defines how a b-tree key should behave.
 pub trait BTreeKey: Clone + Eq + Ord + PartialEq + PartialOrd + Sized {
@@ -694,9 +734,28 @@ pub struct JDrecVal {
     pub file_id: u64,
     pub date_added: u64,
     pub flags: u16,
-    // Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
-    // We currently disable it.
-    // pub xfields: [u8; BLOCK_SIZE - 24],
+    /// Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
+    pub xfields: [u8; DEFAULT_XF_LEN],
+}
+
+/// A data stream for extended attributes. To access the data in the stream, read the object identifier and
+/// then find the corresponding extents.
+#[derive(Debug, Clone)]
+#[repr(C, align(8))]
+pub struct JXttrDstream {
+    pub xattr_obj_id: u64,
+    pub dstream: JDstream,
+}
+
+/// Information about a data stream.
+#[derive(Debug, Clone)]
+#[repr(C, packed)]
+pub struct JDstream {
+    pub size: u64,
+    pub alloced_size: u64,
+    pub default_crypto_id: u64,
+    pub total_bytes_written: u64,
+    pub total_bytes_read: u64,
 }
 
 impl PartialEq for JKey {
@@ -1025,7 +1084,7 @@ pub struct XfBlob {
 }
 
 #[derive(Debug, Clone)]
-#[repr(C, align(8))]
+#[repr(C)]
 pub struct Xfields {
     pub x_type: u8,
     pub x_flags: u8,
@@ -1043,8 +1102,8 @@ pub struct JInodeVal {
     pub change_time: u64,
     pub access_time: u64,
     pub internal_flags: u64,
-    pub nchildren: i32,
-    pub nlink: i32,
+    // A C-like union.
+    pub nchildren_or_link: i32,
     pub default_protection_class: u32,
     pub write_generation_counter: u32,
     pub bsd_flags: u32,
@@ -1054,8 +1113,40 @@ pub struct JInodeVal {
     _pad1: u16,
     // Perhaps we won't use it at all because we do not want to do compression for the time being.
     pub uncompressed_size: u64,
-    // Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
-    // pub xfields: [u8; BLOCK_SIZE - 92],
+    /// Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended
+    /// fields. Because a dynamic slice cannot be clone-d, we fix a maximum length of the xfields to overcome
+    /// this limit. For the time being, we only need to access the j_dstream_t type.
+    pub xfields: [u8; DEFAULT_XF_LEN],
+}
+
+impl XFieldsInterepretable for JInodeVal {
+    fn get_xfields(&self) -> &[u8] {
+        &self.xfields
+    }
+}
+
+impl XFieldsInterepretable for JDrecVal {
+    fn get_xfields(&self) -> &[u8] {
+        &self.xfields
+    }
+}
+
+impl JInodeVal {
+    /// Get shte actual data stream on the disk.
+    pub fn get_dstream(&self) -> KResult<JDstream> {
+        let dstream = self
+            .interpret_xfields(INO_EXT_TYPE_DSTREAM)
+            .unwrap_or_default();
+        let dstream = dstream.first().ok_or(Errno::ENOENT)?;
+
+        let ret = unsafe { &*(dstream.as_ptr() as *const JDstream) }.clone();
+        Ok(ret)
+    }
+
+    /// Get the name of the inode from the xfields.
+    pub fn get_name(&self) -> String {
+        todo!()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1512,13 +1603,16 @@ impl BTreeNodePhysical {
         };
 
         for (idx, entry) in toc.iter().enumerate() {
-            let offset = match entry {
-                TocEntry::Loc(kv) => kv.v.off,
-                TocEntry::Off(kv) => kv.v,
+            let (offset, len) = match entry {
+                TocEntry::Loc(kv) => (kv.v.off, kv.v.len),
+                TocEntry::Off(kv) => (kv.v, 0),
             };
 
             let range = if self.btn_level == 0 {
-                value_off..value_off + offset as usize
+                match len {
+                    0 => value_off..value_off + offset as usize,
+                    len => value_off + (offset - len) as usize..value_off + offset as usize,
+                }
             } else {
                 // Because all values stored in non-leaf nodes are object identifiers of the child nodes,
                 // it is always safe to assume that the layout is u64 aligned for values.
@@ -1540,12 +1634,19 @@ impl BTreeNodePhysical {
             match ty.get_type() {
                 APFS_TYPE_DIR_REC => {
                     let key_obj = (*(key.as_ptr() as *const JDrecHashedKey)).clone();
-                    let val_obj = (*(val.as_ptr() as *const JDrecVal)).clone();
+                    let mut val_obj = (*(val.as_ptr() as *const JDrecVal)).clone();
+
+                    let pad_start = core::mem::size_of::<JDrecVal>() - val.len();
+                    val_obj.xfields[pad_start..].fill(0);
                     fs_map.dir_record_map.insert(key_obj, val_obj);
                 }
                 APFS_TYPE_INODE => {
+                    // We may need to exert some special care on the `xfields`?
                     let key_obj = (*(key.as_ptr() as *const JInodeKey)).clone();
-                    let val_obj = (*(val.as_ptr() as *const JInodeVal)).clone();
+                    let mut val_obj = (*(val.as_ptr() as *const JInodeVal)).clone();
+
+                    let pad_start = core::mem::size_of::<JInodeVal>() - val.len();
+                    val_obj.xfields[pad_start..].fill(0);
                     fs_map.inode_map.insert(key_obj, val_obj);
                 }
                 APFS_TYPE_EXTENT => {
