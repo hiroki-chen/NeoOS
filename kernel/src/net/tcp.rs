@@ -10,7 +10,7 @@ use core::{any::Any, net::SocketAddr, time::Duration};
 use crate::{
     drivers::NETWORK_DRIVERS,
     error::{Errno, KResult},
-    function, kerror, kinfo,
+    function, kdebug, kerror, kinfo,
     net::{LISTEN_TABLE, RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET},
     sys::SocketOptions,
 };
@@ -222,20 +222,15 @@ impl SocketTrait for TcpStream {
                 return Ok((0, None));
             }
 
-            let res = socket.recv(|buffer| {
-                let recvd_len = buffer.len();
-                let data = buffer.to_vec();
-
-                (recvd_len, data)
-            });
+            let res = socket.recv_slice(buf);
             drop(socket);
             drop(socket_set);
 
             match res {
-                Ok(data) => {
-                    if !data.is_empty() {
-                        buf[..data.len()].copy_from_slice(&data);
-                        return Ok((data.len(), None));
+                Ok(len) => {
+                    if len != 0 {
+                        kdebug!("{:x?}", &buf[..len]);
+                        return Ok((len, None));
                     }
                 }
                 Err(RecvError::Finished) => return Ok((0, None)),
@@ -259,6 +254,8 @@ impl SocketTrait for TcpStream {
         if !socket.is_active() {
             return Err(Errno::ECONNREFUSED);
         }
+
+        kdebug!("sending {:x?}", buf);
 
         let res = socket.send_slice(buf);
         drop(socket);
@@ -306,8 +303,6 @@ impl SocketTrait for TcpStream {
                     let handle = self.socket.take();
                     SOCKET_SET.lock().remove(handle.unwrap().0);
                     self.state = TcpState::Listening;
-
-                    kinfo!("socket is listening to {}", addr);
 
                     Ok(())
                 } else {

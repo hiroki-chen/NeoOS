@@ -20,7 +20,8 @@ $(NGINX_BINARY):
 		--without-http_gzip_module --with-poll_module \
 		--without-http_upstream_zone_module
 	@cd $(NGINX_BUILD_DIR) && $(MAKE) CFLAGS="${CFLGAS} -Wno-error=overflow" -j8
-	cp $(NGINX_BUILD_DIR)/objs/nginx $(OUTPUT_PATH)
+	@cp $(NGINX_BUILD_DIR)/objs/nginx $(OUTPUT_PATH)
+	@cp $(CURDIR)/nginx.conf $(OUTPUT_PATH)/..
 	@echo "OK"
 
 clean:

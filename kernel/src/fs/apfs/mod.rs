@@ -24,7 +24,7 @@ use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
     fs::apfs::meta::{ApfsVolumn, BTreeInfo, SpacemanPhysical, Xid, BLOCK_SIZE},
-    function, kdebug, kerror, kinfo, kwarn,
+    function, kdebug, kerror, kinfo, kwarn, print, println,
     time::{SystemTime, UNIX_EPOCH},
     utils::calc_fletcher64,
 };
@@ -845,8 +845,21 @@ impl INode for AppleFileSystemInode {
     fn write_at(&self, offset: usize, buf: &[u8]) -> rcore_fs::vfs::Result<usize> {
         #[cfg(not(feature = "apfs_write"))]
         {
-            // Wo do not panic here.
             crate::logging::ringbuf_log_raw(buf);
+
+            // Force nginx to output the error log.
+            if self
+                .inode_inner
+                .read()
+                .get_name()
+                .unwrap_or_default()
+                .contains("error.log")
+            {
+                let log = core::str::from_utf8(buf).unwrap();
+                if !log.contains("epoll_wait()") {
+                    println!("{}", log);
+                }
+            }
 
             let dir_record = self.dir_record.read();
 

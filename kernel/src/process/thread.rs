@@ -558,7 +558,7 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 /// Spawn a debug thread with in-memory instructions.
 pub fn debug_threading() {
     // FIXME: ELF loader may have some problems.
-    let debug_inode = ROOT_INODE.lookup("./bin/nginx").unwrap();
+    let debug_inode = ROOT_INODE.lookup("/bin/nginx").unwrap();
 
     let args = vec!["nginx".into()];
     let envp = vec!["PATH=/bin".into()];

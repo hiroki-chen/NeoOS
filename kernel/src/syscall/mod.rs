@@ -449,6 +449,7 @@ async fn do_handle_syscall(
         SYS_FCNTL => sys_fnctl(thread, ctx, syscall_registers),
         SYS_FSTAT => sys_fstat(thread, ctx, syscall_registers),
         SYS_STAT => sys_stat(thread, ctx, syscall_registers),
+        SYS_GETDENTS64 => sys_getdents64(thread, ctx, syscall_registers),
         SYS_SYMLINK => sys_symlink(thread, ctx, syscall_registers),
         SYS_SYMLINKAT => sys_symlinkat(thread, ctx, syscall_registers),
         SYS_EPOLL_CREATE => sys_epoll_create(thread, ctx, syscall_registers),

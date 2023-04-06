@@ -4,7 +4,7 @@ use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use bitflags::bitflags;
 use num_enum::TryFromPrimitive;
-use rcore_fs::vfs::Metadata;
+use rcore_fs::vfs::{FileType, Metadata};
 
 use crate::{arch::io::IoVec, fs::apfs::meta::get_timestamp};
 
@@ -238,6 +238,61 @@ bitflags! {
     }
 }
 
+bitflags! {
+    #[derive(Default)]
+    pub struct StatMode: u32 {
+        const NULL  = 0;
+        /// Type
+        const TYPE_MASK = 0o170000;
+        /// FIFO
+        const FIFO  = 0o010000;
+        /// character device
+        const CHAR  = 0o020000;
+        /// directory
+        const DIR   = 0o040000;
+        /// block device
+        const BLOCK = 0o060000;
+        /// ordinary regular file
+        const FILE  = 0o100000;
+        /// symbolic link
+        const LINK  = 0o120000;
+        /// socket
+        const SOCKET = 0o140000;
+
+        /// Set-user-ID on execution.
+        const SET_UID = 0o4000;
+        /// Set-group-ID on execution.
+        const SET_GID = 0o2000;
+
+        /// Read, write, execute/search by owner.
+        const OWNER_MASK = 0o700;
+        /// Read permission, owner.
+        const OWNER_READ = 0o400;
+        /// Write permission, owner.
+        const OWNER_WRITE = 0o200;
+        /// Execute/search permission, owner.
+        const OWNER_EXEC = 0o100;
+
+        /// Read, write, execute/search by group.
+        const GROUP_MASK = 0o70;
+        /// Read permission, group.
+        const GROUP_READ = 0o40;
+        /// Write permission, group.
+        const GROUP_WRITE = 0o20;
+        /// Execute/search permission, group.
+        const GROUP_EXEC = 0o10;
+
+        /// Read, write, execute/search by others.
+        const OTHER_MASK = 0o7;
+        /// Read permission, others.
+        const OTHER_READ = 0o4;
+        /// Write permission, others.
+        const OTHER_WRITE = 0o2;
+        /// Execute/search permission, others.
+        const OTHER_EXEC = 0o1;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u64)]
 pub enum EpollOp {
@@ -318,7 +373,8 @@ pub struct Stat {
     /// Inode number
     st_ino: u64,
     /// Number of hard links
-    st_nlink: u32,
+    st_nlink: u64,
+
     /// File type and mode
     st_mode: u32,
     /// User ID of owner
@@ -332,9 +388,10 @@ pub struct Stat {
     /// Total size, in bytes
     st_size: u64,
     /// Block size for filesystem I/O
-    st_blksize: u32,
+    st_blksize: u64,
     /// Number of 512B blocks allocated
     st_blocks: u64,
+
     /// Time of last access
     st_atim: Timespec,
     /// Time of last modification
@@ -359,12 +416,28 @@ pub enum FcntlCommand {
     Unknown,
 }
 
-impl Stat {
-    pub fn from_metadata(metadata: &Metadata) -> Self {
+/// Converts a raw INode metadata to file type | mode for [`Stat`].
+pub fn to_stat_mode(metadata: &Metadata) -> u32 {
+    let type_ = match metadata.type_ {
+        FileType::File => StatMode::FILE,
+        FileType::Dir => StatMode::DIR,
+        FileType::SymLink => StatMode::LINK,
+        FileType::CharDevice => StatMode::CHAR,
+        FileType::BlockDevice => StatMode::BLOCK,
+        FileType::Socket => StatMode::SOCKET,
+        FileType::NamedPipe => StatMode::FIFO,
+    };
+
+    let mode = StatMode::from_bits_truncate(metadata.mode as u32);
+    (type_ | mode).bits
+}
+
+impl From<Metadata> for Stat {
+    fn from(metadata: Metadata) -> Self {
         Self {
             st_dev: metadata.dev as _,
             st_ino: metadata.inode as _,
-            st_mode: metadata.mode as _,
+            st_mode: to_stat_mode(&metadata),
             st_nlink: metadata.nlinks as _,
             st_uid: metadata.uid as _,
             st_gid: metadata.gid as _,
@@ -390,6 +463,19 @@ impl Stat {
             st_ctime: get_timestamp(metadata.ctime).as_nanos() as _,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct Dirent {
+    /// Inode number
+    pub d_ino: u64,
+    /// Offset to next linux_dirent  
+    pub d_off: u64,
+    /// Length of this linux_dirent
+    pub d_reclen: u16,
+    /// Filename (null-terminated)
+    pub d_name: [u8; 128],
 }
 
 #[derive(Clone, Debug)]

@@ -480,7 +480,7 @@ pub fn sys_fstat(
     if let FileObject::File(file) = file {
         let p_stat = Ptr::new(stat as *mut Stat);
         unsafe {
-            p_stat.write(Stat::from_metadata(&file.metadata().unwrap()))?;
+            p_stat.write(Stat::from(file.metadata().unwrap()))?;
         }
         Ok(0)
     } else {
@@ -499,8 +499,6 @@ pub fn sys_epoll_ctl(
     let op = syscall_registers[1];
     let fd = syscall_registers[2];
     let event = syscall_registers[3];
-
-    kinfo!("epoll ctl: {epfd:#x}, {op:#x}, {fd:#x}");
 
     let mut proc = thread.parent.lock();
     if !proc.fd_exists(fd) {
@@ -524,6 +522,8 @@ pub fn sys_epoll_ctl(
 /// buffer pointed to by events is used to return information from the ready list about file descriptors in the interest
 /// list that have some events available.  Up to maxevents are returned by epoll_wait(). The maxevents argument must be
 /// greater than zero.
+///
+/// FIXME: Still buggy.
 pub fn sys_epoll_pwait(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
@@ -647,13 +647,30 @@ pub fn sys_epoll_pwait(
                 });
             }
         }
-        if ready_num != 0 {
-            kinfo!("ready num = {ready_num:#x}");
-        }
 
         Ok(ready_num)
     } else {
         Err(Errno::EPERM)
+    }
+}
+
+/// The system call getdents() reads several linux_dirent structures from the directory referred to by the open file descriptor fd into the buffer pointed to by dirp. The argument count specifies the size of that buffer.
+pub fn sys_getdents64(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let fd = syscall_registers[0];
+    let dirp = syscall_registers[1];
+    let count = syscall_registers[2];
+
+    let mut proc = thread.parent.lock();
+    if let Ok(FileObject::File(file)) = proc.get_fd(fd) {
+        // todo.
+
+        Ok(0)
+    } else {
+        Err(Errno::EBADF)
     }
 }
 
@@ -798,7 +815,8 @@ fn do_stat(
     let metadata = inode.metadata().map_err(fserror_to_kerror)?;
 
     unsafe {
-        statbuf.write(Stat::from_metadata(&metadata));
+        let stat = Stat::from(metadata.clone());
+        statbuf.write(Stat::from(metadata));
     }
 
     Ok(0)
