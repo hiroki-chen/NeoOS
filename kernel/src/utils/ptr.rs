@@ -132,9 +132,9 @@ impl<T> Ptr<T> {
 
 impl Ptr<u8> {
     /// Reads a C-stryle string into the kernel and converts it to a Rust-style one.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// let ptr = 0xdeadbeef as *const u8;
     /// let s = Ptr::new(ptr as *mut u8).read_c_string().expect("failed to read!");

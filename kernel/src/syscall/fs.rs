@@ -13,14 +13,18 @@ use rcore_fs::vfs::FsError;
 
 use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, io::IoVec},
+    dummy_impl,
     error::{fserror_to_kerror, Errno, KResult},
     fs::{
+        epoll::{EpollInstance, EPOLL_QUEUE},
         file::{File, FileObject, FileOpenOption, FileType, Seek},
-        AT_FDCWD,
+        InodeOpType, AT_FDCWD,
     },
     process::thread::{Thread, ThreadContext},
-    sys::{Stat, AT_SYMLINK_NOFOLLOW, SEEK_CUR, SEEK_END, SEEK_SET},
-    utils::{ptr::Ptr, split_path},
+    sys::{
+        EpollEvent, EpollFlags, EpollOp, Stat, AT_SYMLINK_NOFOLLOW, SEEK_CUR, SEEK_END, SEEK_SET,
+    },
+    utils::{ptr::Ptr, split_path, update_inode_time},
 };
 
 bitflags! {
@@ -77,8 +81,6 @@ pub fn sys_lseek(
     let file = proc.get_fd(fd)?;
 
     if let FileObject::File(file) = file {
-        kinfo!("fd = {fd:#x}, offset = {offset:#x}, whence = {whence:#x}");
-
         let position = match whence {
             // The file offset is set to `offset` bytes.
             SEEK_SET => Seek::Start(offset as _),
@@ -93,6 +95,35 @@ pub fn sys_lseek(
     } else {
         Err(Errno::ESPIPE)
     }
+}
+
+/// The dup() system call allocates a new file descriptor that refers to the same open file description as the descriptor
+/// oldfd
+pub fn sys_dup2(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let oldfd = syscall_registers[0];
+    let newfd = syscall_registers[1];
+
+    do_dup(thread, oldfd, newfd, None)
+}
+
+pub fn sys_dup3(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let oldfd = syscall_registers[0];
+    let newfd = syscall_registers[1];
+    let flags = syscall_registers[2];
+
+    if oldfd == newfd {
+        return Err(Errno::EINVAL);
+    }
+
+    do_dup(thread, oldfd, newfd, Some(flags))
 }
 
 pub fn sys_open(
@@ -133,8 +164,6 @@ pub fn sys_openat(
     let path = p_path.read_c_string()?;
     let oflags = Oflags::from_bits_truncate(flags);
 
-    kinfo!("opening {path} with open flags {:?}", oflags);
-
     let inode = if oflags.contains(Oflags::O_CREATE) {
         let (directory, filename) = split_path(&path)?;
         let dir_inode = proc.read_inode_at(dir_fd, directory, true)?;
@@ -149,7 +178,13 @@ pub fn sys_openat(
 
             Err(FsError::EntryNotFound) => {
                 // Create a new file.
-                todo!()
+                let new_inode = dir_inode
+                    .create(filename, rcore_fs::vfs::FileType::File, 0o777)
+                    .map_err(fserror_to_kerror)?;
+                update_inode_time(&new_inode, InodeOpType::all());
+                update_inode_time(&dir_inode, InodeOpType::ACCESS | InodeOpType::MODIFY);
+
+                new_inode
             }
             Err(errno) => {
                 return Err(fserror_to_kerror(errno));
@@ -406,6 +441,31 @@ pub async fn sys_pread(
     }
 }
 
+/// pwrite() writes up to count bytes from the buffer starting at buf to the file descriptor fd at offset offset. The file
+/// offset is not changed.
+pub fn sys_pwrite(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let fd = syscall_registers[0];
+    let buf = syscall_registers[1];
+    let count = syscall_registers[2];
+    let offset = syscall_registers[3];
+
+    let buf = unsafe { core::slice::from_raw_parts(buf as *const u8, count as _) };
+    let mut proc = thread.parent.lock();
+    let file = proc.get_fd(fd)?;
+
+    if let FileObject::File(file) = file {
+        let len = file.write_at(offset as _, buf).unwrap();
+
+        Ok(len)
+    } else {
+        Err(Errno::EBADF)
+    }
+}
+
 pub fn sys_fstat(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
@@ -420,7 +480,6 @@ pub fn sys_fstat(
     if let FileObject::File(file) = file {
         let p_stat = Ptr::new(stat as *mut Stat);
         unsafe {
-            kinfo!("returning {:x?}", file.metadata().unwrap());
             p_stat.write(Stat::from_metadata(&file.metadata().unwrap()))?;
         }
         Ok(0)
@@ -429,12 +488,201 @@ pub fn sys_fstat(
     }
 }
 
+/// This system call is used to add, modify, or remove entries in the interest list of the epoll(7) instance referred to by the file descriptor epfd. It requests that the operation op be performed for the target file descriptor, fd.
+pub fn sys_epoll_ctl(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    // int epfd, int op, int fd, struct epoll_event *event
+    let epfd = syscall_registers[0];
+    let op = syscall_registers[1];
+    let fd = syscall_registers[2];
+    let event = syscall_registers[3];
+
+    kinfo!("epoll ctl: {epfd:#x}, {op:#x}, {fd:#x}");
+
+    let mut proc = thread.parent.lock();
+    if !proc.fd_exists(fd) {
+        return Err(Errno::EPERM);
+    }
+
+    let epoll = proc.get_fd(epfd)?;
+
+    if let FileObject::Epoll(epoll) = epoll {
+        let event = unsafe { Ptr::new(event as *mut EpollEvent).read() }?;
+        let op = EpollOp::try_from(op).map_err(|_| Errno::EINVAL)?;
+
+        epoll.epoll_ctl(fd, op, event)
+    } else {
+        // Does not support epoll.
+        Err(Errno::EPERM)
+    }
+}
+
+/// The epoll_wait() system call waits for events on the epoll(7) instance referred to by the file descriptor epfd. The
+/// buffer pointed to by events is used to return information from the ready list about file descriptors in the interest
+/// list that have some events available.  Up to maxevents are returned by epoll_wait(). The maxevents argument must be
+/// greater than zero.
+pub fn sys_epoll_pwait(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let epfd = syscall_registers[0];
+    let events = syscall_registers[1];
+    let maxevents = syscall_registers[2];
+    let timeout = syscall_registers[3];
+    let sigmask = syscall_registers[4];
+
+    let proc = thread.parent.lock();
+    let epoll = proc.get_fd_ref(epfd)?;
+
+    // Stores fds that should be unregistered.
+    let mut should_remove = Vec::new();
+
+    if let FileObject::Epoll(epoll) = epoll {
+        epoll.clear_ready();
+
+        let fds = epoll.events.lock().keys().copied().collect::<Vec<_>>();
+        for (&fd, v) in epoll.events.lock().iter() {
+            let epoll_flag = v.events;
+
+            // Check if the monitoring fd exists.
+            if let Ok(file) = proc.get_fd_ref(fd) {
+                let status = file.poll()?;
+
+                // Status is there.
+                if status.error || status.write || status.read {
+                    epoll.add_ready(fd);
+
+                    // In Edge Triggered mode (EPOLLET), events are raised only after a significant change.
+                    // It requires the process to keep track of what the last response for each monitored fd is.
+                    //
+                    // Level-triggered: as long as the event is here, we need to add the fd into the ready list.
+                    // Edge-triggered: only when the event "changes", we need to add the fd into the ready list.
+                    // That is to say, when a event occurs, the registered event will be removed from the epoll.
+                    // FIXME: Lost?
+                    if epoll_flag.contains(EpollFlags::EPOLLET) {
+                        // SHould not remove... Need to notify again when the status *changed*.
+                        // should_remove.push(fd);
+                    }
+                }
+            }
+        }
+
+        let mut ready_num = 0;
+        for fd in fds.into_iter() {
+            let proc = thread.parent.lock();
+
+            match proc.get_fd_ref(fd)? {
+                // Now we only handle socket epoll.
+                FileObject::Socket(socket) => {
+                    // FIXME: Duplicate ?
+                    EPOLL_QUEUE.register_epoll_event(thread.clone(), epfd, fd)
+                }
+                // Should not happen ?!
+                _ => continue,
+            }
+        }
+        drop(proc);
+        {
+            // Check the ready queue and try to notify the caller that some fds are ready for I/O.
+            let mut proc = thread.parent.lock();
+            let epoll = proc.get_fd(epfd)?;
+
+            if let FileObject::Epoll(epoll) = epoll {
+                // Cloned => prevent multiple mutable borrows.
+                let ready_queue = epoll.ready.lock().clone();
+                let all_events = epoll.events.lock().clone();
+                for fd_ready_for_epoll in ready_queue.iter().copied() {
+                    // Get the file and remove from the ready queue.
+                    // kinfo!("fd_ready_for_epoll: {fd_ready_for_epoll:#x}");
+                    let file = proc.get_fd_ref(fd_ready_for_epoll)?;
+                    // Can be overwritten by a new status.
+                    let status = file.poll()?;
+                    let epoll_event_from_instance = all_events.get(&fd_ready_for_epoll).unwrap();
+                    let epoll_event_flags = epoll_event_from_instance.events;
+
+                    if status.read && epoll_event_flags.contains(EpollFlags::EPOLLIN) {
+                        // Copy the data to the user space.
+                        let event_ptr =
+                            unsafe { &mut *((events as *mut EpollEvent).add(ready_num)) };
+                        event_ptr.events = EpollFlags::EPOLLIN;
+                        event_ptr.data = epoll_event_from_instance.data;
+                        ready_num += 1;
+                    }
+
+                    if status.write && epoll_event_flags.contains(EpollFlags::EPOLLOUT) {
+                        // Copy the data to the user space.
+                        let event_ptr =
+                            unsafe { &mut *((events as *mut EpollEvent).add(ready_num)) };
+                        event_ptr.events = EpollFlags::EPOLLOUT;
+                        event_ptr.data = epoll_event_from_instance.data;
+                        ready_num += 1;
+                    }
+
+                    if status.error && epoll_event_flags.contains(EpollFlags::EPOLLERR) {
+                        // Copy the data to the user space.
+                        let event_ptr =
+                            unsafe { &mut *((events as *mut EpollEvent).add(ready_num)) };
+                        event_ptr.events = EpollFlags::EPOLLERR;
+                        event_ptr.data = epoll_event_from_instance.data;
+                        ready_num += 1;
+                    }
+                }
+            } else {
+                panic!("epoll corrupted");
+            }
+        }
+
+        {
+            // HACK: Very inelegant due to Rust's borrow checker.
+            let proc = thread.parent.lock();
+            if let Ok(FileObject::Epoll(epoll)) = proc.get_fd_ref(epfd) {
+                epoll.clear_ready();
+
+                should_remove.into_iter().for_each(|fd| {
+                    epoll.events.lock().remove(&fd);
+                });
+            }
+        }
+        if ready_num != 0 {
+            kinfo!("ready num = {ready_num:#x}");
+        }
+
+        Ok(ready_num)
+    } else {
+        Err(Errno::EPERM)
+    }
+}
+
+/// epoll_create() returns a file descripto referring to the new epoll instance. This file descriptor is used for all the
+/// subsequent calls to the epoll interface.
 pub fn sys_epoll_create(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
-    Ok(0)
+    let size = syscall_registers[0] as isize;
+    if size <= 0 {
+        return Err(Errno::EINVAL);
+    }
+
+    // Size is ignored.
+    do_epoll_create(thread, false)
+}
+
+/// If flags is 0, then, other than the fact that the obsolete size argument is dropped, epoll_create1() is the same as
+/// epoll_create().  The following value can be included in flags to obtain different behavior:
+pub fn sys_epoll_create1(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let flags = syscall_registers[0];
+
+    do_epoll_create(thread, flags != 0)
 }
 
 /// symlink() creates a symbolic link named linkpath which contains the string target.
@@ -467,7 +715,10 @@ pub fn sys_mkdir(
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
-    Ok(0)
+    let pathname = syscall_registers[0];
+    let mode = syscall_registers[1];
+
+    do_mkdir(thread, AT_FDCWD as _, pathname as _, mode)
 }
 
 /// The mkdirat() system call operates in exactly the same way as mkdir(), except for the differences described here. If
@@ -479,7 +730,11 @@ pub fn sys_mkdirat(
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
-    Ok(0)
+    let dirfd = syscall_registers[0];
+    let pathname = syscall_registers[1];
+    let mode = syscall_registers[2];
+
+    do_mkdir(thread, dirfd, pathname as _, mode)
 }
 
 /// fcntl() performs one of the operations on the open file descriptor fd. The operation is determined by cmd.
@@ -491,8 +746,6 @@ pub fn sys_fnctl(
     let fd = syscall_registers[0];
     let cmd = syscall_registers[1];
     let arg = syscall_registers[2];
-
-    kinfo!("{fd:#x}, {cmd:#x}, {arg:#x}");
 
     let mut proc = thread.parent.lock();
     let file = proc.get_fd(fd)?;
@@ -523,6 +776,8 @@ fn do_symlink(
             symlink
                 .write_at(0, target.as_bytes())
                 .map_err(fserror_to_kerror)?;
+            update_inode_time(&symlink, InodeOpType::all());
+            update_inode_time(&dir_inode, InodeOpType::ACCESS | InodeOpType::MODIFY);
             Ok(0)
         }
         Ok(_) => Err(Errno::EEXIST),
@@ -548,3 +803,52 @@ fn do_stat(
 
     Ok(0)
 }
+
+fn do_mkdir(thread: &Arc<Thread>, dirfd: u64, pathname: *const u8, mode: u64) -> KResult<usize> {
+    let pathname = unsafe { Ptr::new_with_const(pathname as *mut u8).read_c_string() }?;
+    let (dirname, filename) = split_path(&pathname)?;
+    let proc = thread.parent.lock();
+
+    let dir_inode = proc.read_inode_at(dirfd, dirname, true)?;
+    if dir_inode.find(dirname).is_ok() {
+        return Err(Errno::EEXIST);
+    }
+
+    let inode = dir_inode
+        .create(filename, rcore_fs::vfs::FileType::Dir, mode as _)
+        .map_err(fserror_to_kerror)?;
+    // Update time.
+    update_inode_time(&inode, InodeOpType::all());
+    update_inode_time(&dir_inode, InodeOpType::ACCESS | InodeOpType::MODIFY);
+
+    Ok(0)
+}
+
+/// Duplicates the file descriptor and assigns a new fd to the new file.
+fn do_dup(thread: &Arc<Thread>, oldfd: u64, newfd: u64, flags: Option<u64>) -> KResult<usize> {
+    let mut proc = thread.parent.lock();
+    if proc.fd_exists(newfd) {
+        proc.remove_file(newfd).unwrap();
+    }
+
+    let file_clone = proc.get_fd_ref(oldfd)?.dup(flags.unwrap_or_default())?;
+    proc.add_file(file_clone)?;
+
+    Ok(newfd as _)
+}
+
+fn do_epoll_create(thread: &Arc<Thread>, epoll_cloexec: bool) -> KResult<usize> {
+    let mut proc = thread.parent.lock();
+    let epoll = EpollInstance::new(epoll_cloexec);
+    proc.add_file(FileObject::Epoll(epoll)).map(|fd| fd as _)
+}
+
+// Ignored. Permission check will be added in the future.
+dummy_impl!(sys_chown, Ok(0));
+dummy_impl!(sys_fchown, Ok(0));
+dummy_impl!(sys_lchown, Ok(0));
+dummy_impl!(sys_chmod, Ok(0));
+dummy_impl!(sys_fchmod, Ok(0));
+dummy_impl!(sys_dup, Ok(0));
+dummy_impl!(sys_eventfd, Err(Errno::EACCES));
+dummy_impl!(sys_eventfd2, Err(Errno::EACCES));

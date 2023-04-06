@@ -427,6 +427,7 @@ async fn do_handle_syscall(
 
     match syscall_number {
         SYS_PREAD64 => sys_pread(thread, ctx, syscall_registers).await,
+        SYS_PWRITE64 => sys_pwrite(thread, ctx, syscall_registers),
         SYS_READ => sys_read(thread, ctx, syscall_registers).await,
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
         SYS_OPEN => sys_open(thread, ctx, syscall_registers),
@@ -434,7 +435,15 @@ async fn do_handle_syscall(
         SYS_READV => sys_readv(thread, ctx, syscall_registers).await,
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
         SYS_LSEEK => sys_lseek(thread, ctx, syscall_registers),
+        SYS_DUP => sys_dup(thread, ctx, syscall_registers),
+        SYS_DUP2 => sys_dup2(thread, ctx, syscall_registers),
+        SYS_DUP3 => sys_dup3(thread, ctx, syscall_registers),
         SYS_IOCTL => sys_ioctl(thread, ctx, syscall_registers),
+        SYS_CHMOD => sys_chmod(thread, ctx, syscall_registers),
+        SYS_LCHOWN => sys_lchown(thread, ctx, syscall_registers),
+        SYS_FCHOWN => sys_fchown(thread, ctx, syscall_registers),
+        SYS_FCHMOD => sys_fchmod(thread, ctx, syscall_registers),
+        SYS_CHOWN => sys_chown(thread, ctx, syscall_registers),
         SYS_MKDIR => sys_mkdir(thread, ctx, syscall_registers),
         SYS_MKDIRAT => sys_mkdirat(thread, ctx, syscall_registers),
         SYS_FCNTL => sys_fnctl(thread, ctx, syscall_registers),
@@ -442,7 +451,12 @@ async fn do_handle_syscall(
         SYS_STAT => sys_stat(thread, ctx, syscall_registers),
         SYS_SYMLINK => sys_symlink(thread, ctx, syscall_registers),
         SYS_SYMLINKAT => sys_symlinkat(thread, ctx, syscall_registers),
-        SYS_EPOLL_CREATE1 => sys_epoll_create(thread, ctx, syscall_registers),
+        SYS_EPOLL_CREATE => sys_epoll_create(thread, ctx, syscall_registers),
+        SYS_EPOLL_CREATE1 => sys_epoll_create1(thread, ctx, syscall_registers),
+        SYS_EPOLL_CTL => sys_epoll_ctl(thread, ctx, syscall_registers),
+        SYS_EPOLL_PWAIT => sys_epoll_pwait(thread, ctx, syscall_registers),
+        SYS_EVENTFD => sys_eventfd(thread, ctx, syscall_registers),
+        SYS_EVENTFD2 => sys_eventfd2(thread, ctx, syscall_registers),
         SYS_NEWFSTATAT => sys_newfstatat(thread, ctx, syscall_registers),
         SYS_GETCWD => sys_getcwd(thread, ctx, syscall_registers),
 
@@ -451,6 +465,7 @@ async fn do_handle_syscall(
         SYS_BRK => sys_brk(thread, ctx, syscall_registers),
 
         SYS_KILL => sys_kill(thread, ctx, syscall_registers),
+        SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(thread, ctx, syscall_registers),
         SYS_RT_SIGACTION => sys_rt_sigaction(thread, ctx, syscall_registers),
         SYS_RT_SIGRETURN => sys_rt_sigreturn(thread, ctx, syscall_registers),
 
@@ -476,6 +491,7 @@ async fn do_handle_syscall(
 
         SYS_SOCKET => sys_socket(thread, ctx, syscall_registers),
         SYS_ACCEPT => sys_accept(thread, ctx, syscall_registers),
+        SYS_ACCEPT4 => sys_accept4(thread, ctx, syscall_registers),
         SYS_CONNECT => sys_connect(thread, ctx, syscall_registers),
         SYS_BIND => sys_bind(thread, ctx, syscall_registers),
         SYS_LISTEN => sys_listen(thread, ctx, syscall_registers),
@@ -486,6 +502,8 @@ async fn do_handle_syscall(
         SYS_SENDTO => sys_sendto(thread, ctx, syscall_registers),
         SYS_SENDMMSG => sys_sendmsg(thread, ctx, syscall_registers),
         SYS_RECVFROM => sys_recvfrom(thread, ctx, syscall_registers),
+        SYS_SOCKETPAIR => sys_socketpair(thread, ctx, syscall_registers),
+        SYS_SHUTDOWN => sys_shutdown(thread, ctx, syscall_registers),
 
         _ => {
             kerror!("unrecognized syscall number {:#x}", syscall_number);
@@ -494,7 +512,17 @@ async fn do_handle_syscall(
     }
 }
 
-/// Declares a dummy syscall that does nothing.
+/// Declares a dummy syscall that does nothing and returns a default result [`KResult<T>`]. This is used typically when
+/// a syscall is temporarily too complex or too bothersome to be implemented.
+///
+/// # Examples
+///
+/// ```
+/// // Oops, this returns fault!
+/// dummy_impl!(sys_my_cool_syscall, Err(Errno::EFAULT));
+/// // OK!
+/// dummy_impl!(sys_another_cool_syscall, Ok(0));
+/// ```
 #[allow(unused)]
 #[macro_export]
 macro_rules! dummy_impl {

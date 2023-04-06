@@ -1,4 +1,3 @@
-pub mod condvar;
 pub mod futex;
 pub mod mutex;
 pub mod raw_mutex;

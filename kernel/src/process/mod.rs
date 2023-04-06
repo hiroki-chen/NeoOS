@@ -3,7 +3,7 @@ use core::{future::Future, task::Poll};
 use crate::{
     arch::mm::paging::KernelPageTable,
     error::{fserror_to_kerror, Errno, KResult},
-    fs::{epoll::EpollInstance, file::FileObject, AT_FDCWD, MAXIMUM_FOLLOW, ROOT_INODE},
+    fs::{file::FileObject, AT_FDCWD, MAXIMUM_FOLLOW, ROOT_INODE},
     mm::MemoryManager,
     net::Shutdown,
     process::event::Event,
@@ -107,6 +107,15 @@ impl Process {
         self.opened_files.get_mut(&fd).ok_or(Errno::EBADF)
     }
 
+    pub fn get_fd_ref(&self, fd: u64) -> KResult<&FileObject> {
+        // Prevent multiple mutable borrows.
+        self.opened_files.get(&fd).ok_or(Errno::EBADF)
+    }
+
+    pub fn fd_exists(&self, fd: u64) -> bool {
+        self.opened_files.contains_key(&fd)
+    }
+
     pub fn add_file(&mut self, file: FileObject) -> KResult<u64> {
         let fd = self.get_free_fd()?;
         self.opened_files.insert(fd, file);
@@ -181,16 +190,6 @@ impl Process {
     #[inline]
     pub fn read_inode(&self, path: &str) -> KResult<Arc<dyn INode>> {
         self.read_inode_at(AT_FDCWD as _, path, true)
-    }
-
-    pub fn get_epoll(&mut self, epoll_fd: u64) -> KResult<&mut EpollInstance> {
-        let file = self.get_fd(epoll_fd)?;
-
-        if let FileObject::Epoll(epoll_instance) = file {
-            Ok(epoll_instance)
-        } else {
-            Err(Errno::EACCES)
-        }
     }
 }
 

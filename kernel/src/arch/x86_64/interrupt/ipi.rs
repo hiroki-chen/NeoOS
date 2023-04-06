@@ -10,6 +10,7 @@
 
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicUsize, Ordering};
+use num_enum::TryFromPrimitive;
 
 use crate::arch::{
     acpi::AP_STARTUP,
@@ -17,7 +18,7 @@ use crate::arch::{
     cpu::{cpu_id, CPUS, CPU_NUM},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd, TryFromPrimitive)]
 #[repr(u8)]
 pub enum IpiType {
     /// Indicates that the target CPU(s) should flush the TLB (Translation Looka-side Buffer).

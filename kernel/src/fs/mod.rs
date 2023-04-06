@@ -5,6 +5,7 @@
 //! * <https://developer.apple.com/documentation/foundation/file_system/about_apple_file_system>
 
 use alloc::{sync::Arc, vec::Vec};
+use bitflags::bitflags;
 use lazy_static::lazy_static;
 use rcore_fs::vfs::INode;
 use rcore_fs_mountfs::MountFS;
@@ -25,6 +26,15 @@ pub mod apfs;
 pub mod sfs;
 
 pub const AT_FDCWD: isize = -100;
+
+bitflags! {
+    #[derive(Default)]
+    pub struct InodeOpType: u8 {
+        const ACCESS = 0x1;
+        const MODIFY = 0x2;
+        const CREATE = 0x4;
+    }
+}
 
 #[cfg(not(any(feature = "sfs", feature = "apfs")))]
 compile_error!("Must specify one filesystem type: apfs or sfs.");

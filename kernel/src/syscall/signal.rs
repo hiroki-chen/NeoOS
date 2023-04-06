@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    arch::{interrupt::SYSCALL_REGS_NUM, signal::SigContext},
+    arch::{interrupt::SYSCALL_REGS_NUM, signal::SigContext, QWORD_LEN},
     error::{Errno, KResult},
     memory::{copy_from_user, copy_to_user},
     process::{
@@ -9,6 +9,8 @@ use crate::{
         thread::{Thread, ThreadContext},
     },
     signal::{send_signal, SiFields, SigAction, SigFrame, SigInfo, SigSet, Signal},
+    sys::{SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK},
+    utils::ptr::Ptr,
 };
 
 const NON_MASKABLE_SIGNALS: &[Signal; 3] = &[Signal::SIGSTOP, Signal::SIGKILL, Signal::SIGABRT];
@@ -32,7 +34,7 @@ pub fn sys_rt_sigaction(
     // rsi: const struct sigaction* act
     // rdx: struct sigaction* oldact
     // r10: size_t sigsetsize
-    let signal = unsafe { core::mem::transmute::<u64, Signal>(syscall_registers[0]) };
+    let signal = Signal::try_from(syscall_registers[0] as usize).map_err(|_| Errno::EINVAL)?;
     let action = syscall_registers[1];
     let old_action = syscall_registers[2];
     let size = syscall_registers[3] as usize;
@@ -46,8 +48,11 @@ pub fn sys_rt_sigaction(
     );
 
     // Check if the given signal can be set with a custom signal action.
-    if NON_MASKABLE_SIGNALS.iter().any(|e| matches!(e, signal)) {
-        kerror!("cannot mask these signals: {:?}", NON_MASKABLE_SIGNALS);
+    if NON_MASKABLE_SIGNALS.contains(&signal) {
+        kerror!(
+            "cannot mask these signals: {:?}; got {signal:?}",
+            NON_MASKABLE_SIGNALS
+        );
         return Err(Errno::EINVAL);
     }
 
@@ -127,7 +132,7 @@ pub fn sys_kill(
 ) -> KResult<usize> {
     let pid = syscall_registers[0] as i64;
     let sig = syscall_registers[1];
-    let signal = unsafe { core::mem::transmute::<u64, Signal>(sig) };
+    let signal = Signal::try_from(sig as usize).map_err(|_| Errno::EINVAL)?;
 
     // If pid is positive, then signal sig is sent to the process with
     // the ID specified by pid; otherwise, broadcast is needed.
@@ -144,6 +149,46 @@ pub fn sys_kill(
         send_signal(current_process, -1, siginfo);
     } else {
         // Need to extract pid again.
+    }
+
+    Ok(0)
+}
+
+/// sigprocmask() is used to fetch and/or change the signal mask of the calling thread. The signal mask is the set of
+/// signals whose delivery is currently blocked for the caller (see also signal(7) for more details).
+pub fn sys_rt_sigprocmask(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    // const sigset_t *restrict set, sigset_t *restrict oldset
+    let how = syscall_registers[0];
+    let set = syscall_registers[1];
+    let oldset = syscall_registers[2];
+    let sigsetsize = syscall_registers[3];
+
+    if sigsetsize != QWORD_LEN as u64 {
+        return Err(Errno::EINVAL);
+    }
+
+    let set = Ptr::new(set as *mut SigSet);
+    let oldset = Ptr::new(oldset as *mut SigSet);
+
+    if !oldset.is_null() {
+        unsafe {
+            oldset.write(SigSet(thread.inner.lock().sigmask.0 as _))?;
+        }
+    }
+
+    if !set.is_null() {
+        let set = unsafe { set.read() }?;
+        let mut thread_inner = thread.inner.lock();
+        match how {
+            SIG_BLOCK => thread_inner.sigmask.add_sigset(set),
+            SIG_UNBLOCK => thread_inner.sigmask.remove_set(set),
+            SIG_SETMASK => thread_inner.sigmask = set,
+            _ => return Err(Errno::EINVAL),
+        }
     }
 
     Ok(0)

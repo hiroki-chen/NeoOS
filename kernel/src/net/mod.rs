@@ -6,6 +6,8 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::lazy_static;
+use num_enum::TryFromPrimitive;
+use rcore_fs::vfs::PollStatus;
 use smoltcp::{
     iface::{SocketHandle, SocketSet},
     socket::tcp::SocketBuffer,
@@ -82,14 +84,15 @@ pub enum SocketType {
 }
 
 /// Possible values which can be passed to the [`TcpStream::shutdown`] method.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, TryFromPrimitive)]
+#[repr(u64)]
 pub enum Shutdown {
     /// The reading portion of the [`TcpStream`] should be shut down.
     ///
     /// All currently blocked and future [reads] will return <code>[Ok]\(0)</code>.
     ///
     /// [reads]: crate::io::Read "io::Read"
-    Read,
+    Read = 0,
     /// The writing portion of the [`TcpStream`] should be shut down.
     ///
     /// All currently blocked and future [writes] will return an error.
@@ -163,7 +166,7 @@ impl ListenTable {
     }
 
     /// Accepts incoming tcp connections from the other side.
-    pub fn accept(&mut self, port: u16) -> KResult<(SocketHandle, SocketAddr)> {
+    pub fn accept(&mut self, port: u16, peek: bool) -> KResult<(SocketHandle, SocketAddr)> {
         if let Some(entry) = self.0.get_mut(&port) {
             if let Some(&first) = entry.0.front() {
                 let socket_set = SOCKET_SET.lock();
@@ -172,9 +175,13 @@ impl ListenTable {
                 let state = socket.state();
                 if matches!(
                     state,
-                    smoltcp::socket::tcp::State::Listen | smoltcp::socket::tcp::State::SynReceived,
+                    smoltcp::socket::tcp::State::Listen
+                        | smoltcp::socket::tcp::State::SynReceived
+                        | smoltcp::socket::tcp::State::Established,
                 ) {
-                    entry.0.pop_front();
+                    if !peek {
+                        entry.0.pop_front();
+                    }
 
                     let remote_endpoint = socket.remote_endpoint().ok_or(Errno::EINVAL)?;
                     let remote_endpoint = remote_endpoint.addr.as_bytes();
@@ -187,6 +194,7 @@ impl ListenTable {
                         ),
                         port,
                     ));
+
                     return Ok((first, socket_addr));
                 }
 
@@ -219,6 +227,11 @@ impl Drop for ListenTableEntry {
 
 /// Defines a set of socket-like behaviors for tcp, udp, quic, etc. protocols.
 pub trait Socket: Send + Sync {
+    /// Polls this socket.
+    fn poll(&self) -> KResult<PollStatus> {
+        Err(Errno::EINVAL)
+    }
+
     /// Reads from this socket.
     fn read(&self, buf: &mut [u8]) -> KResult<(usize, Option<SocketAddr>)>;
 

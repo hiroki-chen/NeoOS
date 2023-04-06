@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
+use rcore_fs::vfs::PollStatus;
 use smoltcp::{
     socket::tcp::{RecvError, Socket, SocketBuffer},
     wire::IpListenEndpoint,
@@ -9,7 +10,7 @@ use core::{any::Any, net::SocketAddr, time::Duration};
 use crate::{
     drivers::NETWORK_DRIVERS,
     error::{Errno, KResult},
-    function, kdebug, kerror, kinfo,
+    function, kerror, kinfo,
     net::{LISTEN_TABLE, RECVBUF_LEN, SENDBUF_LEN, SOCKET_SET},
     sys::SocketOptions,
 };
@@ -111,7 +112,7 @@ impl TcpStream {
                     driver.poll();
                 });
 
-                match LISTEN_TABLE.write().accept(local_endpoint.port) {
+                match LISTEN_TABLE.write().accept(local_endpoint.port, false) {
                     Ok((socket_handle, remove_address)) => {
                         return Ok(Box::new(Self {
                             socket: Some(SocketWrapper(socket_handle)),
@@ -138,6 +139,68 @@ impl TcpStream {
 }
 
 impl SocketTrait for TcpStream {
+    fn poll(&self) -> KResult<PollStatus> {
+        match self.state {
+            TcpState::Uninit => Ok(PollStatus {
+                read: false,
+                write: false,
+                error: false,
+            }),
+            TcpState::Dead => Ok(PollStatus {
+                read: false,
+                write: false,
+                error: true,
+            }),
+
+            _ => {
+                // Do something.
+                let mut socket_set = SOCKET_SET.lock();
+
+                if let Some(ref socket_handle) = self.socket {
+                    NETWORK_DRIVERS.read().iter().for_each(|driver| {
+                        driver.poll();
+                    });
+
+                    let socket = socket_set.get_mut::<Socket>(socket_handle.0);
+                    if !socket.is_open() || !socket.is_active() {
+                        return Ok(PollStatus {
+                            read: false,
+                            write: false,
+                            error: true,
+                        });
+                    }
+
+                    // Check the status of the socket.
+                    let write = socket.can_send();
+                    let read = if socket.may_recv() {
+                        socket.recv_queue() != 0
+                    } else {
+                        false
+                    };
+
+                    Ok(PollStatus {
+                        read,
+                        write,
+                        error: false,
+                    })
+                } else {
+                    // A listening socket does not own a real socket. So we need to poll the listening table instead.
+                    let mut table = LISTEN_TABLE.write();
+                    match table.accept(self.addr.ok_or(Errno::ENOMEDIUM)?.port(), true) {
+                        Ok(socket) => Ok(PollStatus {
+                            read: true,
+                            write: false,
+                            error: false,
+                        }),
+                        // Not available yet.
+                        Err(Errno::EAGAIN) => Ok(PollStatus::default()),
+                        Err(errno) => Err(errno),
+                    }
+                }
+            }
+        }
+    }
+
     fn read(&self, buf: &mut [u8]) -> KResult<(usize, Option<SocketAddr>)> {
         // Check the status.
         if self.state != TcpState::Alive {
@@ -161,10 +224,7 @@ impl SocketTrait for TcpStream {
 
             let res = socket.recv(|buffer| {
                 let recvd_len = buffer.len();
-                let mut data = buffer.to_vec();
-                if !data.is_empty() {
-                    data = data.split(|&b| b == b'\n').collect::<Vec<_>>().concat();
-                }
+                let data = buffer.to_vec();
 
                 (recvd_len, data)
             });
@@ -242,11 +302,12 @@ impl SocketTrait for TcpStream {
                     }
 
                     LISTEN_TABLE.write().listen(addr.port())?;
-                    kdebug!("socket is listening on port {}", addr.port());
                     // Moves this socket handle.
                     let handle = self.socket.take();
                     SOCKET_SET.lock().remove(handle.unwrap().0);
                     self.state = TcpState::Listening;
+
+                    kinfo!("socket is listening to {}", addr);
 
                     Ok(())
                 } else {

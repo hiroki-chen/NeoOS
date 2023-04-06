@@ -7,9 +7,10 @@ use smoltcp::wire::IpProtocol;
 
 use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, io::IoVec},
+    dummy_impl,
     error::{Errno, KResult},
     fs::file::FileObject,
-    net::{RawSocket, Socket, TcpStream, UdpStream},
+    net::{RawSocket, Shutdown, Socket, TcpStream, UdpStream},
     process::thread::{Thread, ThreadContext},
     sys::{IpProto, MsgHdr, SockAddr, SocketOptions, SocketType, AF_INET, AF_UNIX},
     utils::ptr::Ptr,
@@ -172,6 +173,20 @@ pub fn sys_listen(
     }
 }
 
+/// If flags is 0, then accept4() is the same as accept().
+pub fn sys_accept4(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let sockfd = syscall_registers[0];
+    let sockaddr = syscall_registers[1];
+    let socklen = syscall_registers[2];
+    let flags = syscall_registers[3];
+
+    do_accept(thread, sockfd, sockaddr, socklen, flags)
+}
+
 /// The accept() system call is used with connection-based socket types (SOCK_STREAM, SOCK_SEQPACKET). It extracts the firs
 /// connection request on the queue of pending connections for the listening socket, sockfd, creates a new connected socket
 /// and returns a new file descriptor referring to that socket.  The newly created socket is not in the listening state.
@@ -185,38 +200,23 @@ pub fn sys_accept(
     let sockaddr = syscall_registers[1];
     let socklen = syscall_registers[2];
 
+    do_accept(thread, sockfd, sockaddr, socklen, 0)
+}
+
+/// The shutdown() call causes all or part of a full-duplex connection on the socket associated with sockfd to be shut down.
+pub fn sys_shutdown(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let sockfd = syscall_registers[0];
+    let how = syscall_registers[1];
+
     let mut proc = thread.parent.lock();
-    let socket = proc.get_fd(sockfd)?;
-
-    if let FileObject::Socket(socket) = socket {
-        let socket = socket
-            .as_any_mut()
-            .downcast_mut::<TcpStream>()
-            .ok_or(Errno::EINVAL)?;
-        let accepted = socket.accept()?;
-        let peer = accepted.peer_addr().unwrap();
-
-        if let IpAddr::V4(addr) = peer.ip() {
-            // Write back to user space.
-            let fd = proc.add_file(FileObject::Socket(accepted))?;
-            let ptr = Ptr::new(sockaddr as *mut SockAddr);
-
-            unsafe {
-                ptr.write(SockAddr {
-                    // Mark as fixed.
-                    sa_family: AF_INET as _,
-                    sa_data_min: {
-                        let mut buf = [0u8; 14];
-                        buf[..2].copy_from_slice(&peer.port().to_be_bytes());
-                        buf[2..6].copy_from_slice(&addr.octets());
-                        buf
-                    },
-                })?;
-            }
-            Ok(fd as _)
-        } else {
-            Err(Errno::EINVAL)
-        }
+    if let Ok(FileObject::Socket(socket)) = proc.get_fd(sockfd) {
+        socket
+            .shutdown(Shutdown::try_from(how).map_err(|_| Errno::EINVAL)?)
+            .map(|_| 0)
     } else {
         Err(Errno::ENOTSOCK)
     }
@@ -473,3 +473,50 @@ pub fn sys_getsockname(
         Err(Errno::ENOTSOCK)
     }
 }
+
+fn do_accept(
+    thread: &Arc<Thread>,
+    sockfd: u64,
+    sockaddr: u64,
+    addrlen: u64,
+    flags: u64,
+) -> KResult<usize> {
+    // TODO: Flag is unused here. Add at least the non-blocking flag.
+    let mut proc = thread.parent.lock();
+    let socket = proc.get_fd(sockfd)?;
+
+    if let FileObject::Socket(socket) = socket {
+        let socket = socket
+            .as_any_mut()
+            .downcast_mut::<TcpStream>()
+            .ok_or(Errno::EINVAL)?;
+        let accepted = socket.accept()?;
+        let peer = accepted.peer_addr().unwrap();
+
+        if let IpAddr::V4(addr) = peer.ip() {
+            // Write back to user space.
+            let fd = proc.add_file(FileObject::Socket(accepted))?;
+            let ptr = Ptr::new(sockaddr as *mut SockAddr);
+
+            unsafe {
+                ptr.write(SockAddr {
+                    // Mark as fixed.
+                    sa_family: AF_INET as _,
+                    sa_data_min: {
+                        let mut buf = [0u8; 14];
+                        buf[..2].copy_from_slice(&peer.port().to_be_bytes());
+                        buf[2..6].copy_from_slice(&addr.octets());
+                        buf
+                    },
+                })?;
+            }
+            Ok(fd as _)
+        } else {
+            Err(Errno::EINVAL)
+        }
+    } else {
+        Err(Errno::ENOTSOCK)
+    }
+}
+
+dummy_impl!(sys_socketpair, Err(Errno::EACCES));

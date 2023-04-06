@@ -153,6 +153,25 @@ macro_rules! kwarn {
     }};
 }
 
+pub(crate) fn ringbuf_log_raw(data: &[u8]) {
+    use ringbuf::Rb;
+    let mut lock = crate::logging::RING_BUFFER.write();
+    data.iter().for_each(|d| {
+        let _ = lock.push(*d);
+    });
+}
+
+#[macro_export]
+macro_rules! ringbuf_log {
+    ($($arg:tt)*) => {{
+        let data = format_args!($($arg)*).as_str().unwrap().as_bytes();
+        $crate::logging::ringbuf_log_raw(data);
+    }};
+    () => {{
+        $crate::logging::RING_BUFFER.write().push(b'\n');
+    }};
+}
+
 /// From std::print!
 ///
 /// Prints to the standard output, *without* a newline.

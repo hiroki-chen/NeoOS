@@ -11,6 +11,7 @@ use core::{fmt::Debug, mem::MaybeUninit};
 
 use alloc::{sync::Arc, vec::Vec};
 use bitflags::bitflags;
+use num_enum::TryFromPrimitive;
 
 use crate::{
     arch::{interrupt::Context, signal::SigContext},
@@ -47,7 +48,7 @@ const SYSRETURN: &[u8] = b"\xB8\x0F\x00\x00\x00\x0F\x05";
 /// avoids the boilerplate definitions.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Default)]
 #[repr(C)]
-pub struct SigSet(usize);
+pub struct SigSet(pub usize);
 
 impl SigSet {
     pub fn new() -> Self {
@@ -74,13 +75,17 @@ impl SigSet {
         self.0 ^= self.0 & 1 << other as usize;
     }
 
+    pub fn remove_set(&mut self, other: SigSet) {
+        self.0 ^= self.0 & other.0 as usize;
+    }
+
     pub fn contains(&self, other: Signal) -> bool {
         (self.0 >> other as u64 & 1) != 0
     }
 }
 
 /// Signals
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, TryFromPrimitive)]
 #[repr(usize)]
 pub enum Signal {
     SIGHUP = 1,

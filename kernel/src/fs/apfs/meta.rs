@@ -24,7 +24,7 @@ use crate::{
     function, kdebug, kerror, kinfo,
 };
 
-use super::{read_fs_tree, read_object, read_omap, Device};
+use super::{read_fs_tree, read_object, read_omap, AppleFileSystem, Device};
 
 // Some type alias.
 
@@ -120,6 +120,7 @@ pub const S_IFWHT: u16 = 0o160000;
 
 // Xfields constants.
 pub const DEFAULT_XF_LEN: usize = 1024;
+pub const INO_EXT_TYPE_NAME: u8 = 4;
 pub const INO_EXT_TYPE_DSTREAM: u8 = 8;
 
 pub const CASTAGNOLI: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
@@ -323,9 +324,9 @@ bitflags! {
   }
 }
 
-impl DrecFlags {
-    pub fn get_type(&self) -> FileType {
-        match *self {
+impl Into<FileType> for DrecFlags {
+    fn into(self) -> FileType {
+        match self {
             DrecFlags::DT_BLK => FileType::BlockDevice,
             DrecFlags::DT_CHR => FileType::CharDevice,
             DrecFlags::DT_DIR => FileType::Dir,
@@ -334,6 +335,20 @@ impl DrecFlags {
             DrecFlags::DT_LNK => FileType::SymLink,
             DrecFlags::DT_REG => FileType::File,
             ty => panic!("unknown type: {:?}", ty),
+        }
+    }
+}
+
+impl From<FileType> for DrecFlags {
+    fn from(value: FileType) -> Self {
+        match value {
+            FileType::BlockDevice => DrecFlags::DT_BLK,
+            FileType::CharDevice => DrecFlags::DT_CHR,
+            FileType::Dir => DrecFlags::DT_DIR,
+            FileType::NamedPipe => DrecFlags::DT_FIFO,
+            FileType::Socket => DrecFlags::DT_SOCK,
+            FileType::SymLink => DrecFlags::DT_LNK,
+            FileType::File => DrecFlags::DT_REG,
         }
     }
 }
@@ -577,6 +592,16 @@ pub struct JInodeKey {
     pub hdr: JKey,
 }
 
+impl JInodeKey {
+    pub fn new(id: u64) -> Self {
+        Self {
+            hdr: JKey {
+                obj_id_and_type: (APFS_TYPE_INODE as u64) << OBJ_TYPE_SHIFT | id,
+            },
+        }
+    }
+}
+
 /// The key half of a directory entry record.
 #[derive(Debug, Clone)]
 #[repr(C, packed)]
@@ -597,6 +622,22 @@ pub struct JDrecHashedKey {
     pub name_len_and_hash: u32,
     /// The length is undetermined.
     pub name: [u8; 255],
+}
+
+impl JDrecHashedKey {
+    pub fn new(id: u64, name: &str) -> Self {
+        Self {
+            hdr: JKey {
+                obj_id_and_type: ((APFS_TYPE_DIR_REC as u64) << OBJ_TYPE_SHIFT) | id,
+            },
+            name_len_and_hash: (name.len() + 1) as _,
+            name: {
+                let mut buf = [0u8; 255];
+                buf[..name.len().min(255)].copy_from_slice(name.as_bytes());
+                buf
+            },
+        }
+    }
 }
 
 /// The key half of a physical extent record.
@@ -736,6 +777,17 @@ pub struct JDrecVal {
     pub flags: u16,
     /// Directory entries (j_drec_val_t) and inodes (j_inode_val_t) use this data type to store their extended fields.
     pub xfields: [u8; DEFAULT_XF_LEN],
+}
+
+impl JDrecVal {
+    pub fn new(id: u64, date_added: u64, flags: u16) -> Self {
+        Self {
+            file_id: id,
+            date_added,
+            flags,
+            xfields: [0u8; DEFAULT_XF_LEN],
+        }
+    }
 }
 
 /// A data stream for extended attributes. To access the data in the stream, read the object identifier and
@@ -1119,6 +1171,38 @@ pub struct JInodeVal {
     pub xfields: [u8; DEFAULT_XF_LEN],
 }
 
+impl JInodeVal {
+    pub fn new(
+        parent_id: u64,
+        private_id: u64,
+        time: u64,
+        internal_flags: u64,
+        owner: u32,
+        group: u32,
+        mode: u16,
+    ) -> Self {
+        Self {
+            parent_id,
+            private_id,
+            mod_time: time,
+            change_time: time,
+            access_time: time,
+            create_time: time,
+            nchildren_or_link: 0,
+            internal_flags: 0,
+            default_protection_class: 0,
+            write_generation_counter: 0,
+            bsd_flags: 0,
+            owner,
+            group,
+            mode,
+            _pad1: 0,
+            uncompressed_size: 0,
+            xfields: [0u8; DEFAULT_XF_LEN],
+        }
+    }
+}
+
 impl XFieldsInterepretable for JInodeVal {
     fn get_xfields(&self) -> &[u8] {
         &self.xfields
@@ -1144,8 +1228,17 @@ impl JInodeVal {
     }
 
     /// Get the name of the inode from the xfields.
-    pub fn get_name(&self) -> String {
-        todo!()
+    pub fn get_name(&self) -> KResult<String> {
+        let name = self
+            .interpret_xfields(INO_EXT_TYPE_NAME)
+            .unwrap_or_default();
+        let name = name.first().ok_or(Errno::ENOENT)?;
+
+        Ok(core::ffi::CStr::from_bytes_until_nul(name)
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default()
+            .to_string())
     }
 }
 
@@ -1731,19 +1824,20 @@ pub struct Omap {
 }
 
 /// A simpler wrapper for the volumn.
-#[derive(Debug)]
 pub struct ApfsVolumn {
     pub name: String,
     pub superblock: ApfsSuperblock,
     pub object_map: ObjectMap,
     pub fs_map: RwLock<MaybeDirty<FsMap>>,
     pub occupied_inode_numbers: RwLock<BTreeSet<u64>>,
+    pub apfs: Arc<AppleFileSystem>,
 }
 
 impl ApfsVolumn {
     /// Parses the raw `apfs_superblock` struct and constructs a Self.
     pub fn from_raw(
         device: &Arc<dyn Device>,
+        apfs: Arc<AppleFileSystem>,
         apfs_superblock: ApfsSuperblock,
     ) -> KResult<Arc<Self>> {
         let apfs_omap_oid = apfs_superblock.apfs_omap_oid;
@@ -1784,6 +1878,7 @@ impl ApfsVolumn {
             object_map: apfs_omap.omap,
             fs_map: RwLock::new(MaybeDirty::new(apfs_tree)),
             occupied_inode_numbers: RwLock::new(occupied_inode_numbers),
+            apfs,
         }))
     }
 }

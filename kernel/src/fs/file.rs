@@ -362,8 +362,17 @@ impl FileObject {
     pub fn ioctl(&self, cmd: u64, args: [u64; 3]) -> KResult<usize> {
         match self {
             FileObject::File(file) => file.io_control(cmd, args[0]),
-
+            FileObject::Socket(socket) => Ok(0),
             _ => unimplemented!(),
+        }
+    }
+
+    pub fn poll(&self) -> KResult<PollStatus> {
+        match self {
+            FileObject::File(file) => file.poll(),
+            FileObject::Socket(socket) => socket.poll(),
+            // Polling an epoll instance is meaningless.
+            _ => Err(Errno::EINVAL),
         }
     }
 
@@ -389,6 +398,21 @@ impl FileObject {
             FileObject::Socket(socket) => socket.read(buf).map(|(len, _)| len),
 
             _ => unimplemented!(),
+        }
+    }
+
+    /// Duplicates this file.
+    pub fn dup(&self, o_cloexec: u64) -> KResult<Self> {
+        match self {
+            Self::File(file) => Ok(Self::File(File {
+                inode: file.inode.clone(),
+                path: file.path.clone(),
+                fd_cloexec: o_cloexec != 0,
+                file_option: file.file_option.clone(),
+                ty: file.ty.clone(),
+            })),
+            // Do not duplicate other file descriptors.
+            _ => Err(Errno::EBADF),
         }
     }
 }

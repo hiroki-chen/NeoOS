@@ -61,6 +61,7 @@ target remote :1234
 * Implement more system calls.
 * Reduce memory consumption.
 * Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
+* Add a proc macro for parsing enums.
 
 ## Advanced Programmable Interrupt Controller (APIC)
 

@@ -154,7 +154,7 @@ pub fn sys_clock_gettime(
     }
 }
 
-/// The Linux-specific prlimit() system call combines and extends the functionality of setrlimit() and getrlimit(). 
+/// The Linux-specific prlimit() system call combines and extends the functionality of setrlimit() and getrlimit().
 /// It can be used to both set and get the resource limits of an arbitrary process.
 pub fn sys_prlimit64(
     thread: &Arc<Thread>,

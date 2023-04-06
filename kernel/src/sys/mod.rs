@@ -3,6 +3,7 @@
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use bitflags::bitflags;
+use num_enum::TryFromPrimitive;
 use rcore_fs::vfs::Metadata;
 
 use crate::{arch::io::IoVec, fs::apfs::meta::get_timestamp};
@@ -104,6 +105,11 @@ pub const SEEK_END: u64 = 2; /* seek relative to end of file */
 pub const SEEK_DATA: u64 = 3; /* seek to the next data */
 pub const SEEK_HOLE: u64 = 4; /* seek to the next hole */
 
+// Sigmask `how`
+pub const SIG_BLOCK: u64 = 0; /* for blocking signals */
+pub const SIG_UNBLOCK: u64 = 1; /* for unblocking signals */
+pub const SIG_SETMASK: u64 = 2; /* for setting the signal mask */
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum IpProto {
@@ -171,6 +177,10 @@ pub struct Stat64 {
 
 #[derive(Debug, Clone)]
 #[repr(C)]
+pub struct SigSet(pub u64);
+
+#[derive(Debug, Clone)]
+#[repr(C)]
 pub struct Timeval {
     pub tv_sec: u64,
     pub tv_usec: u64,
@@ -199,7 +209,7 @@ pub struct Time {
 }
 
 #[derive(Clone, Debug)]
-#[repr(C)]
+#[repr(C, packed)]
 pub struct EpollEvent {
     pub events: EpollFlags,
     /// A pointer to the user data.
@@ -208,6 +218,7 @@ pub struct EpollEvent {
 
 bitflags! {
     #[derive(Default)]
+    #[repr(C)]
     pub struct EpollFlags: u32 {
         const EPOLLIN = 0x001;
         const EPOLLPRI = 0x002;
@@ -225,6 +236,14 @@ bitflags! {
         const EPOLLONESHOT = 0x40000000;
         const EPOLLET = 0x80000000;
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+#[repr(u64)]
+pub enum EpollOp {
+    EpollCtlAdd = 1,
+    EpollCtlDel = 2,
+    EpollCtlMod = 3,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -277,7 +296,7 @@ pub enum SocketOptions {
 }
 
 /// The `MsgHdr` struct is used to specify the message header in a call to `sendmsg` or `recvmsg` on a socket.
-/// This struct is defined in the system header file `sys/socket.h`.
+/// This struct isd in the system header file `sys/socket.h=`,.
 #[derive(Debug)]
 #[repr(C)]
 pub struct MsgHdr {
@@ -378,7 +397,7 @@ impl Stat {
 pub struct Utsname {
     /// Operating system name
     pub sysname: [u8; 65],
-    /// Name within "some implementation-defined network"
+    /// Name within "some implementationd =n,etwork"
     pub nodename: [u8; 65],
     /// Operating system release (e.g., "2.6.28")
     pub release: [u8; 65],

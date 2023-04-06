@@ -25,6 +25,7 @@ use crate::{
     error::{Errno, KResult},
     fs::apfs::meta::{ApfsVolumn, BTreeInfo, SpacemanPhysical, Xid, BLOCK_SIZE},
     function, kdebug, kerror, kinfo, kwarn,
+    time::{SystemTime, UNIX_EPOCH},
     utils::calc_fletcher64,
 };
 
@@ -365,9 +366,11 @@ impl AppleFileSystem {
             String::from_utf8(apfs_superblock.apfs_volname.to_vec()).map_err(|_| Errno::EINVAL)?;
         kinfo!("successfully mounted volumn: {volumn_name}.");
 
-        self.volumn_lists
-            .write()
-            .push(ApfsVolumn::from_raw(&self.device, apfs_superblock)?);
+        self.volumn_lists.write().push(ApfsVolumn::from_raw(
+            &self.device,
+            self.self_ptr.upgrade().unwrap(),
+            apfs_superblock,
+        )?);
 
         Ok(())
     }
@@ -802,10 +805,10 @@ impl INode for AppleFileSystemInode {
                 // Check if `offset` is valid.
                 if offset >= file_extent.len() {
                     kwarn!(
-                        "`offset` is larger than the file length: got {:#x}, expected < {:#x}. Nothing is done.",
-                        offset,
-                        file_extent.len()
-                    );
+                            "`offset` is larger than the file length: got {:#x}, expected < {:#x}. Nothing is done.",
+                            offset,
+                            file_extent.len()
+                        );
                     return Ok(0);
                 } else if buf.len() == 0 {
                     return Ok(0);
@@ -842,9 +845,22 @@ impl INode for AppleFileSystemInode {
     fn write_at(&self, offset: usize, buf: &[u8]) -> rcore_fs::vfs::Result<usize> {
         #[cfg(not(feature = "apfs_write"))]
         {
-            kwarn!("Trying to write to a read-only filesystem. Your modification is lost.");
             // Wo do not panic here.
-            Ok(0)
+            crate::logging::ringbuf_log_raw(buf);
+
+            let dir_record = self.dir_record.read();
+
+            match DrecFlags::from_bits_truncate(dir_record.flags) {
+                DrecFlags::DT_REG | DrecFlags::DT_LNK => match self.file_extent {
+                    Some(ref file_extent) => Ok(buf.len()),
+                    None => Ok(buf.len()),
+                },
+
+                ty => {
+                    kerror!("writing to {ty:?} is not supported");
+                    Err(FsError::NotSupported)
+                }
+            }
         }
         #[cfg(feature = "apfs_write")]
         compile_error!("write is currently unsupported.");
@@ -924,7 +940,7 @@ impl INode for AppleFileSystemInode {
             atime: get_timespec(inode_inner.access_time),
             mtime: get_timespec(inode_inner.mod_time),
             ctime: get_timespec(inode_inner.change_time),
-            type_: ty.get_type(),
+            type_: ty.into(),
             // R/W/X
             mode: inode_inner.mode,
             // Meaningless for non-file objects (e.g., directories).
@@ -963,7 +979,107 @@ impl INode for AppleFileSystemInode {
             return Err(FsError::EntryExist);
         }
 
-        todo!()
+        let new_inode = match ty {
+            FileType::Dir => self
+                .volumn
+                .create_new_directory(self.volumn.clone(), name, self.id),
+            FileType::File => self
+                .volumn
+                .create_new_file(self.volumn.clone(), name, self.id),
+            _ => unimplemented!(),
+        }
+        .map_err(|_| FsError::NotSupported)?;
+
+        Ok(new_inode)
+    }
+}
+
+impl ApfsVolumn {
+    /// Creates a new file inode (dangling, lazily popoluated).
+    pub fn create_new_file(
+        &self,
+        self_ptr: Arc<Self>,
+        name: &str,
+        parent_id: u64,
+    ) -> KResult<Arc<dyn INode>> {
+        Ok(Arc::new(self.create_new_inode(
+            self_ptr,
+            name,
+            parent_id,
+            DrecFlags::DT_REG,
+        )?))
+    }
+
+    /// Creates a new directory inode (dangling, lazily popoluated).
+    pub fn create_new_directory(
+        &self,
+        self_ptr: Arc<Self>,
+        name: &str,
+        parent_id: u64,
+    ) -> KResult<Arc<dyn INode>> {
+        let new_inode = self.create_new_inode(self_ptr, name, parent_id, DrecFlags::DT_DIR)?;
+        new_inode.init_dir();
+        Ok(Arc::new(new_inode))
+    }
+
+    /// Creates a new inode (dangling, lazily popoluated).
+    pub fn create_new_inode(
+        &self,
+        self_ptr: Arc<Self>,
+        name: &str,
+        parent_id: u64,
+        ty: DrecFlags,
+    ) -> KResult<AppleFileSystemInode> {
+        // To create a new directory inode in the volumn, we need to do the following things:
+        // 1. (apfs_write) allocate sufficient space for this inode.
+        // 2. Create `JDrecHashedKey` and `JDrecVal` in which the parent id can be lazily initialized as 0
+        //    and is populated by the caller.
+        // 3. Create `JInodeKey` and `JInodeVal` and allocate a free INode id for this inode.
+
+        #[cfg(feature = "apfs_write")]
+        {
+            // Ask the spaceman for space allocation!
+        }
+
+        #[cfg(not(feature = "apfs_write"))]
+        {
+            // Get the current time.
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
+            let inode_id = self.get_free_inode_id()?;
+
+            let j_drec_hashed_key = JDrecHashedKey::new(parent_id, name);
+            let j_drec_val = JDrecVal::new(inode_id, now.as_nanos() as _, ty.bits());
+            let j_inode_key = JInodeKey::new(inode_id);
+            let j_inode_val =
+                JInodeVal::new(parent_id, inode_id, now.as_nanos() as _, 0, 0, 0, 0o777);
+
+            kdebug!("after creation: {j_drec_hashed_key:x?}; {j_drec_val:x?}, {j_inode_key:x?}, {j_inode_val:x?}");
+
+            let mut fs_map = self.fs_map.write();
+            fs_map
+                .dir_record_map
+                .insert(j_drec_hashed_key, j_drec_val.clone());
+            fs_map.inode_map.insert(j_inode_key, j_inode_val.clone());
+
+            let inode = AppleFileSystemInode {
+                id: inode_id,
+                volumn: self_ptr,
+                apfs: self.apfs.clone(),
+                inode_inner: RwLock::new(MaybeDirty::new(j_inode_val)),
+                dir_record: RwLock::new(MaybeDirty::new(j_drec_val)),
+                file_extent: None,
+            };
+            Ok(inode)
+        }
+    }
+
+    /// Gets a free Inode id.
+    pub fn get_free_inode_id(&self) -> KResult<u64> {
+        // Should be a monotonic counter?
+        let mut set = self.occupied_inode_numbers.write();
+        let next = set.last().copied().unwrap_or_default() + 1;
+        set.insert(next);
+        Ok(next)
     }
 }
 

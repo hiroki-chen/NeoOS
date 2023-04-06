@@ -1,6 +1,13 @@
 //! Some utility functions and data structures that the kernel can take use of.
 
-use crate::error::{Errno, KResult};
+use alloc::sync::Arc;
+use rcore_fs::vfs::{INode, Timespec};
+
+use crate::{
+    error::{Errno, KResult},
+    fs::InodeOpType,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub mod ptr;
 
@@ -48,4 +55,30 @@ pub fn split_path(path: &str) -> KResult<(&str, &str)> {
     }
 
     Ok((dir_path, file_name))
+}
+
+/// Updates the time of the inode.
+pub fn update_inode_time(inode: &Arc<dyn INode>, ty: InodeOpType) {
+    if let Ok(mut metadata) = inode.metadata() {
+        if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            if ty.contains(InodeOpType::ACCESS) {
+                metadata.atime = Timespec {
+                    sec: now.as_secs() as _,
+                    nsec: now.as_nanos() as _,
+                };
+            }
+            if ty.contains(InodeOpType::MODIFY) {
+                metadata.mtime = Timespec {
+                    sec: now.as_secs() as _,
+                    nsec: now.as_nanos() as _,
+                };
+            }
+            if ty.contains(InodeOpType::CREATE) {
+                metadata.ctime = Timespec {
+                    sec: now.as_secs() as _,
+                    nsec: now.as_nanos() as _,
+                };
+            }
+        }
+    }
 }

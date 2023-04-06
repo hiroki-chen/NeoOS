@@ -53,7 +53,7 @@ pub extern "C" fn __trap_dispatcher(tf: &mut TrapFrame) {
                 handle_ipi(ipi as _);
             } else {
                 panic!(
-                    "__trap_dispatcher(): unrecognized type {:#x?}!",
+                    "__trap_dispatcher(): unrecognized type {:#x?}. Dumped context is {tf:#x?}",
                     tf.trap_num
                 )
             }
@@ -96,7 +96,10 @@ pub async fn trap_dispatcher_user(
             true
         }
         GENERAL_PROTECTION_INTERRUPT => {
-            kerror!("spawn(): illegal instruction.");
+            kerror!(
+                "spawn(): illegal instruction. Dumped context is {:#x?}",
+                ctx.get_user_context()
+            );
             true
         }
         PAGE_FAULT_INTERRUPT => {
@@ -189,13 +192,19 @@ fn handle_irq(trapno: u8, user: bool, should_yield: Option<&mut bool>) -> bool {
 fn handle_ipi(ipi: u8) -> bool {
     eoi(ipi - IRQ_MIN as u8);
 
-    match unsafe { core::mem::transmute::<u8, IpiType>(ipi as _) } {
-        IpiType::TlbFlush => flush_all(),
-        // Does nothing.
-        IpiType::WakeUp => FIFO_SCHEDULER.load_balance(),
-        // Do something with the runqueue.
-        IpiType::Sched => FIFO_SCHEDULER.migrate_task(),
-        IpiType::Others => AbstractCpu::current().unwrap().pop_event(),
+    match IpiType::try_from(ipi) {
+        Ok(ipi) => match ipi {
+            IpiType::TlbFlush => flush_all(),
+            // Does nothing.
+            IpiType::WakeUp => FIFO_SCHEDULER.load_balance(),
+            // Do something with the runqueue.
+            IpiType::Sched => FIFO_SCHEDULER.migrate_task(),
+            IpiType::Others => AbstractCpu::current().unwrap().pop_event(),
+        },
+        Err(_) => {
+            kerror!("unrecognized ipi type!");
+            return false;
+        }
     }
 
     true
