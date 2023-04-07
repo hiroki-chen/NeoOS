@@ -58,10 +58,9 @@ target remote :1234
   * No thread running.
   * Memory corrupted (e.g., B-Tree panics when visiting nodes). Perhaps due to lock problems.
 * Implement more device drivers.
-* Implement more system calls.
 * Reduce memory consumption.
 * Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
-* Add a proc macro for parsing enums.
+* Fix memory permission check for syscalls.
 
 ## Advanced Programmable Interrupt Controller (APIC)
 

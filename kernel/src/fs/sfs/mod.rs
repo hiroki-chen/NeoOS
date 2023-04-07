@@ -936,6 +936,21 @@ impl vfs::INode for INodeImpl {
         ))
     }
 
+    fn list(&self) -> vfs::Result<Vec<(usize, String)>> {
+        let info = self.metadata()?;
+        if info.type_ != rcore_fs::vfs::FileType::Dir {
+            return Err(FsError::NotDir);
+        }
+        Ok((0..)
+            .map(|i| {
+                self.get_entry_with_metadata(i)
+                    .map(|(metadata, name)| (metadata.inode, name))
+            })
+            .take_while(|result| result.is_ok())
+            .filter_map(|result| result.ok())
+            .collect())
+    }
+
     fn io_control(&self, _cmd: u32, _data: usize) -> vfs::Result<usize> {
         if self.metadata().unwrap().type_ != vfs::FileType::CharDevice {
             return Err(FsError::IOCTLError);

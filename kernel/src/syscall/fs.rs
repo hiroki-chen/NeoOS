@@ -12,7 +12,7 @@ use bitflags::bitflags;
 use rcore_fs::vfs::FsError;
 
 use crate::{
-    arch::{interrupt::SYSCALL_REGS_NUM, io::IoVec},
+    arch::{interrupt::SYSCALL_REGS_NUM, io::IoVec, QWORD_LEN},
     dummy_impl,
     error::{fserror_to_kerror, Errno, KResult},
     fs::{
@@ -22,7 +22,8 @@ use crate::{
     },
     process::thread::{Thread, ThreadContext},
     sys::{
-        EpollEvent, EpollFlags, EpollOp, Stat, AT_SYMLINK_NOFOLLOW, SEEK_CUR, SEEK_END, SEEK_SET,
+        Dirent, DirentType, EpollEvent, EpollFlags, EpollOp, Stat, AT_SYMLINK_NOFOLLOW, SEEK_CUR,
+        SEEK_END, SEEK_SET,
     },
     utils::{ptr::Ptr, split_path, update_inode_time},
 };
@@ -248,12 +249,13 @@ pub async fn sys_read(
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
     let file_fd = syscall_registers[0];
-    let buf = unsafe { Ptr::new_with_const(syscall_registers[1] as *const u8) };
+    let buf = syscall_registers[1];
     let len = syscall_registers[2] as usize;
 
     let mut proc = thread.parent.lock();
     // Currently assume this is valid.
-    let slice = proc.vm.lock().check_write_array(&buf, len)?;
+    // let slice = proc.vm.lock().check_write_array(&buf, len)?;
+    let slice = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
     let file = proc.get_fd(file_fd)?;
     let len = file.read(slice).await?;
 
@@ -272,9 +274,9 @@ pub fn sys_write(
     let mut proc = thread.parent.lock();
     let slice = proc.vm.lock().check_read_array(&buf, len)?;
     let file = proc.get_fd(file_fd)?;
-    let len = file.write(slice);
+    let len = file.write(slice)?;
 
-    Ok(0)
+    Ok(len)
 }
 
 /// The readv() system call reads iovcnt buffers from the file associated with the file descriptor fd into the buffers
@@ -375,6 +377,25 @@ pub fn sys_getcwd(
     }
 
     Ok(0)
+}
+
+pub fn sys_lstat(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let pathname = syscall_registers[0];
+    let statbuf = syscall_registers[1];
+
+    let filename = Ptr::new(pathname as *mut u8).read_c_string()?;
+
+    do_stat(
+        thread,
+        AT_FDCWD as _,
+        filename,
+        statbuf as _,
+        AT_SYMLINK_NOFOLLOW,
+    )
 }
 
 /// These functions return information about a file, in the buffer pointed to by `statbuf`. No permissions are required
@@ -654,21 +675,70 @@ pub fn sys_epoll_pwait(
     }
 }
 
-/// The system call getdents() reads several linux_dirent structures from the directory referred to by the open file descriptor fd into the buffer pointed to by dirp. The argument count specifies the size of that buffer.
+/// The system call getdents() reads several linux_dirent structures from the directory referred to by the open file
+/// descriptor fd into the buffer pointed to by dirp. The argument count specifies the size of that buffer.
+/// FIXME: Bug.
 pub fn sys_getdents64(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
     let fd = syscall_registers[0];
-    let dirp = syscall_registers[1];
+    let mut dirp = syscall_registers[1];
     let count = syscall_registers[2];
 
     let mut proc = thread.parent.lock();
     if let Ok(FileObject::File(file)) = proc.get_fd(fd) {
-        // todo.
+        let mut written_size = 0;
+        let hdr_len = core::mem::size_of::<Dirent>();
 
-        Ok(0)
+        // Iterate over the directory entries.
+        loop {
+            let (inode, dirent) = match file.entry_with_offset() {
+                Ok(dirent) => dirent,
+                Err(Errno::ENOENT) => break,
+                Err(errno) => return Err(errno),
+            };
+
+            let metadata = file
+                .inode
+                .get_entry_with_metadata(inode)
+                .map_err(fserror_to_kerror)?
+                .0;
+
+            // Determine the size of this directory entry.
+            // d_ino + d_off + d_reclen + ty + char[name] (with '\0').
+            let mut size = hdr_len + dirent.len() + 1;
+            // Need to align to 8 bytes.
+            if size % QWORD_LEN != 0 {
+                size += QWORD_LEN - size % QWORD_LEN;
+            }
+
+            if size > count as usize {
+                // Buffer is too small.
+                return Err(Errno::EINVAL);
+            }
+
+            unsafe {
+                (dirp as *mut Dirent).write(Dirent {
+                    d_ino: inode as _,
+                    d_off: 0,
+                    d_reclen: size as _,
+                    d_type: DirentType::from_type(&metadata.type_).bits(),
+                });
+
+                // Copy directory name.
+                (dirp as *mut u8)
+                    .add(hdr_len)
+                    .copy_from(dirent.as_ptr(), dirent.len());
+                (dirp as *mut u8).add(hdr_len + dirent.len()).write(0);
+            }
+
+            dirp += size as u64;
+            written_size += size;
+        }
+
+        Ok(written_size)
     } else {
         Err(Errno::EBADF)
     }
@@ -850,7 +920,7 @@ fn do_dup(thread: &Arc<Thread>, oldfd: u64, newfd: u64, flags: Option<u64>) -> K
     }
 
     let file_clone = proc.get_fd_ref(oldfd)?.dup(flags.unwrap_or_default())?;
-    proc.add_file(file_clone)?;
+    proc.opened_files.insert(newfd, file_clone);
 
     Ok(newfd as _)
 }

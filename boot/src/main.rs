@@ -131,7 +131,8 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
     // gdb command `x [addr]`.
     let mut header = Header {
         version: KERN_VERSION,
-        cmdline: config.cmdline,
+        cmdline: config.cmdline.as_ptr(),
+        cmdline_len: config.cmdline.len() as _,
         enable_graph: true,
         graph_info,
         acpi2_rsdp_addr: acpi_address as u64,
@@ -140,6 +141,8 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         mmap: mmap_ptr as u64,
         mmap_len: mmap_len as u64,
         kernel_entry,
+        first_proc: config.first_proc.as_ptr(),
+        first_proc_len: config.first_proc.len() as _,
     };
     page_table::map_gdt(&kernel, &mut allocator, &mut pt);
 

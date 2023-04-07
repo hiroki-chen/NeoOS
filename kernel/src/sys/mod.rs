@@ -217,6 +217,43 @@ pub struct EpollEvent {
 }
 
 bitflags! {
+    /// Also see APFS's manual.
+    pub struct DirentType: u8 {
+        const DT_UNKNOWN  = 0;
+        /// FIFO (named pipe)
+        const DT_FIFO = 1;
+        /// Character device
+        const DT_CHR  = 2;
+        /// Directory
+        const DT_DIR  = 4;
+        /// Block device
+        const DT_BLK = 6;
+        /// Regular file
+        const DT_REG = 8;
+        /// Symbolic link
+        const DT_LNK = 10;
+        /// UNIX domain socket
+        const DT_SOCK  = 12;
+        /// Unknown
+        const DT_WHT = 14;
+    }
+}
+
+impl DirentType {
+    pub fn from_type(ty: &FileType) -> Self {
+        match ty {
+            FileType::File => Self::DT_REG,
+            FileType::Dir => Self::DT_DIR,
+            FileType::SymLink => Self::DT_LNK,
+            FileType::CharDevice => Self::DT_CHR,
+            FileType::BlockDevice => Self::DT_BLK,
+            FileType::Socket => Self::DT_SOCK,
+            FileType::NamedPipe => Self::DT_FIFO,
+        }
+    }
+}
+
+bitflags! {
     #[derive(Default)]
     #[repr(C)]
     pub struct EpollFlags: u32 {
@@ -465,8 +502,8 @@ impl From<Metadata> for Stat {
     }
 }
 
-#[derive(Debug, Clone)]
-#[repr(C)]
+#[derive(Debug)]
+#[repr(C, packed)]
 pub struct Dirent {
     /// Inode number
     pub d_ino: u64,
@@ -474,8 +511,8 @@ pub struct Dirent {
     pub d_off: u64,
     /// Length of this linux_dirent
     pub d_reclen: u16,
-    /// Filename (null-terminated)
-    pub d_name: [u8; 128],
+    /// The type.
+    pub d_type: u8,
 }
 
 #[derive(Clone, Debug)]

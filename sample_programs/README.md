@@ -4,5 +4,7 @@
 
 * `sample_c`: A simple program written in C and can be compiled using musl libc statically.
 * `sample_tcp`: A pair of TCP server and client written in C.
-* `rust`: A collection of Rust programs.
-* `rustlib`: The `std` library targeted for NeoOS kernel. This library rewrites some functionalities of the Rust standard library.
+* `rust`: A collection of Rust programs and its tiny std runtime backed by the NeoOS kernel.
+  * `rustlib`: the standard library `std` for NeoOS. We are moving the build toolchain to `xargo`.
+* `nginx`: The Web server nginx.
+* `syscall_tests`: A collection of test suites for syscall interface testing.

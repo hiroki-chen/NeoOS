@@ -8,6 +8,7 @@ use alloc::{
     boxed::Box,
     string::{String, ToString},
     sync::Arc,
+    vec::Vec,
 };
 use bitflags::bitflags;
 use rcore_fs::vfs::{INode, Metadata, PollStatus, Result};
@@ -98,6 +99,8 @@ pub struct File {
     pub file_option: Arc<RwLock<FileOption>>,
     /// The file type.
     pub ty: FileType,
+    /// A pre-loaded array of entries if this File is a directory.
+    pub entries: Option<Vec<(usize, String)>>,
 }
 
 impl File {
@@ -109,6 +112,14 @@ impl File {
         ty: FileType,
     ) -> Self {
         Self {
+            entries: if inode.metadata().unwrap().type_ == rcore_fs::vfs::FileType::Dir {
+                match inode.list() {
+                    Ok(entries) => Some(entries),
+                    Err(_) => None,
+                }
+            } else {
+                None
+            },
             inode,
             path: path.to_string(),
             fd_cloexec,
@@ -128,6 +139,7 @@ impl File {
             fd_cloexec,
             file_option: self.file_option.clone(),
             ty: self.ty.clone(),
+            entries: self.entries.clone(),
         }
     }
 
@@ -158,7 +170,6 @@ impl File {
         if !file_option.open_option.contains(FileOpenOption::READ) {
             return Err(Errno::EBADF);
         }
-
         let file_offset = file_option.offset as usize + offset;
         // Get the timestamp.
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?;
@@ -315,19 +326,24 @@ impl File {
         Ok(self.inode.async_poll().await.unwrap())
     }
 
-    pub fn entry(&mut self) -> KResult<String> {
+    pub fn entry_with_offset(&mut self) -> KResult<(usize, String)> {
         let mut file_option = self.file_option.write();
         if !file_option.open_option.contains(FileOpenOption::READ) {
             return Err(Errno::EBADF);
         }
 
+        // Must be directory!
         let offset = &mut file_option.offset;
-        let name = self
-            .inode
-            .get_entry(*offset as usize)
-            .map_err(fserror_to_kerror)?;
-        *offset += 1;
-        Ok(name)
+        match self.entries {
+            None => Err(Errno::ENOENT),
+            Some(ref v) => match v.get(*offset as usize) {
+                Some(entry) => {
+                    *offset += 1;
+                    Ok(entry.clone())
+                }
+                None => Err(Errno::ENOENT),
+            },
+        }
     }
 
     pub fn io_control(&self, cmd: u64, arg: u64) -> KResult<usize> {
@@ -396,8 +412,7 @@ impl FileObject {
         match self {
             FileObject::File(file) => file.read_buf(buf).await,
             FileObject::Socket(socket) => socket.read(buf).map(|(len, _)| len),
-
-            _ => unimplemented!(),
+            FileObject::Epoll(_) => Err(Errno::EBADF),
         }
     }
 
@@ -410,6 +425,7 @@ impl FileObject {
                 fd_cloexec: o_cloexec != 0,
                 file_option: file.file_option.clone(),
                 ty: file.ty.clone(),
+                entries: file.entries.clone(),
             })),
             // Do not duplicate other file descriptors.
             _ => Err(Errno::EBADF),

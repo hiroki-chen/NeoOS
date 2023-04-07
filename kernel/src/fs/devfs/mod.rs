@@ -124,6 +124,10 @@ impl INode for DeviceINode {
         Err(FsError::IsDir)
     }
 
+    fn list(&self) -> rcore_fs::vfs::Result<Vec<(usize, String)>> {
+        unimplemented!()
+    }
+
     fn write_at(&self, offset: usize, buf: &[u8]) -> rcore_fs::vfs::Result<usize> {
         Err(FsError::IsDir)
     }

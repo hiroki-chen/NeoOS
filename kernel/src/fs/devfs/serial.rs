@@ -80,4 +80,9 @@ impl INode for SerialINode {
             rdev: make_rdev(4, self.id as _),
         })
     }
+
+
+    fn set_metadata(&self, _metadata: &Metadata) -> rcore_fs::vfs::Result<()> {
+        Ok(())
+    }
 }

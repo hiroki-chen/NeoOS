@@ -76,4 +76,8 @@ impl INode for Random {
             rdev: make_rdev(1, 9),
         })
     }
+
+    fn set_metadata(&self, _metadata: &Metadata) -> Result<()> {
+        Ok(())
+    }
 }

@@ -19,7 +19,7 @@ use crate::{
     },
     kmain,
     logging::init_env_logger,
-    memory::init_heap,
+    memory::{init_heap, phys_to_virt},
     process::scheduler::FIFO_SCHEDULER,
     LOG_LEVEL,
 };
@@ -30,7 +30,8 @@ use super::cpu::ApHeader;
 pub static AP_CAN_INIT: AtomicBool = AtomicBool::new(false);
 /// The entry point of kernel
 #[no_mangle]
-pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
+pub unsafe extern "C" fn _start(header: *const Header) -> ! {
+    let header = unsafe { &*(header) };
     // Initialize the heap.
     let heap = init_heap();
 
@@ -104,8 +105,15 @@ pub unsafe extern "C" fn _start(header: &'static Header) -> ! {
     }
     kinfo!("initialized APIC timer");
 
+    let first_proc = unsafe {
+        core::slice::from_raw_parts(
+            phys_to_virt(header.first_proc as u64) as *const u8,
+            header.first_proc_len as usize,
+        )
+    };
+    let first_proc = core::str::from_utf8(first_proc).unwrap_or_default();
     FIFO_SCHEDULER.init();
-    crate::process::thread::debug_threading();
+    crate::process::thread::debug_threading(first_proc);
 
     // Step into the kernel main function.
     AP_CAN_INIT.store(true, Ordering::Relaxed);

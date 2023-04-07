@@ -535,7 +535,6 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 
             thread.restore(ctx);
             if exited {
-                kinfo!("spawn(): thread {:#x} ended.", thread.id);
                 break;
             }
             if should_yield {
@@ -556,11 +555,10 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 }
 
 /// Spawn a debug thread with in-memory instructions.
-pub fn debug_threading() {
-    // FIXME: ELF loader may have some problems.
-    let debug_inode = ROOT_INODE.lookup("/bin/nginx").unwrap();
-
-    let args = vec!["nginx".into()];
+pub fn debug_threading(first_proc: &str) {
+    kinfo!("this is : {first_proc}");
+    let debug_inode = ROOT_INODE.lookup(first_proc).unwrap();
+    let args = vec![first_proc.into()];
     let envp = vec!["PATH=/bin".into()];
     let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
 

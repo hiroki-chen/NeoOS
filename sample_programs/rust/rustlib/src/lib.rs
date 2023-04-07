@@ -19,6 +19,7 @@ use sys::sys_exit;
 pub mod io;
 
 pub mod sys;
+pub mod fs;
 
 #[lang = "eh_personality"]
 fn eh_personality() {}

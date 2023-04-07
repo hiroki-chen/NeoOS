@@ -24,7 +24,9 @@ pub struct Header {
     /// The version of the boot protocol.
     pub version: u8,
     /// The boot flags.
-    pub cmdline: &'static str,
+    pub cmdline: *const u8,
+    /// The length of the cmdline string.
+    pub cmdline_len: u64,
     /// The graphic mode. Must be false because we do not support it but we may add it in the future(?)
     pub enable_graph: bool,
     /// The address of the Root System Description Pointer used in the ACPI programming interface.
@@ -41,6 +43,10 @@ pub struct Header {
     pub mmap_len: u64,
     /// The kernel entry.
     pub kernel_entry: u64,
+    /// The first process.
+    pub first_proc: *const u8,
+    /// The length of the `first_proc` string.
+    pub first_proc_len: u64,
 }
 
 /// Graphic informations for printing to the console.

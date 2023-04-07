@@ -214,13 +214,6 @@ pub fn sys_shutdown(
 
     let mut proc = thread.parent.lock();
     if let Ok(FileObject::Socket(socket)) = proc.get_fd(sockfd) {
-        {
-            use ringbuf::Rb;
-            let lock = crate::logging::RING_BUFFER.read();
-            let data = lock.as_slices().1;
-            kinfo!("{}", core::str::from_utf8(data).unwrap());
-        }
-
         socket
             .shutdown(Shutdown::try_from(how).map_err(|_| Errno::EINVAL)?)
             .map(|_| 0)

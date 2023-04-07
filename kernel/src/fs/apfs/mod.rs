@@ -18,6 +18,10 @@ use alloc::{
     vec::Vec,
 };
 use core::{ffi::CStr, fmt::Debug, mem::MaybeUninit};
+use rcore_fs::{
+    dirty::Dirty as MaybeDirty,
+    vfs::{FileSystem, FileType, FsError, FsInfo, INode, Metadata, PollStatus},
+};
 use spin::RwLock;
 
 use crate::{
@@ -36,11 +40,6 @@ use self::meta::{
     ObjectMapPhysical, ObjectPhysical, ObjectTypes, Oid, Omap, APFS_TYPE_DIR_REC,
     APFS_TYPE_FILE_EXTENT, APFS_TYPE_INODE, DEFAULT_XF_LEN, J_DREC_LEN_MASK, OBJ_TYPE_SHIFT,
     ROOT_DIR_RECORD_ID,
-};
-
-use rcore_fs::{
-    dirty::Dirty as MaybeDirty,
-    vfs::{FileSystem, FileType, FsError, FsInfo, INode, Metadata, PollStatus},
 };
 
 pub mod meta;
@@ -641,6 +640,7 @@ impl AppleFileSystemInode {
         lock.dir_record_map
             .insert(parent_jdrec_hashed_key, parent_jdrec_val);
     }
+
     /// Gets all the directory records under this directory, but they do not contain `.` and `..`.
     fn get_all(&self) -> KResult<Vec<(JDrecHashedKey, JDrecVal)>> {
         if !DrecFlags::from_bits_truncate(self.dir_record.read().flags).contains(DrecFlags::DT_DIR)
@@ -672,14 +672,16 @@ impl AppleFileSystemInode {
             },
         };
 
-        Ok(self
+        let res = self
             .volumn
             .fs_map
             .read()
             .dir_record_map
             .range(all_keys_begin..all_keys_end)
             .map(|(k, v)| (k.clone(), v.clone()))
-            .collect())
+            .collect::<Vec<_>>();
+
+        Ok(res)
     }
 
     /// Appends a directory record to the inode. This function is called *after* the corresponding INode is created
@@ -888,7 +890,7 @@ impl INode for AppleFileSystemInode {
     }
 
     fn get_entry(&self, id: usize) -> rcore_fs::vfs::Result<String> {
-        let values = self.get_all().map_err(|_| FsError::IsDir)?;
+        let values = self.get_all().map_err(|_| FsError::NotDir)?;
         let name = values
             .into_iter()
             .find(|(k, v)| v.file_id == id as u64)
@@ -905,17 +907,18 @@ impl INode for AppleFileSystemInode {
         Ok(name)
     }
 
-    fn list(&self) -> rcore_fs::vfs::Result<Vec<String>> {
+    fn list(&self) -> rcore_fs::vfs::Result<Vec<(usize, String)>> {
         Ok(self
             .get_all()
-            .map_err(|_| FsError::IsDir)?
+            .map_err(|_| FsError::NotDir)?
             .iter()
             .map(|(k, v)| {
-                CStr::from_bytes_until_nul(&k.name)
+                let name = CStr::from_bytes_until_nul(&k.name)
                     .unwrap_or_default()
                     .to_str()
                     .unwrap_or_default()
-                    .to_string()
+                    .to_string();
+                (v.file_id as usize, name)
             })
             .collect())
     }
