@@ -19,7 +19,7 @@ use crate::{
         Arena, ArenaFlags, ArenaType, MemoryManager,
     },
     page,
-    process::ld::{AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM},
+    process::ld::{AT_ENTRY, AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM},
     virt,
 };
 
@@ -81,9 +81,51 @@ impl ElfFile {
         })
     }
 
+    /// Loads the interpreter into the memory at a given memory address. This function must be called after the main
+    /// program is loaded into the memory as the interpreter is simply appended to the end of the main program.
+    pub fn load_as_interpreter(
+        &self,
+        vm: &mut MemoryManager<KernelPageTable>,
+        mem_offset: u64,
+        interpret_name: &str,
+    ) -> KResult<()> {
+        kinfo!("mapping the interpret into memory @ {mem_offset:#x}");
+
+        for ph in self.program_headers.iter() {
+            if ph.p_type == 0x1 {
+                kinfo!("loading program header {ph:x?}");
+
+                vm.add(Arena {
+                    range: mem_offset + ph.p_vaddr..mem_offset + ph.p_memsz + ph.p_vaddr,
+                    flags: ArenaFlags {
+                        writable: ph.is_write(),
+                        user_accessible: true,
+                        non_executable: !ph.is_executable(),
+                        mmio: 0,
+                    },
+                    callback: Box::new(FileArenaCallback {
+                        file: INodeWrapper(self.inode.clone()),
+                        mem_start: mem_offset + ph.p_vaddr,
+                        file_start: ph.p_paddr,
+                        file_end: ph.p_paddr + ph.p_filesz,
+                        frame_allocator: KernelFrameAllocator,
+                    }),
+                    ty: ArenaType::Elf,
+                    name: interpret_name.into(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// Loads a memory from a disk INode and then maps it into the virtual memory. Returns the largest memory we can use.
-    pub fn load_elf_and_map(&self, vm: &mut MemoryManager<KernelPageTable>) -> KResult<u64> {
-        kinfo!(" mapping the ELF file into memory.");
+    pub fn load_elf_and_map(
+        &self,
+        vm: &mut MemoryManager<KernelPageTable>,
+        name: &str,
+    ) -> KResult<u64> {
+        kinfo!("mapping the ELF file into memory.");
 
         let mut max_mem = 0;
         for ph in self.program_headers.iter() {
@@ -95,9 +137,9 @@ impl ElfFile {
                 vm.add(Arena {
                     range: ph.p_vaddr..ph.p_vaddr + ph.p_memsz,
                     flags: ArenaFlags {
-                        writable: 0x2 & ph.p_flags != 0,
+                        writable: ph.is_write(),
                         user_accessible: true,
-                        non_executable: 0x1 & ph.p_flags == 0,
+                        non_executable: !ph.is_executable(),
                         mmio: 0,
                     },
                     callback: Box::new(FileArenaCallback {
@@ -108,6 +150,7 @@ impl ElfFile {
                         frame_allocator: KernelFrameAllocator,
                     }),
                     ty: ArenaType::Elf,
+                    name: name.into(),
                 })
             }
 
@@ -118,16 +161,26 @@ impl ElfFile {
         Ok(page!(max_mem + PAGE_SIZE as u64).start_address().as_u64())
     }
 
+    /// Gives an estimate of the memory size this ELF file will occupy.
+    pub fn memsize(&self) -> u64 {
+        let mut mem = 0;
+        self.program_headers
+            .iter()
+            .filter(|ph| ph.p_type == 0x1)
+            .for_each(|ph| {
+                mem = mem.max(ph.p_vaddr + ph.p_memsz);
+            });
+
+        page!(mem + PAGE_SIZE as u64 - 1).start_address().as_u64()
+    }
+
     pub fn get_interpreter(&self) -> KResult<&str> {
         // No interpret => executable.
         let interpret_header = self
             .program_headers
             .iter()
             .find(|header| header.p_type == 0x3)
-            .ok_or({
-                kerror!("This ELF file does not contain interpreter. This file does no depend on shared objects.");
-                Errno::EINVAL
-            })?;
+            .ok_or(Errno::EINVAL)?;
 
         // Read the name: ld.so / ld-musl.so
         let offset = interpret_header.p_offset;
@@ -164,6 +217,7 @@ impl ElfFile {
             }
         }
 
+        auxv.insert(AT_ENTRY, self.entry_point() as usize);
         auxv.insert(AT_PHENT, self.header.e_phentsize as usize);
         auxv.insert(AT_PHNUM, self.header.e_phnum as usize);
         auxv.insert(AT_PAGESZ, PAGE_SIZE);

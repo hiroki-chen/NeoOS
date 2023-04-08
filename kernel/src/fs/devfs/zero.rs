@@ -2,9 +2,9 @@
 
 use core::sync::atomic::Ordering;
 
-use rcore_fs::vfs::{make_rdev, INode, Metadata, Timespec, FileType};
+use rcore_fs::vfs::{make_rdev, FileType, INode, Metadata, Timespec};
 
-use super::INODE_COUNT;
+use crate::fs::INODE_COUNT;
 
 pub struct ZeroINode {
     pub id: u64,

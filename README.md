@@ -61,6 +61,7 @@ target remote :1234
 * Reduce memory consumption.
 * Refactor the user-space thread management (perhaps using bumpalo-like memory management); the current implementation is mimicked after rCore's implementation.
 * Fix memory permission check for syscalls.
+* Fix segfault for dylib loading.
 
 ## Advanced Programmable Interrupt Controller (APIC)
 

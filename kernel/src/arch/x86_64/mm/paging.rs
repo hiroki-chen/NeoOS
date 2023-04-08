@@ -2,7 +2,7 @@
 
 use core::{fmt::Debug, mem::ManuallyDrop};
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, format};
 use boot_header::{Header, MemoryDescriptor, MemoryType};
 use x86_64::{
     instructions::tlb::flush,
@@ -437,7 +437,7 @@ impl PageTableBehaviors for KernelPageTable {
                     flags,
                     &mut PTFrameAllocator,
                 )
-                .unwrap()
+                .expect(&format!("cannot map from {addr:#x} to {target:#x}"))
                 .flush();
         }
 

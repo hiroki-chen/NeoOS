@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 
 use rcore_fs::vfs::{INode, Metadata};
 
-use super::INODE_COUNT;
+use crate::fs::INODE_COUNT;
 
 pub struct NullINode {
     /// The inode id.
@@ -40,7 +40,6 @@ impl INode for NullINode {
     fn as_any_ref(&self) -> &dyn core::any::Any {
         self
     }
-
 
     fn set_metadata(&self, _metadata: &Metadata) -> rcore_fs::vfs::Result<()> {
         Ok(())

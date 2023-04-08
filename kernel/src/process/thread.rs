@@ -36,11 +36,14 @@ use crate::{
         file::{File, FileObject, FileOpenOption, FileType},
         ROOT_INODE,
     },
-    memory::{page_mask, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START},
+    memory::{
+        page_frame_number, page_mask, KernelFrameAllocator, USER_STACK_SIZE, USER_STACK_START,
+    },
     mm::{
         callback::SystemArenaCallback, Arena, ArenaFlags, ArenaType, FutureWithPageTable,
         MemoryManager,
     },
+    process::ld::{AT_BASE, AT_ENTRY},
     signal::{handle_signal, SigAction, SigSet, SigStack},
     sync::mutex::SpinLockNoInterrupt as Mutex,
 };
@@ -167,6 +170,7 @@ impl Thread {
             flags: flags.clone(),
             callback: Box::new(SystemArenaCallback::new(KernelFrameAllocator)),
             ty: ArenaType::Stack,
+            name: "[stack]".into(),
         });
         // This stack is allocated for storing the auxiliary information such as argv, envp, etc.
         vm.add(Arena {
@@ -174,6 +178,7 @@ impl Thread {
             flags,
             callback: Box::new(SystemArenaCallback::new(KernelFrameAllocator)),
             ty: ArenaType::Stack,
+            name: "[stack]".into(),
         });
 
         unsafe {
@@ -285,6 +290,8 @@ impl Thread {
     /// |  user stack  |
     /// |              |
     /// +--------------+
+    /// |  ld-musl.so  |
+    /// +--------------+
     /// |    dylib     |
     /// +--------------+
     /// |  user  heap  |
@@ -312,13 +319,34 @@ impl Thread {
     ) -> KResult<Arc<Thread>> {
         let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
         let elf = ElfFile::load(inode)?;
-        elf.load_elf_and_map(&mut vm)?;
+        let mem_offset = elf.load_elf_and_map(&mut vm, path)?;
+
+        let mut elf_entry = elf.entry_point();
+        let mut auxv = elf.get_auxv()?;
 
         let addr_end = (page_mask(vm.iter().last().unwrap().range.end) + 1) * 0x1000;
         vm.set_heap_end(addr_end);
         vm.set_reserved();
 
-        let auxv = elf.get_auxv()?;
+        if let Ok(elf_interpreter) = elf.get_interpreter() {
+            kinfo!("loading the ELF interpreter {elf_interpreter}");
+
+            let ld = ROOT_INODE
+                .lookup_follow(elf_interpreter, 5)
+                .map_err(|_| Errno::ENOENT)?;
+            // The program's memory should be determined by the loader.
+            let ld_elf = ElfFile::load(&ld)?;
+            let ld_elf_size = page_frame_number(ld_elf.memsize() + PAGE_SIZE as u64 - 1);
+            let ld_addr = USER_STACK_START as u64 - ld_elf_size;
+            ld_elf.load_as_interpreter(&mut vm, ld_addr, elf_interpreter)?;
+
+            kinfo!("original entry is {:#x}", elf.entry_point());
+            elf_entry = ld_addr + ld_elf.entry_point();
+            // Insert auxiliary vectors.
+            auxv.insert(AT_ENTRY, elf.entry_point() as _);
+            auxv.insert(AT_BASE, ld_addr as _);
+        }
+
         let stack_top = Self::prepare_user_stack(&mut vm, args, envp, auxv)? as u64;
         let vm = Arc::new(Mutex::new(vm));
 
@@ -336,10 +364,10 @@ impl Thread {
 
         kinfo!(
             "the ELF entry point is 0x{:x}; stack top is 0x{:x}",
-            elf.entry_point(),
+            elf_entry,
             stack_top
         );
-        context.set_rip(elf.entry_point());
+        context.set_rip(elf_entry);
         context.set_rsp(stack_top);
         // IOPL | IF | RSVD
         context.regs.rflags = 0x3202;
@@ -559,7 +587,7 @@ pub fn debug_threading(first_proc: &str) {
     kinfo!("this is : {first_proc}");
     let debug_inode = ROOT_INODE.lookup(first_proc).unwrap();
     let args = vec![first_proc.into()];
-    let envp = vec!["PATH=/bin".into()];
+    let envp = vec!["PATH=/bin".into(), "LD_LIBRARY_PATH=/lib:/usr/lib".into()];
     let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
 
     spawn(thread).unwrap();

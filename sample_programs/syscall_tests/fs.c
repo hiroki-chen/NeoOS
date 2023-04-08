@@ -24,7 +24,7 @@ int test_getdents64(const char *name) {
   // Read all directory entries
   while ((ent = readdir(dir)) != NULL) {
     // Print the name of the file or directory
-    // printf("%s ", ent->d_name);
+    printf("%s ", ent->d_name);
   }
 
   // Close the directory
@@ -60,8 +60,10 @@ int main() {
   int failed_suite = 0;
 
   printf("[-] testing `getdents64` for root directory `/`...");
+  fflush(stdout);
   if (test_getdents64("/") != 0) {
     printf("\tfailed.\n");
+    perror("\t[+] test_gedents64");
     failed_suite += 1;
   } else {
     printf("\tpassed.\n");
@@ -70,18 +72,22 @@ int main() {
 
   printf(
       "[-] testing `getdents64` for root directory `/foo` and should fail...");
+  fflush(stdout);
   if (test_getdents64("/foo") == 0) {
     printf("\tfailed.\n");
     failed_suite += 1;
   } else {
     printf("\tpassed.\n");
-    perror("\t[+] /foo");
+    perror("\t[+] test_gedents64");
     passed_suite += 1;
   }
 
   printf("[-] testing `open` regular file `/bin/fs`...");
-  if (open("/bin/fs", O_RDONLY) < 0) {
+  fflush(stdout);
+  int fs_fd = -1;
+  if ((fs_fd = open("/bin/fs", O_RDONLY)) < 0) {
     printf("\tfailed.\n");
+    perror("[+]\t open");
     failed_suite += 1;
   } else {
     printf("\tpassed.\n");
@@ -89,8 +95,10 @@ int main() {
   }
 
   printf("[-] testing `open` directory `/bin`...");
+  fflush(stdout);
   if (open("/bin", O_RDONLY) < 0) {
     printf("\tfailed.\n");
+    perror("[+]\t open");
     failed_suite += 1;
   } else {
     printf("\tpassed.\n");
@@ -98,9 +106,11 @@ int main() {
   }
 
   printf("[-] testing `open` device file `/dev/random`...");
+  fflush(stdout);
   int random_fd = -1;
   if ((random_fd = open("/dev/random", O_RDONLY)) < 0) {
     printf("\tfailed.\n");
+    perror("[+]\t open");
     failed_suite += 1;
   } else {
     printf("\tpassed.\n");
@@ -108,11 +118,12 @@ int main() {
   }
 
   printf("[-] testing `read` device file `/dev/random`...");
+  fflush(stdout);
   char buf[32] = {0};
   size_t read_num = 0;
   if ((read_num = read(random_fd, buf, sizeof(buf))) != sizeof(buf)) {
     printf("\tfailed: %lu != %lu\n", read_num, sizeof(buf));
-    perror("\t[+] Reason");
+    perror("\t[+] read");
     failed_suite += 1;
   } else {
     printf("\tpassed.\n");
@@ -120,6 +131,7 @@ int main() {
   }
 
   printf("[-] testing `write` to `stdout`...");
+  fflush(stdout);
   char *msg = "Hello World!\n";
   int num = 0;
   if ((num = write(1, msg, strlen(msg))) != strlen(msg)) {
@@ -131,12 +143,46 @@ int main() {
   }
 
   printf("[-] testing `stat` a file `/bin/fs`...");
+  fflush(stdout);
   if (test_stat("/bin/fs") < 0) {
     printf("\tfailed.\n");
-    perror("\t[+] /bin/fs");
+    perror("\t[+] test_stat");
     failed_suite += 1;
   } else {
     printf("\tpassed.\n");
+    passed_suite += 1;
+  }
+
+  printf("[-] testing `getcwd`...");
+  fflush(stdout);
+  if (getcwd(buf, sizeof(buf)) < 0) {
+    printf("\tfailed.\n");
+    perror("\t[+] getcwd");
+    failed_suite += 1;
+  } else {
+    printf("\tpassed: %s\n", buf);
+    passed_suite += 1;
+  }
+
+  printf("[-] testing `dup` the file descriptor of `/bin/fs`...");
+  fflush(stdout);
+  int target_fd = 0x123;
+  if (dup2(fs_fd, target_fd) < 0) {
+    printf("\tfailed.\n");
+    perror("\t[+] dup2");
+    failed_suite += 1;
+  } else {
+    printf("\tpassed: %s\n", buf);
+    passed_suite += 1;
+  }
+
+  printf("[-] testing `read` the duplicated file descriptor of `/bin/fs`...");
+  if (read(target_fd, buf, sizeof(buf)) != sizeof(buf)) {
+    printf("\tfailed.\n");
+    perror("\t[+] read");
+    failed_suite += 1;
+  } else {
+    printf("\tpassed,\n");
     passed_suite += 1;
   }
 

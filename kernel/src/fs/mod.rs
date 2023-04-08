@@ -4,6 +4,8 @@
 //! * <https://developer.apple.com/support/downloads/Apple-File-System-Reference.pdf>
 //! * <https://developer.apple.com/documentation/foundation/file_system/about_apple_file_system>
 
+use core::sync::atomic::AtomicU64;
+
 use alloc::{sync::Arc, vec::Vec};
 use bitflags::bitflags;
 use lazy_static::lazy_static;
@@ -13,12 +15,13 @@ use rcore_fs_mountfs::MountFS;
 use crate::{
     drivers::{block::BlockDriverWrapper, BLOCK_DRIVERS},
     error::KResult,
-    fs::devfs::DEV_FS,
+    fs::{devfs::DEV_FS, proc::PROC_FS},
 };
 
 pub mod devfs;
 pub mod epoll;
 pub mod file;
+pub mod proc;
 
 #[cfg(feature = "apfs")]
 pub mod apfs;
@@ -26,6 +29,8 @@ pub mod apfs;
 pub mod sfs;
 
 pub const AT_FDCWD: isize = -100;
+/// Shared for pseudo filesystems.
+pub static INODE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 bitflags! {
     #[derive(Default)]
@@ -91,6 +96,8 @@ lazy_static! {
         let root = apfs.mountpoint_root_inode();
         let dev = root.find(true, "dev").unwrap();
         dev.mount(DEV_FS.clone()).unwrap();
+        let proc = root.find(true, "proc").unwrap();
+        proc.mount(PROC_FS.clone()).unwrap();
 
         root
     };

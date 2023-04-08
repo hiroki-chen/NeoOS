@@ -401,7 +401,8 @@ where
         addr: u64,
         access_type: AccessType,
     ) -> bool {
-        panic!("trying to use dummy callback @ {addr:#x}");
+        kerror!("trying to use dummy callback @ {addr:#x}");
+        false
     }
 
     fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {

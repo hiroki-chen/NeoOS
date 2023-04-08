@@ -5,9 +5,10 @@ use core::sync::atomic::Ordering;
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 use rcore_fs::vfs::{make_rdev, FileType, INode, Metadata, PollStatus, Timespec};
 
-use crate::drivers::{serial::SerialDriver, SERIAL_DRIVERS};
-
-use super::INODE_COUNT;
+use crate::{
+    drivers::{serial::SerialDriver, SERIAL_DRIVERS},
+    fs::INODE_COUNT,
+};
 
 pub struct SerialINode {
     id: u64,
@@ -80,7 +81,6 @@ impl INode for SerialINode {
             rdev: make_rdev(4, self.id as _),
         })
     }
-
 
     fn set_metadata(&self, _metadata: &Metadata) -> rcore_fs::vfs::Result<()> {
         Ok(())

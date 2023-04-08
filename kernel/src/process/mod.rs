@@ -3,7 +3,7 @@ use core::{future::Future, task::Poll};
 use crate::{
     arch::mm::paging::KernelPageTable,
     error::{fserror_to_kerror, Errno, KResult},
-    fs::{file::FileObject, AT_FDCWD, MAXIMUM_FOLLOW, ROOT_INODE},
+    fs::{file::FileObject, proc::PROC_FS, AT_FDCWD, MAXIMUM_FOLLOW, ROOT_INODE},
     mm::MemoryManager,
     net::Shutdown,
     process::event::Event,
@@ -197,6 +197,8 @@ pub fn register(process: &Arc<Mutex<Process>>, id: u64) {
     let mut table = KERNEL_PROCESS_LIST.write();
     process.lock().process_id = id;
     table.insert(id, process.clone());
+    // Create /proc.
+    PROC_FS.add_new(id);
 }
 
 pub fn search_by_id(id: u64) -> KResult<Arc<Mutex<Process>>> {

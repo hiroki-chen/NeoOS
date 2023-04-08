@@ -465,6 +465,7 @@ async fn do_handle_syscall(
         SYS_MMAP => sys_mmap(thread, ctx, syscall_registers),
         SYS_MUNMAP => sys_munmap(thread, ctx, syscall_registers),
         SYS_BRK => sys_brk(thread, ctx, syscall_registers),
+        SYS_MADVISE => sys_madvice(thread, ctx, syscall_registers),
 
         SYS_KILL => sys_kill(thread, ctx, syscall_registers),
         SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(thread, ctx, syscall_registers),

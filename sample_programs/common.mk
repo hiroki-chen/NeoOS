@@ -18,4 +18,6 @@ LINK		?= -L$(MUSL_LIB_PATH) \
 
 # On MacOS, clang will override this to `cc`, so we use `:=`.
 CC 		:= musl-gcc
-C_FLAGS 	?= -static -nostdinc -nostdlib -m64
+C_COMMON_FLAGS	?= -nostdinc -nostdlib -m64
+C_FLAGS 	?= $(C_COMMON_FLAGS) -static
+C_SHARED_FLAGS	?= $(C_COMMON_FLAGS) -shared

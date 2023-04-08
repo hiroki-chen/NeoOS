@@ -3,9 +3,9 @@ use core::{any::Any, sync::atomic::Ordering};
 use alloc::sync::Arc;
 use rcore_fs::vfs::{make_rdev, FileType, INode, Metadata, PollStatus, Result, Timespec};
 
-use crate::{arch::cpu::rdrand, sync::mutex::SpinLockNoInterrupt as Mutex};
+use crate::{arch::cpu::rdrand, sync::mutex::SpinLockNoInterrupt as Mutex, fs::INODE_COUNT};
 
-use super::INODE_COUNT;
+
 
 struct RandomInner {
     seed: u32,

@@ -7,7 +7,13 @@
 
 pub mod callback;
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 use bitflags::bitflags;
 use core::{future::Future, ops::Range, pin::Pin};
 use x86_64::structures::paging::{Page, Size4KiB};
@@ -36,6 +42,30 @@ pub struct ArenaFlags {
     pub user_accessible: bool,
     pub non_executable: bool,
     pub mmio: u8,
+}
+
+impl ToString for ArenaFlags {
+    fn to_string(&self) -> String {
+        let mut ans = String::from("");
+        if self.user_accessible {
+            ans.push('r');
+        } else {
+            ans.push('-');
+        }
+        if self.writable {
+            ans.push('w');
+        } else {
+            ans.push('-');
+        }
+
+        if !self.non_executable {
+            ans.push('x');
+        } else {
+            ans.push('-');
+        }
+
+        ans
+    }
 }
 
 impl From<Prot> for ArenaFlags {
@@ -145,6 +175,8 @@ pub enum ArenaType {
     Stack,
     /// This is loaded from the ELF.
     Elf,
+    /// Dynamic library.
+    Dylib,
     /// This is reserved.
     Reserved,
 }
@@ -160,6 +192,8 @@ pub struct Arena {
     pub callback: Box<dyn ArenaCallback>,
     /// The type of this region.
     pub ty: ArenaType,
+    /// The name.
+    pub name: String,
 }
 
 impl Arena {
@@ -298,6 +332,28 @@ where
         }
     }
 
+    /// Gets the memory layout of this mm struct accessed via `proc/pid/maps`.
+    pub fn get_maps(&self) -> KResult<String> {
+        let mut content = String::new();
+
+        for arena in self
+            .arena
+            .iter()
+            .filter(|&arena| arena.ty != ArenaType::Reserved)
+        {
+            let cur = format!(
+                "{:#016x}-{:#016x} {}{:>32}\n",
+                arena.range.start,
+                arena.range.end,
+                arena.flags.to_string(),
+                arena.name,
+            );
+            content.push_str(&cur);
+        }
+
+        Ok(content)
+    }
+
     /// The address 0x0 - entry_point should be reserved and not touched.
     /// To prevent this region from reading/writing, we insert a dummy arena into that address and change permission
     /// to non-read + non-write + non-execute. Any attempt to access this region would cause error.
@@ -313,6 +369,7 @@ where
             },
             callback: Box::new(DummyArenaCallback::<KernelFrameAllocator>::new()),
             ty: ArenaType::Reserved,
+            name: "".into(),
         };
 
         self.arena.insert(0, reserved);
@@ -400,6 +457,7 @@ where
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
                         ty: cur_arena.ty,
+                        name: cur_arena.name.clone(),
                     };
                     should_remove.unmap(&mut self.page_table)?;
                     let remaining = Arena {
@@ -407,6 +465,7 @@ where
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
                         ty: cur_arena.ty,
+                        name: cur_arena.name.clone(),
                     };
                     self.arena.insert(i, remaining);
                 } else if self.arena[i].range.end <= range.end
@@ -426,6 +485,7 @@ where
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
                         ty: cur_arena.ty,
+                        name: cur_arena.name.clone(),
                     };
                     should_remove.unmap(&mut self.page_table)?;
                     let remaining = Arena {
@@ -433,6 +493,7 @@ where
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
                         ty: cur_arena.ty,
+                        name: cur_arena.name.clone(),
                     };
                     self.arena.insert(i, remaining);
                 } else {
@@ -449,6 +510,7 @@ where
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
                         ty: cur_arena.ty,
+                        name: cur_arena.name.clone(),
                     };
                     should_remove.unmap(&mut self.page_table)?;
                     let remaining_lhs = Arena {
@@ -456,12 +518,14 @@ where
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
                         ty: cur_arena.ty,
+                        name: cur_arena.name.clone(),
                     };
                     let remaining_rhs = Arena {
                         range: range.end..cur_arena.range.end,
                         flags: cur_arena.flags.clone(),
                         callback: cur_arena.callback.clone_as_box(),
                         ty: cur_arena.ty,
+                        name: cur_arena.name.clone(),
                     };
                     self.arena.insert(i, remaining_lhs);
                     self.arena.insert(i + 1, remaining_rhs);
@@ -619,7 +683,7 @@ where
               end_addr);
         }
         if self.check_overlap(&other) {
-            panic!("add(): cannot allocate memory regions that overlap with each other!");
+            panic!("add(): cannot allocate memory regions that overlap with each other! other is {other:#x?}. self.arenas = {:#x?}", self.arena);
         }
 
         self.add_ordered(other);

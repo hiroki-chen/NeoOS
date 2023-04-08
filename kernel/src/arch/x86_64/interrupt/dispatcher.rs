@@ -25,7 +25,10 @@ use crate::{
     syscall::handle_syscall,
 };
 
-use super::{TrapFrame, INVALID_OPCODE_INTERRUPT, STACK_SEGMENT_FAULT_INTERRUPT, SYSCALL};
+use super::{
+    TrapFrame, FLOATING_POINT_INTERRUPT, INVALID_OPCODE_INTERRUPT, STACK_SEGMENT_FAULT_INTERRUPT,
+    SYSCALL,
+};
 
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
 #[no_mangle]
@@ -125,6 +128,13 @@ pub async fn trap_dispatcher_user(
             } else {
                 true
             }
+        }
+        FLOATING_POINT_INTERRUPT => {
+            kerror!(
+                "cannot handle floating point exception. Dumped context is {:#x?}",
+                ctx.get_user_context()
+            );
+            false
         }
         IRQ_MIN..=IRQ_MAX => handle_irq(tf as _, true, Some(should_yield)),
         SYSCALL => {

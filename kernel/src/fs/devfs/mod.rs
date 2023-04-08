@@ -2,10 +2,7 @@
 //! drivers can register devices by name rather than major and minor numbers. These devices will appear in devfs
 //! automatically, with whatever default ownership and protection the driver specified.
 
-use core::{
-    any::Any,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use core::{any::Any, sync::atomic::Ordering};
 
 use alloc::{
     collections::BTreeMap,
@@ -22,13 +19,13 @@ use crate::{
     function, kinfo,
 };
 
+use super::INODE_COUNT;
+
 pub mod null;
 pub mod random;
 pub mod serial;
 pub mod tty;
 pub mod zero;
-
-static INODE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 lazy_static! {
     pub static ref DEV_FS: Arc<DeviceFilesystem> = {

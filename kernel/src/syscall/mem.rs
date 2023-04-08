@@ -81,6 +81,7 @@ pub fn sys_mmap(
             flags: prot.into(),
             callback,
             ty: ArenaType::Heap,
+            name: "[heap]".into(),
         });
 
         Ok(addr as _)
@@ -95,6 +96,7 @@ pub fn sys_mmap(
             flags: todo!(),
             callback: todo!(),
             ty: ArenaType::Heap,
+            name: todo!(),
         };
     }
 }
@@ -164,4 +166,15 @@ pub fn sys_brk(
     } else {
         Err(Errno::ENOMEM)
     }
+}
+
+/// The madvise() system call is used to give advice or directions to the kernel about the address range beginning at
+/// address addr and with size length bytes In most cases, the goal of such advice is to improve system or application
+/// performance.
+pub fn sys_madvice(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    Ok(0)
 }

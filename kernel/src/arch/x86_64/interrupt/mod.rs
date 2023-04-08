@@ -126,6 +126,7 @@ pub const DOUBLE_FAULT_INTERRUPT: usize = 0x08;
 pub const STACK_SEGMENT_FAULT_INTERRUPT: usize = 0x0c;
 pub const GENERAL_PROTECTION_INTERRUPT: usize = 0x0d;
 pub const PAGE_FAULT_INTERRUPT: usize = 0x0e;
+pub const FLOATING_POINT_INTERRUPT: usize = 0x10;
 pub const TIMER_INTERRUPT: usize = 0x00;
 
 pub const IRQ_MIN: usize = 0x20;
