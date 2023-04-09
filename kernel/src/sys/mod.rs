@@ -3,7 +3,7 @@
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use bitflags::bitflags;
-use num_enum::TryFromPrimitive;
+use num_enum::{FromPrimitive, TryFromPrimitive};
 use rcore_fs::vfs::{FileType, Metadata};
 
 use crate::{arch::io::IoVec, fs::apfs::meta::get_timestamp};
@@ -443,13 +443,16 @@ pub struct Stat {
     st_ctime: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
 #[repr(u64)]
 pub enum FcntlCommand {
     FDupfd = 0,
     FGetfd = 1,
     /// Sets the descriptor flags for descriptor.
     FSetfd = 2,
+    /// Duplicate
+    FDupfdCloexec = 1030,
+    #[num_enum(default)]
     Unknown,
 }
 

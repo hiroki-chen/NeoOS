@@ -47,6 +47,10 @@ pub struct Header {
     pub first_proc: *const u8,
     /// The length of the `first_proc` string.
     pub first_proc_len: u64,
+    /// The argument for the first process.
+    pub args: *const u8,
+    /// The length of the arguments.
+    pub args_len: u64,
 }
 
 /// Graphic informations for printing to the console.

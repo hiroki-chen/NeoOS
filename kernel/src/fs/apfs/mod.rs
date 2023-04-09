@@ -28,7 +28,7 @@ use crate::{
     arch::QWORD_LEN,
     error::{Errno, KResult},
     fs::apfs::meta::{ApfsVolumn, BTreeInfo, SpacemanPhysical, Xid, BLOCK_SIZE},
-    function, kdebug, kerror, kinfo, kwarn, print, println,
+    function, kdebug, kerror, kinfo, print, println,
     time::{SystemTime, UNIX_EPOCH},
     utils::calc_fletcher64,
 };
@@ -806,11 +806,11 @@ impl INode for AppleFileSystemInode {
 
                 // Check if `offset` is valid.
                 if offset >= file_extent.len() {
-                    kwarn!(
-                            "`offset` is larger than the file length: got {:#x}, expected < {:#x}. Nothing is done.",
-                            offset,
-                            file_extent.len()
-                        );
+                    // ringbuf_log!(
+                    //         "`offset` is larger than the file length: got {:#x}, expected < {:#x}. Nothing is done.",
+                    //         offset,
+                    //         file_extent.len()
+                    //     );
                     return Ok(0);
                 } else if buf.len() == 0 {
                     return Ok(0);

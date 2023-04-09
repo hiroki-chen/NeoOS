@@ -111,9 +111,16 @@ pub unsafe extern "C" fn _start(header: *const Header) -> ! {
             header.first_proc_len as usize,
         )
     };
+    let args = unsafe {
+        core::slice::from_raw_parts(
+            phys_to_virt(header.args as u64) as *const u8,
+            header.args_len as usize,
+        )
+    };
     let first_proc = core::str::from_utf8(first_proc).unwrap_or_default();
+    let args = core::str::from_utf8(args).unwrap_or_default();
     FIFO_SCHEDULER.init();
-    crate::process::thread::debug_threading(first_proc);
+    crate::process::thread::debug_threading(first_proc, args);
 
     // Step into the kernel main function.
     AP_CAN_INIT.store(true, Ordering::Relaxed);

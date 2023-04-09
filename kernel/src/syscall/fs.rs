@@ -17,7 +17,7 @@ use crate::{
     error::{fserror_to_kerror, Errno, KResult},
     fs::{
         epoll::{EpollInstance, EPOLL_QUEUE},
-        file::{File, FileObject, FileOpenOption, FileType, Seek},
+        file::{do_dup, File, FileObject, FileOpenOption, FileType, Seek},
         InodeOpType, AT_FDCWD,
     },
     process::thread::{Thread, ThreadContext},
@@ -376,7 +376,7 @@ pub fn sys_getcwd(
         buf_ptr.write_c_string(cwd);
     }
 
-    Ok(0)
+    Ok(buf_ptr.as_ptr() as usize)
 }
 
 pub fn sys_lstat(
@@ -837,7 +837,7 @@ pub fn sys_fnctl(
     let mut proc = thread.parent.lock();
     let file = proc.get_fd(fd)?;
 
-    file.fcntl(cmd, arg)
+    file.fcntl(thread, fd, cmd, arg)
 }
 
 fn do_symlink(
@@ -910,19 +910,6 @@ fn do_mkdir(thread: &Arc<Thread>, dirfd: u64, pathname: *const u8, mode: u64) ->
     update_inode_time(&dir_inode, InodeOpType::ACCESS | InodeOpType::MODIFY);
 
     Ok(0)
-}
-
-/// Duplicates the file descriptor and assigns a new fd to the new file.
-fn do_dup(thread: &Arc<Thread>, oldfd: u64, newfd: u64, flags: Option<u64>) -> KResult<usize> {
-    let mut proc = thread.parent.lock();
-    if proc.fd_exists(newfd) {
-        proc.remove_file(newfd).unwrap();
-    }
-
-    let file_clone = proc.get_fd_ref(oldfd)?.dup(flags.unwrap_or_default())?;
-    proc.opened_files.insert(newfd, file_clone);
-
-    Ok(newfd as _)
 }
 
 fn do_epoll_create(thread: &Arc<Thread>, epoll_cloexec: bool) -> KResult<usize> {

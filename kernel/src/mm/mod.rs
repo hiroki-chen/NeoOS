@@ -25,7 +25,7 @@ use crate::{
         PAGE_SIZE,
     },
     error::{Errno, KResult},
-    memory::{is_page_aligned, page_frame_number, KernelFrameAllocator},
+    memory::{page_frame_number, KernelFrameAllocator},
     process::thread::{Thread, CURRENT_THREAD_PER_CPU},
     sync::mutex::SpinLockNoInterrupt as Mutex,
     sys::Prot,
@@ -149,9 +149,11 @@ bitflags! {
 bitflags! {
     #[derive(Default)]
     pub struct AccessType: u64 {
-        const EXECUTE = 0b0001;
+        const PRESENT = 0b0001;
         const WRITE = 0b0010;
         const USER = 0b0100;
+        const RESERVED_WRITE = 0b1000;
+        const INSTRUCTION = 0b10000;
     }
 }
 
@@ -198,8 +200,20 @@ pub struct Arena {
 
 impl Arena {
     /// Returns true if a given address is within this area.
+    #[inline]
     pub fn contains_addr(&self, addr: u64) -> bool {
         self.range.contains(&addr)
+    }
+
+    /// Returns true if a given range is within this arena.
+    #[inline]
+    pub fn subset_of(&self, other: Range<u64>) -> bool {
+        let self_start = page!(self.range.start).start_address();
+        let self_end = page!(self.range.end).start_address();
+        let other_start = page!(other.start).start_address();
+        let other_end = page!(other.end).start_address();
+
+        self_start <= other_start && self_end >= other_end
     }
 
     /// Maps itself into `page_table`.
@@ -225,14 +239,14 @@ impl Arena {
 
     /// Unmaps itself.
     pub fn unmap(&self, page_table: &mut dyn PageTableBehaviors) -> KResult<()> {
-        if !is_page_aligned(self.range.start) {
-            kerror!("map(): arena not aligned to 4 KB.");
-            return Err(Errno::EINVAL);
-        }
-        if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
-            kerror!("map(): corrupted arena size");
-            return Err(Errno::EINVAL);
-        }
+        // if !is_page_aligned(self.range.start) {
+        //     kerror!("map(): arena not aligned to 4 KB.");
+        //     return Err(Errno::EINVAL);
+        // }
+        // if !is_page_aligned(self.range.end.checked_sub(self.range.start).unwrap_or(1)) {
+        //     kerror!("map(): corrupted arena size");
+        //     return Err(Errno::EINVAL);
+        // }
 
         for mem in self.range.clone().step_by(PAGE_SIZE) {
             let page = page!(mem);
@@ -341,11 +355,14 @@ where
             .iter()
             .filter(|&arena| arena.ty != ArenaType::Reserved)
         {
+            let private_bit = if arena.callback.shared() { "-" } else { "p" };
             let cur = format!(
-                "{:#016x}-{:#016x} {}{:>32}\n",
+                "{:#016x}-{:#016x} {}{} {} {:>60}\n",
                 arena.range.start,
                 arena.range.end,
                 arena.flags.to_string(),
+                private_bit,
+                arena.callback.inode(),
                 arena.name,
             );
             content.push_str(&cur);
@@ -616,7 +633,7 @@ where
 
     pub fn clear(&mut self) {
         for arena in self.arena.iter_mut() {
-            kdebug!("clear(): dropping arena {:?}", arena.range);
+            kdebug!("clear(): dropping arena {:#x?}", arena.range);
             arena.unmap(&mut self.page_table).unwrap();
         }
 
@@ -632,8 +649,10 @@ where
         } = self;
 
         for item in self.arena.iter() {
+            kdebug!("cloning area {item:#x?}");
+
             let page_start = page!(item.range.start);
-            let page_end = page!(item.range.end);
+            let page_end = page!(item.range.end - 1);
 
             for page in Page::range_inclusive(page_start, page_end) {
                 item.callback.clone_and_map(
@@ -721,13 +740,15 @@ where
     }
 
     /// Validates the page table.
-    pub unsafe fn validate(&self) {
-        self.page_table.validate();
+    pub fn validate(&self) {
+        unsafe {
+            self.page_table.validate();
+        }
     }
 }
 
 pub fn check_permission(access_type: &AccessType, entry: &dyn EntryBehaviors) -> bool {
     (!access_type.contains(AccessType::WRITE) || entry.writable())
-        && (!access_type.contains(AccessType::EXECUTE) || entry.execute())
+        && (!access_type.contains(AccessType::PRESENT) || entry.present())
         && (!access_type.contains(AccessType::USER) || entry.user())
 }

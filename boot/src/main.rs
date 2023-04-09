@@ -143,6 +143,8 @@ fn _main(handle: uefi::Handle, mut st: SystemTable<Boot>) -> Status {
         kernel_entry,
         first_proc: config.first_proc.as_ptr(),
         first_proc_len: config.first_proc.len() as _,
+        args: config.args.as_ptr(),
+        args_len: config.args.len() as _,
     };
     page_table::map_gdt(&kernel, &mut allocator, &mut pt);
 

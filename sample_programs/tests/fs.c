@@ -186,6 +186,30 @@ int main() {
     passed_suite += 1;
   }
 
+  printf("[-] testing `open` special file `/proc/self/maps`...");
+  fflush(stdout);
+  int maps_fd = -1;
+  if ((maps_fd = open("/proc/self/maps", O_RDONLY)) < 0) {
+    printf("\tfailed.\n");
+    perror("[+]\t open");
+    failed_suite += 1;
+  } else {
+    printf("\tpassed.\n");
+    passed_suite += 1;
+  }
+
+  printf("[-] testing `read` special file `/proc/self/maps`...");
+  fflush(stdout);
+  char maps[4096] = {0};
+  if (read(maps_fd, maps, sizeof(maps)) < 0) {
+    printf("\tfailed.\n");
+    perror("[+]\t read");
+    failed_suite += 1;
+  } else {
+    printf("\tpassed:\n%s\n", maps);
+    passed_suite += 1;
+  }
+
   printf("[-] Test summary:\n");
   printf("\t[+] Passed: %d\n\t[+] Failed: %d\n", passed_suite, failed_suite);
 

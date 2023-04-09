@@ -107,6 +107,8 @@ pub struct BootLoaderConfig<'a> {
     pub initramfs_size: u64,
     /// The first process's name.
     pub first_proc: &'a str,
+    /// The arguments for the first process.
+    pub args: &'a str,
 }
 
 impl<'a> BootLoaderConfig<'a> {
@@ -121,6 +123,7 @@ impl<'a> BootLoaderConfig<'a> {
         let initramfs = parse_u64(config_str, "initramfs");
         let initramfs_size = parse_u64(config_str, "initramfs_size");
         let first_proc = parse_str(config_str, "first_proc");
+        let args = parse_str(config_str, "args");
 
         Self {
             kernel_stack_size,
@@ -131,6 +134,7 @@ impl<'a> BootLoaderConfig<'a> {
             initramfs,
             initramfs_size,
             first_proc,
+            args
         }
     }
 }
@@ -146,6 +150,7 @@ impl<'a> Default for BootLoaderConfig<'a> {
             initramfs: 0,
             initramfs_size: 0,
             first_proc: "",
+            args: "",
         }
     }
 }

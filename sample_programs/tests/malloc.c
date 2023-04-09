@@ -71,8 +71,8 @@ static void matrix_addition(int rows, int cols) {
 
   // Show mmap.
   int pid = getpid();
-  char name[32];
-  sprintf(name, "/proc/%d/maps", pid);
+  char name[32] = "/proc/self/maps";
+  // sprintf(name, "/proc/self/maps", pid);
   int fd = open(name, O_RDONLY);
   printf("opened %d\n", fd);
   char buf[4096] = {0};

@@ -244,6 +244,7 @@ impl INode for TtyInode {
                 }
 
                 buf[0] = self.read_byte();
+                print!("{}", buf[0] as char);
                 Ok(1)
             }
             false => Err(FsError::Again),

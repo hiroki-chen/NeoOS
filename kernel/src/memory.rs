@@ -545,7 +545,7 @@ pub fn is_page_aligned<T>(num: T) -> bool
 where
     T: AsPrimitive<usize>,
 {
-    num.as_() & PAGE_MASK == 0
+    num.as_() & !PAGE_MASK == 0
 }
 
 /// Ignores the lower bits of 0xfff.

@@ -33,5 +33,11 @@ int main(int argc, char* argv[], char* envp[]) {
   char* ld = getenv("LD_LIBRARY_PATH");
   printf("ld path is %s\n", ld);
 
+  char str[512];
+  printf("input something: ");
+  fflush(stdout);
+  scanf("%s\n", str);
+  printf("The input is %s\n", str);
+
   return 0;
 }

@@ -35,6 +35,13 @@ lazy_static! {
         RwLock::new(BTreeMap::new());
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WaitType {
+    AnyChild,
+    AnyChildInGroup,
+    Target(i64),
+}
+
 #[derive(Default)]
 pub struct Yield(bool);
 
@@ -72,6 +79,8 @@ pub struct Process {
     pub exec_path: String,
     /// Working directory.
     pub cwd: String,
+    /// The name.
+    pub name: String,
     /// Opened files.
     pub opened_files: BTreeMap<u64, FileObject>,
     /// Exit code.
@@ -146,6 +155,7 @@ impl Process {
         self.threads.clear();
 
         kinfo!("process {} exit with {}", self.process_id, self.exit_code);
+        kinfo!("mmap is\n{}", self.vm.lock().get_maps().unwrap());
     }
 
     /// The process has a base working directory and we can invoke this function to lookup a certain inode at a given
@@ -208,6 +218,10 @@ pub fn search_by_id(id: u64) -> KResult<Arc<Mutex<Process>>> {
         .cloned()
         // The target process or process group does not exist.
         .ok_or(Errno::ESRCH)
+}
+
+pub fn remove_by_id(id: u64) {
+    KERNEL_PROCESS_LIST.write().remove(&id);
 }
 
 pub fn search_by_group_id(id: u64) -> Vec<Arc<Mutex<Process>>> {

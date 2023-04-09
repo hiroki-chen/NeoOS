@@ -26,8 +26,8 @@ use crate::{
 };
 
 use super::{
-    TrapFrame, FLOATING_POINT_INTERRUPT, INVALID_OPCODE_INTERRUPT, STACK_SEGMENT_FAULT_INTERRUPT,
-    SYSCALL,
+    TrapFrame, DEBUG_INTERRUPT, FLOATING_POINT_INTERRUPT, INVALID_OPCODE_INTERRUPT,
+    STACK_SEGMENT_FAULT_INTERRUPT, SYSCALL,
 };
 
 /// Defines how the kernel handles the interrupt / exceptions when the control is passed to it.
@@ -75,6 +75,10 @@ pub async fn trap_dispatcher_user(
     let tf = ctx.get_trapno();
 
     match tf {
+        DEBUG_INTERRUPT => {
+            kinfo!("spawn(): debug! (from gdb or lldb?)");
+            true
+        }
         BREAKPOINT_INTERRUPT => {
             kinfo!("spawn(): breakpoint!");
             true
@@ -109,10 +113,6 @@ pub async fn trap_dispatcher_user(
             let cr2 = get_pf_addr();
 
             if !handle_page_fault(cr2, ctx.get_user_context().errno) {
-                kerror!(
-                    "cannot handle page fault! Dumepd context is {:#x?}",
-                    ctx.get_user_context()
-                );
                 // Report SEGSEV.
                 send_signal(
                     thread.parent.clone(),
@@ -123,6 +123,10 @@ pub async fn trap_dispatcher_user(
                         errno: 0,
                         sifields: SiFields::default(),
                     },
+                );
+                panic!(
+                    "cannot handle page fault! Dumepd context is {:#x?}",
+                    ctx.get_user_context()
                 );
                 true
             } else {

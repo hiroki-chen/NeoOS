@@ -464,6 +464,7 @@ async fn do_handle_syscall(
 
         SYS_MMAP => sys_mmap(thread, ctx, syscall_registers),
         SYS_MUNMAP => sys_munmap(thread, ctx, syscall_registers),
+        SYS_MPROTECT => sys_mprotect(thread, ctx, syscall_registers),
         SYS_BRK => sys_brk(thread, ctx, syscall_registers),
         SYS_MADVISE => sys_madvice(thread, ctx, syscall_registers),
 
@@ -478,9 +479,13 @@ async fn do_handle_syscall(
         SYS_GETGID => sys_getgid(thread, ctx, syscall_registers),
 
         SYS_GETPPID => sys_getppid(thread, ctx, syscall_registers),
+        SYS_GETTID => sys_gettid(thread, ctx, syscall_registers),
         SYS_GETPID => sys_getpid(thread, ctx, syscall_registers),
+        SYS_EXECVE => sys_execve(thread, ctx, syscall_registers),
         SYS_SET_TID_ADDRESS => sys_set_tid_address(thread, ctx, syscall_registers),
         SYS_EXIT => sys_exit(thread, ctx, syscall_registers),
+        SYS_FORK | SYS_VFORK => sys_fork(thread, ctx, syscall_registers),
+        SYS_WAIT4 => sys_wait4(thread, ctx, syscall_registers).await,
         SYS_EXIT_GROUP => sys_exit_group(thread, ctx, syscall_registers),
         SYS_SCHED_GETAFFINITY => sys_sched_getaffinity(thread, ctx, syscall_registers),
         SYS_SCHED_YIELD => sys_sched_yield(thread, ctx, syscall_registers),

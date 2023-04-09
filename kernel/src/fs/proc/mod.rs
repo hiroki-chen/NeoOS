@@ -14,13 +14,14 @@ use rcore_fs::vfs::{
 };
 use spin::RwLock;
 
-use crate::{function, kinfo};
+use crate::{function, kdebug};
 
-use self::maps::Maps;
+use self::{maps::Maps, selfdir::SelfDir};
 
 use super::INODE_COUNT;
 
 pub mod maps;
+pub mod selfdir;
 
 lazy_static! {
     pub static ref PROC_FS: Arc<ProcFileSystem> = ProcFileSystem::new();
@@ -36,6 +37,11 @@ impl ProcFileSystem {
         let fs = Arc::new(Self {
             mount_point: ProcInode::new(None),
         });
+        // Add `self`.
+        fs.mount_point
+            .children
+            .write()
+            .insert("self".into(), SelfDir::new(Arc::downgrade(&fs.mount_point)));
         *fs.mount_point.fs.write() = Arc::downgrade(&fs);
         fs
     }
@@ -58,7 +64,7 @@ impl ProcFileSystem {
             .children
             .write()
             .insert(format!("{pid}"), pid_dir);
-        kinfo!("added {pid} into the /proc filesystem");
+        kdebug!("added {pid} into the /proc filesystem");
     }
 }
 

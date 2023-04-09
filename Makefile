@@ -95,7 +95,7 @@ ifeq ($(UNAME), Darwin)
 	@$(DISKUTIL_GET) | xargs -I {} diskutil mountDisk {}
 
 	@cd /Volumes/untitled && mkdir dev proc
-	@cd $(WORK_DIR) && cp -r bin /Volumes/untitled && cp -r lib /Volumes/untitled
+	@cd $(WORK_DIR) && cp -r bin /Volumes/untitled && cp -r lib /Volumes/untitled && && cp busybox /mnt
 	@$(DISKUTIL_GET) | xargs -I {} hdiutil detach {}
 else
 	@cd $(WORK_DIR) && mkfs.apfs $(DISK)
@@ -106,7 +106,7 @@ else
 	@mkdir -p /mnt/usr/local/nginx/logs && touch /mnt/usr/local/nginx/logs/error.log
 	@echo 'nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin' >> /mnt/etc/passwd
 	@echo 'nogroup:x:65534:' >> /mnt/etc/group
-	@cd $(WORK_DIR) && cp -r bin /mnt && cp -r lib /mnt
+	@cd $(WORK_DIR) && cp -r bin /mnt && cp -r lib /mnt && cp busybox /mnt
 	@sudo umount /mnt
 endif
 	@cd $(WORK_DIR) && cp $(DISK) $(DISK).backup

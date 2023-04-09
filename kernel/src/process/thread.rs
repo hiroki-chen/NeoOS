@@ -205,7 +205,7 @@ impl Thread {
     }
 
     /// Forks this thread.
-    pub fn fork(&mut self, context: &Context) -> Arc<Self> {
+    pub fn fork(&self, context: &Context) -> Arc<Self> {
         // Cow the vm.
         let vm = Arc::new(Mutex::new(self.vm.lock().clone()));
 
@@ -223,6 +223,7 @@ impl Thread {
             cwd: lock.cwd.clone(),
             opened_files: BTreeMap::new(),
             exit_code: 0,
+            name: lock.name.clone(),
             event_bus: EventBus::new(),
             futexes: BTreeMap::new(),
             parent: (lock.process_id, Arc::downgrade(&self.parent)),
@@ -267,12 +268,13 @@ impl Thread {
         self.inner.lock().thread_context.replace(ctx);
     }
 
-    /// Creates a new user-space thread and returns the user stack top.
+    /// Creates a new user-space thread and returns the user stack top and the entry point.
     ///
     /// # Arguments
     ///
     /// - inode: the current directory where this thread is created.
     /// - path: the execution path of this thread.
+    /// - name: the name of the running program.
     /// - args: the argument string. Same as `const char** argv`.
     /// - envp: the environment strings.
     ///
@@ -311,15 +313,19 @@ impl Thread {
     /// |   reserved   |
     /// +--------------+
     /// ```
-    pub fn create(
+    pub fn create_memory(
         inode: &Arc<dyn INode>,
         path: &str,
+        name: &str,
         args: Vec<String>,
         envp: Vec<String>,
-    ) -> KResult<Arc<Thread>> {
-        let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
+        vm: &mut MemoryManager<KernelPageTable>,
+    ) -> KResult<(u64, u64)> {
+        // Ensure vm is properly cleared. 
+        vm.clear();
+
         let elf = ElfFile::load(inode)?;
-        let mem_offset = elf.load_elf_and_map(&mut vm, path)?;
+        let mem_offset = elf.load_elf_and_map(vm, name)?;
 
         let mut elf_entry = elf.entry_point();
         let mut auxv = elf.get_auxv()?;
@@ -338,16 +344,30 @@ impl Thread {
             let ld_elf = ElfFile::load(&ld)?;
             let ld_elf_size = page_frame_number(ld_elf.memsize() + PAGE_SIZE as u64 - 1);
             let ld_addr = USER_STACK_START as u64 - ld_elf_size;
-            ld_elf.load_as_interpreter(&mut vm, ld_addr, elf_interpreter)?;
+            ld_elf.load_as_interpreter(vm, ld_addr, elf_interpreter)?;
 
-            kinfo!("original entry is {:#x}", elf.entry_point());
             elf_entry = ld_addr + ld_elf.entry_point();
+            kinfo!("original entry is {:#x}", elf.entry_point());
+            kinfo!("interpreter entry is {:#x}", elf_entry);
             // Insert auxiliary vectors.
             auxv.insert(AT_ENTRY, elf.entry_point() as _);
             auxv.insert(AT_BASE, ld_addr as _);
         }
 
-        let stack_top = Self::prepare_user_stack(&mut vm, args, envp, auxv)? as u64;
+        let stack_top = Self::prepare_user_stack(vm, args, envp, auxv)? as u64;
+
+        Ok((stack_top, elf_entry))
+    }
+
+    pub fn create(
+        inode: &Arc<dyn INode>,
+        path: &str,
+        name: &str,
+        args: Vec<String>,
+        envp: Vec<String>,
+    ) -> KResult<Arc<Thread>> {
+        let mut vm: MemoryManager<KernelPageTable> = MemoryManager::new(false);
+        let (stack_top, elf_entry) = Self::create_memory(inode, path, name, args, envp, &mut vm)?;
         let vm = Arc::new(Mutex::new(vm));
 
         // So we must pretend that 'interrupt' occurs here so that CPU allows to perform `IRETQ`.
@@ -384,6 +404,7 @@ impl Thread {
                 vm: vm.clone(),
                 exec_path: path.into(),
                 cwd: "/".into(),
+                name: name.into(),
                 opened_files: stdio,
                 exit_code: 0u8,
                 event_bus: EventBus::new(),
@@ -583,12 +604,16 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
 }
 
 /// Spawn a debug thread with in-memory instructions.
-pub fn debug_threading(first_proc: &str) {
+pub fn debug_threading(first_proc: &str, args: &str) {
     kinfo!("this is : {first_proc}");
     let debug_inode = ROOT_INODE.lookup(first_proc).unwrap();
-    let args = vec![first_proc.into()];
-    let envp = vec!["PATH=/bin".into(), "LD_LIBRARY_PATH=/lib:/usr/lib".into()];
-    let thread = Thread::create(&debug_inode, "/bin", args, envp).unwrap();
+    let mut args = args.split(" ").map(|s| s.into()).collect::<Vec<String>>();
+    args.insert(0, first_proc.into());
+    let envp = vec![
+        "PATH=/bin:/sbin:/usr/bin:/usr/sbin".into(),
+        "LD_LIBRARY_PATH=/lib:/usr/lib".into(),
+    ];
+    let thread = Thread::create(&debug_inode, "/", first_proc, args, envp).unwrap();
 
     spawn(thread).unwrap();
 }

@@ -1,10 +1,12 @@
 //! Memory and paging related syscall interfaces.
 
 use alloc::{boxed::Box, sync::Arc};
+use rcore_fs::vfs::MMapArea;
 
 use crate::{
     arch::{interrupt::SYSCALL_REGS_NUM, PAGE_SIZE},
     error::{Errno, KResult},
+    fs::file::FileObject,
     memory::{brk_hook, is_page_aligned, mmap_hook, page_frame_number, KernelFrameAllocator},
     mm::{
         callback::{ArenaCallback, UserArenaCallback},
@@ -86,18 +88,26 @@ pub fn sys_mmap(
 
         Ok(addr as _)
     } else {
+        // Do a memory map for the opened file.
         // Get the file descriptor.
         let fd = syscall_registers[4];
         let offset = syscall_registers[5];
 
         let file = proc.get_fd(fd)?;
-        let _ = Arena {
-            range: addr..addr + length,
-            flags: todo!(),
-            callback: todo!(),
-            ty: ArenaType::Heap,
-            name: todo!(),
-        };
+        if let FileObject::File(file) = file {
+            let area = MMapArea {
+                start_vaddr: addr as _,
+                end_vaddr: (addr + length) as _,
+                prot: prot.bits() as _,
+                flags: flags as _,
+                offset: offset as _,
+            };
+
+            kinfo!("{addr:#x}");
+            file.mmap(&area).map(|_| addr as usize)
+        } else {
+            Err(Errno::EINVAL)
+        }
     }
 }
 
@@ -134,12 +144,9 @@ pub fn sys_mprotect(
     let mut vm = thread.vm.lock();
     let arena = vm
         .iter_mut()
-        .find(|arena| arena.overlap_with(&(addr..addr + len)))
+        // Now we assume that some arena must "contain" the mprotected area.
+        .find(|arena| arena.subset_of(addr..addr + len))
         .ok_or(Errno::ENOMEM)?;
-
-    if !arena.flags.user_accessible || (!arena.flags.writable && prot.contains(Prot::PROT_WRITE)) {
-        return Err(Errno::EACCES);
-    }
 
     arena.flags = ArenaFlags::from(prot);
 

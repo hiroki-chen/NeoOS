@@ -2,7 +2,7 @@
 
 use core::{fmt::Debug, marker::PhantomData};
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, format, sync::Arc};
 use rcore_fs::vfs::INode;
 use x86_64::VirtAddr;
 
@@ -42,6 +42,14 @@ pub trait ArenaCallback: Debug + Send + Sync + 'static {
         addr: u64,
         access_type: AccessType,
     ) -> bool;
+
+    fn inode(&self) -> u64 {
+        0
+    }
+
+    fn shared(&self) -> bool {
+        false
+    }
 }
 
 impl Clone for Box<dyn ArenaCallback> {
@@ -156,6 +164,10 @@ impl ReadAsFile for INodeWrapper {
     fn read_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
         self.0.read_at(offset, buf).map_err(fserror_to_kerror)
     }
+
+    fn inode(&self) -> u64 {
+        self.0.metadata().unwrap().inode as _
+    }
 }
 
 impl<F, A> ArenaCallback for FileArenaCallback<F, A>
@@ -163,6 +175,10 @@ where
     F: ReadAsFile,
     A: FrameAlloc,
 {
+    fn inode(&self) -> u64 {
+        self.file.inode()
+    }
+
     fn clone_as_box(&self) -> Box<dyn ArenaCallback> {
         Box::new(self.clone())
     }
@@ -174,7 +190,40 @@ where
         addr: VirtAddr,
         flags: &ArenaFlags,
     ) {
-        todo!()
+        let src_entry = src.get_entry(addr).expect(&format!(
+            "failed to get entry from the source page table @ {addr:#x}"
+        ));
+        // Check if the source entry is ok.
+        if src_entry.present() && flags.writable {
+            // If ok, we can directly copy the page table entry from the source page table.
+            let src_buf = src.get_page_slice_mut(addr).expect(&format!(
+                "failed to get entry from the source page table @ {addr:#x}"
+            ));
+            let frame = self
+                .frame_allocator
+                .alloc()
+                .expect("failed to allocate new frame");
+            // Maps `addr` to `frame`
+            let dst_entry = dst.map(addr, frame);
+            // Apply the memory attribute from the source manager.
+            dst_entry.set_writable(flags.writable);
+            dst_entry.set_execute(!flags.non_executable);
+            dst_entry.set_user(flags.user_accessible);
+            dst_entry.update();
+
+            // Then copy the data into frame.
+            dst.get_page_slice_mut(addr)
+                .expect(&format!(
+                    "failed to get entry from the source page table @ {addr:#x}",
+                ))
+                .copy_from_slice(src_buf);
+            // FIXME: Notify other cores (?): slow and some bug
+            // tlb_broadcast(None, Some(addr));
+        } else {
+            // Map to 0x0 and copy from the file instead because the source page table entry is now allowed
+            // for us to touch. This is delayed mapping.
+            self.map(dst, addr, flags);
+        }
     }
 
     fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {
@@ -189,8 +238,16 @@ where
     }
 
     fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {
-        let entry = match page_table.get_entry(addr) {
-            Ok(entry) => entry,
+        match page_table.get_entry(addr) {
+            Ok(entry) => {
+                if entry.present() {
+                    self.frame_allocator
+                        .dealloc(entry.target().as_u64())
+                        .unwrap();
+                }
+                entry.set_present(true);
+                page_table.unmap(addr);
+            }
             Err(errno) => {
                 kerror!(
                     "FileArenaCallback::unmap(): unable to find page table entry @ {:#x}",
@@ -372,7 +429,9 @@ where
         let entry = page_table
             .get_entry(addr)
             .expect("unmap(): failed to get entry; maybe unmapped?");
-        self.frame_allocator.dealloc(addr.as_u64()).unwrap();
+        self.frame_allocator
+            .dealloc(entry.target().as_u64())
+            .unwrap();
         page_table.unmap(addr);
     }
 }
@@ -392,7 +451,7 @@ where
         addr: VirtAddr,
         flags: &ArenaFlags,
     ) {
-        panic!("trying to use dummy callback @ {addr:#x}");
+        // This function should not panic.
     }
 
     fn do_handle_page_fault(
@@ -410,7 +469,7 @@ where
     }
 
     fn unmap(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr) {
-        panic!("trying to use dummy callback @ {addr:#x}");
+        // Ignored.
     }
 }
 
@@ -429,7 +488,36 @@ where
         addr: VirtAddr,
         flags: &ArenaFlags,
     ) {
-        todo!()
+        let src_entry = src.get_entry(addr).expect(&format!(
+            "failed to get entry from the source page table @ {addr:#x}"
+        ));
+        // Check if the source entry is ok.
+        if src_entry.present() {
+            // If ok, we can directly copy the page table entry from the source page table.
+            let src_buf = src.get_page_slice_mut(addr).expect(&format!(
+                "failed to get entry from the source page table @ {addr:#x}"
+            ));
+            let frame = self
+                .frame_allocator
+                .alloc()
+                .expect("failed to allocate new frame");
+            // Maps `addr` to `frame`
+            let dst_entry = dst.map(addr, frame);
+            // Apply the memory attribute from the source manager.
+            dst_entry.set_writable(flags.writable);
+            dst_entry.set_execute(!flags.non_executable);
+            dst_entry.set_user(flags.user_accessible);
+            dst_entry.update();
+
+            // Then copy the data into frame.
+            dst.get_page_slice_mut(addr)
+                .expect(&format!(
+                    "failed to get entry from the source page table @ {addr:#x}",
+                ))
+                .copy_from_slice(src_buf);
+        } else {
+            self.map(dst, addr, flags);
+        }
     }
 
     fn map(&self, page_table: &mut dyn PageTableBehaviors, addr: VirtAddr, flags: &ArenaFlags) {

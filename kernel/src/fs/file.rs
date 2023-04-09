@@ -11,12 +11,19 @@ use alloc::{
     vec::Vec,
 };
 use bitflags::bitflags;
-use rcore_fs::vfs::{INode, Metadata, PollStatus, Result};
+use rcore_fs::vfs::{INode, MMapArea, Metadata, PollStatus, Result};
 use spin::RwLock;
 
 use crate::{
     error::{fserror_to_kerror, Errno, KResult},
+    function, kwarn,
+    memory::KernelFrameAllocator,
+    mm::{
+        callback::{FileArenaCallback, INodeWrapper},
+        Arena, ArenaFlags, ArenaType,
+    },
     net::Socket,
+    process::thread::{current, Thread},
     sys::FcntlCommand,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -37,6 +44,8 @@ bitflags! {
 /// Minimum `file-like` trait.
 pub trait ReadAsFile: Clone + Sync + Send + 'static {
     fn read_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize>;
+
+    fn inode(&self) -> u64;
 }
 
 /// flock - apply or remove an advisory lock on an open file.
@@ -141,6 +150,37 @@ impl File {
             ty: self.ty.clone(),
             entries: self.entries.clone(),
         }
+    }
+
+    /// Performs a memory mapping.
+    pub fn mmap(&self, area: &MMapArea) -> KResult<()> {
+        if self.inode.metadata().unwrap().type_ != rcore_fs::vfs::FileType::File {
+            return Err(Errno::EACCES);
+        }
+
+        let thread = current().unwrap();
+        let mut vm = thread.vm.lock();
+        vm.add(Arena {
+            range: area.start_vaddr as u64..area.end_vaddr as u64,
+            flags: ArenaFlags {
+                writable: true,
+                user_accessible: true,
+                non_executable: false,
+                mmio: 0,
+            },
+            callback: Box::new(FileArenaCallback {
+                file: INodeWrapper(self.inode.clone()),
+                mem_start: area.start_vaddr as _,
+                file_start: area.offset as _,
+                file_end: (area.offset + area.end_vaddr - area.start_vaddr) as _,
+                frame_allocator: KernelFrameAllocator,
+            }),
+            // Heap ?!
+            ty: ArenaType::Heap,
+            name: self.path.clone(),
+        });
+
+        Ok(())
     }
 
     pub fn set_option(&self, option: FileOpenOption) {
@@ -352,13 +392,34 @@ impl File {
             .map_err(fserror_to_kerror)
     }
 
-    pub fn fcntl(&self, cmd: u64, arg: u64) -> KResult<usize> {
-        let cmd = unsafe { core::mem::transmute::<u64, FcntlCommand>(cmd) };
+    pub fn fcntl(
+        &mut self,
+        fd: u64,
+        thread: &Arc<Thread>,
+        raw_cmd: u64,
+        arg: u64,
+    ) -> KResult<usize> {
+        let cmd = FcntlCommand::try_from(raw_cmd).unwrap();
 
         match cmd {
-            // FcntlCommand::FGetfd => (),
-            FcntlCommand::FSetfd => Ok(0),
-            _ => unimplemented!(),
+            // FcntlCommand::FGetfd => (
+            FcntlCommand::FSetfd => {
+                self.fd_cloexec = arg & 0x1 != 0;
+                Ok(0)
+            }
+            FcntlCommand::FGetfd => Ok(self.fd_cloexec as _),
+            FcntlCommand::FDupfdCloexec => {
+                let proc = thread.parent.lock();
+                let new_fd = (arg..)
+                    .find(|fd| !proc.opened_files.contains_key(&fd))
+                    .unwrap();
+                drop(proc);
+                do_dup(thread, fd, new_fd, Some(1))
+            }
+            _ => {
+                kwarn!("{raw_cmd} is not implemented and is simply ignored.");
+                Ok(0)
+            }
         }
     }
 }
@@ -392,9 +453,9 @@ impl FileObject {
         }
     }
 
-    pub fn fcntl(&self, cmd: u64, arg: u64) -> KResult<usize> {
+    pub fn fcntl(&mut self, thread: &Arc<Thread>, fd: u64, cmd: u64, arg: u64) -> KResult<usize> {
         match self {
-            FileObject::File(file) => file.fcntl(cmd, arg),
+            FileObject::File(file) => file.fcntl(fd, thread, cmd, arg),
             FileObject::Socket(_) | FileObject::Epoll(_) => Ok(0),
         }
     }
@@ -431,4 +492,17 @@ impl FileObject {
             _ => Err(Errno::EBADF),
         }
     }
+}
+
+/// Duplicates the file descriptor and assigns a new fd to the new file.
+pub fn do_dup(thread: &Arc<Thread>, oldfd: u64, newfd: u64, flags: Option<u64>) -> KResult<usize> {
+    let mut proc = thread.parent.lock();
+    if proc.fd_exists(newfd) {
+        proc.remove_file(newfd).unwrap();
+    }
+
+    let file_clone = proc.get_fd_ref(oldfd)?.dup(flags.unwrap_or_default())?;
+    proc.opened_files.insert(newfd, file_clone);
+
+    Ok(newfd as _)
 }

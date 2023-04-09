@@ -7,4 +7,4 @@
 * `rust`: A collection of Rust programs and its tiny std runtime backed by the NeoOS kernel.
   * `rustlib`: the standard library `std` for NeoOS. We are moving the build toolchain to `xargo`.
 * `nginx`: The Web server nginx.
-* `syscall_tests`: A collection of test suites for syscall interface testing.
+* `test`: A collection of test suites for syscall and some kernel interface testing.

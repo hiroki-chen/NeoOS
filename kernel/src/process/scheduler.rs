@@ -307,7 +307,7 @@ impl Scheduler {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        kinfo!(
+        kdebug!(
             "spawn(): the scheduler {:?} is spawning new thread!",
             self.algorithm.ty()
         );

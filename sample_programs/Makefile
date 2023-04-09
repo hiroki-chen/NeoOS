@@ -5,7 +5,8 @@ all:
 	@$(MAKE) -C ./simple_tcp
 	@$(MAKE) -C ./rust
 	@$(MAKE) -C ./nginx
-	@$(MAKE) -C ./syscall_tests
+	@$(MAKE) -C ./tests
+	@$(MAKE) -C ./busybox-musl
 
 clean:
 	@$(MAKE) -C ./simple_c clean

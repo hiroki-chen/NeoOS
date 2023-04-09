@@ -75,13 +75,19 @@ pub fn handle_page_fault(addr: u64, errno: u64) -> bool {
 
     let mut access_type = AccessType::default();
     if errno & 0x1 != 0 {
-        access_type |= AccessType::EXECUTE;
+        access_type |= AccessType::PRESENT;
     }
     if errno & 0x2 != 0 {
         access_type |= AccessType::WRITE;
     }
     if errno & 0x4 != 0 {
         access_type |= AccessType::USER;
+    }
+    if errno & 0x8 != 0 {
+        access_type |= AccessType::RESERVED_WRITE;
+    }
+    if errno & 0x10 != 0 {
+        access_type |= AccessType::INSTRUCTION;
     }
 
     let mut vm = thread.vm.lock();
@@ -394,7 +400,7 @@ impl KernelPageTable {
 impl Drop for KernelPageTable {
     /// If you want to invalidate this page table, call this function `manually`.
     fn drop(&mut self) {
-        kinfo!(
+        kdebug!(
             "drop(): dropping page table at {:#x?}",
             self.page_table_frame
         );
