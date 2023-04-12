@@ -6,7 +6,7 @@ use core::{
     time::Duration,
 };
 
-use alloc::{collections::BTreeMap, vec, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
 use smoltcp::{
     socket::raw::{PacketBuffer, PacketMetadata, Socket},
     wire::{IpProtocol, IpVersion, Ipv4Address, Ipv4Packet},
@@ -26,6 +26,7 @@ use super::{
 
 /// Represents a L3-layer raw socket that can be used to examine the IP header and construct the corresponding network
 /// protocols like ICMP, ARP, etc.
+#[derive(Clone)]
 pub struct RawSocket {
     socket: SocketWrapper,
     raw_fd: Option<u64>,
@@ -208,5 +209,9 @@ impl SocketTrait for RawSocket {
 
     fn set_fd(&mut self, fd: u64) {
         self.raw_fd.replace(fd);
+    }
+
+    fn clone_as_box(&self) -> Box<dyn SocketTrait> {
+        Box::new(self.clone())
     }
 }

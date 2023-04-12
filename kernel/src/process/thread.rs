@@ -112,8 +112,9 @@ pub struct Thread {
 
 /// Finds a free tid and assigns it to the current thread by `register`.
 pub fn find_available_tid() -> KResult<u64> {
+    let thread_table = THREAD_TABLE.read();
     (1u64..)
-        .find(|id| THREAD_TABLE.read().get(id).is_none())
+        .find(|id| thread_table.get(id).is_none())
         .ok_or(Errno::EBUSY)
 }
 
@@ -191,15 +192,13 @@ impl Thread {
 
     /// Activates this thread and registers it to the global thread table `THREAD_TABLE`.
     pub fn register(mut self) -> KResult<Arc<Self>> {
-        let mut table = THREAD_TABLE.write();
-
         let id = match self.id {
             0 => find_available_tid()?,
             id => id,
         };
         self.id = id;
         let arced_self = Arc::new(self);
-        table.insert(id, arced_self.clone());
+        THREAD_TABLE.write().insert(id, arced_self.clone());
 
         Ok(arced_self)
     }
@@ -221,7 +220,7 @@ impl Thread {
             vm: vm.clone(),
             exec_path: lock.exec_path.clone(),
             cwd: lock.cwd.clone(),
-            opened_files: BTreeMap::new(),
+            opened_files: lock.opened_files.clone(),
             exit_code: 0,
             name: lock.name.clone(),
             event_bus: EventBus::new(),
@@ -321,7 +320,7 @@ impl Thread {
         envp: Vec<String>,
         vm: &mut MemoryManager<KernelPageTable>,
     ) -> KResult<(u64, u64)> {
-        // Ensure vm is properly cleared. 
+        // Ensure vm is properly cleared.
         vm.clear();
 
         let elf = ElfFile::load(inode)?;
@@ -396,10 +395,10 @@ impl Thread {
         let stdio = init_stdio();
 
         let thread = Thread {
-            id: DEBUG_PROC_ID,
+            id: 0,
             parent: Arc::new(Mutex::new(Process {
                 process_id: DEBUG_PROC_ID,
-                process_group_id: DEBUG_PROC_ID,
+                process_group_id: 0,
                 threads: Vec::new(),
                 vm: vm.clone(),
                 exec_path: path.into(),
@@ -430,7 +429,7 @@ impl Thread {
 
         // Add itself into the global thread table.
         let thread_ref = thread.register()?;
-        register(&thread_ref.parent, DEBUG_PROC_ID);
+        register(&thread_ref.parent, thread_ref.id);
 
         Ok(thread_ref)
     }

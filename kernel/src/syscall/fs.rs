@@ -2,7 +2,15 @@
 //!
 //! Note however, that any operations that cause filesystem write is dangerous if you are working with apfs.
 
+use core::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
+
 use alloc::{
+    boxed::Box,
     string::{String, ToString},
     sync::Arc,
     vec,
@@ -22,8 +30,8 @@ use crate::{
     },
     process::thread::{Thread, ThreadContext},
     sys::{
-        Dirent, DirentType, EpollEvent, EpollFlags, EpollOp, Stat, AT_SYMLINK_NOFOLLOW, SEEK_CUR,
-        SEEK_END, SEEK_SET,
+        Dirent, DirentType, EpollEvent, EpollFlags, EpollOp, PollEvents, Pollfd, Stat,
+        AT_SYMLINK_NOFOLLOW, SEEK_CUR, SEEK_END, SEEK_SET,
     },
     utils::{ptr::Ptr, split_path, update_inode_time},
 };
@@ -64,6 +72,58 @@ impl Oflags {
         }
 
         file_option
+    }
+}
+
+struct SysPoll<'a> {
+    /// All file descriptors being monitored.
+    fds: &'a mut [Pollfd],
+    /// The caller's thread.
+    thread: &'a Arc<Thread>,
+}
+
+impl<'a> Future for SysPoll<'a> {
+    type Output = KResult<usize>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut proc = self.thread.parent.lock();
+
+        // Check each fd.
+        let mut ready = 0;
+        for fd in self.fds.iter_mut() {
+            if let Ok(file) = proc.get_fd(fd.fd as _) {
+                let mut file_poll = Box::pin(file.async_poll());
+                if let Poll::Ready(poll) = file_poll.as_mut().poll(cx) {
+                    let poll_status = match poll {
+                        Ok(status) => status,
+                        Err(errno) => return Poll::Ready(Err(errno)),
+                    };
+
+                    if poll_status.error {
+                        fd.revents |= PollEvents::HUP.bits();
+                        ready += 1;
+                    }
+
+                    if poll_status.read && fd.events & PollEvents::OUT.bits() != 0 {
+                        fd.revents |= PollEvents::OUT.bits();
+                        ready += 1;
+                    }
+
+                    if poll_status.write && fd.events & PollEvents::IN.bits() != 0 {
+                        fd.revents |= PollEvents::IN.bits();
+                        ready += 1;
+                    }
+                }
+            } else {
+                fd.revents |= PollEvents::ERR.bits();
+                ready += 1;
+            }
+        }
+
+        match ready {
+            0 => Poll::Pending,
+            _ => Poll::Ready(Ok(ready)),
+        }
     }
 }
 
@@ -229,18 +289,25 @@ pub fn sys_ioctl(
     let arg2 = syscall_registers[3];
     let arg3 = syscall_registers[4];
 
-    kdebug!(
-        "syscall parameters: file_fd: {}, cmd: {}, args: {}, {}, {}",
-        file_fd,
-        cmd,
-        arg1,
-        arg2,
-        arg3,
-    );
-
     let mut proc = thread.parent.lock();
     let file = proc.get_fd(file_fd)?;
     file.ioctl(cmd, [arg1, arg2, arg3])
+}
+
+/// poll() performs a similar task to select(2): it waits for one of a set of file descriptors to become ready to perform I/O.
+pub async fn sys_poll(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let fds = syscall_registers[0];
+    let nfds = syscall_registers[1];
+    // milliseconds
+    let timeout = syscall_registers[2];
+
+    let fds = unsafe { core::slice::from_raw_parts_mut(fds as *mut Pollfd, nfds as usize) };
+    let timeout = Duration::from_millis(timeout as _);
+    SysPoll { fds, thread }.await
 }
 
 pub async fn sys_read(

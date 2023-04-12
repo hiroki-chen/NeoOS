@@ -5,13 +5,15 @@ use crate::{
     error::{Errno, KResult},
     memory::{copy_from_user, copy_to_user},
     process::{
-        search_by_id,
+        search_by_id, search_by_thread,
         thread::{Thread, ThreadContext},
     },
     signal::{send_signal, SiFields, SigAction, SigFrame, SigInfo, SigSet, Signal},
     sys::{SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK},
     utils::ptr::Ptr,
 };
+
+use super::SYS_TKILL;
 
 const NON_MASKABLE_SIGNALS: &[Signal; 3] = &[Signal::SIGSTOP, Signal::SIGKILL, Signal::SIGABRT];
 
@@ -190,6 +192,31 @@ pub fn sys_rt_sigprocmask(
             _ => return Err(Errno::EINVAL),
         }
     }
+
+    Ok(0)
+}
+
+/// tgkill() sends the signal sig to the thread with the thread ID tid in the thread group tgid.
+pub fn sys_tkill(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let tid = syscall_registers[0];
+    let sig = syscall_registers[1];
+
+    let target = search_by_thread(tid)?;
+
+    send_signal(
+        target,
+        tid as _,
+        SigInfo {
+            signo: sig as _,
+            code: SYS_TKILL as _,
+            errno: 0,
+            sifields: SiFields::default(),
+        },
+    );
 
     Ok(0)
 }

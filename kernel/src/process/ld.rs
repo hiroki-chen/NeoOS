@@ -48,7 +48,6 @@ impl InitInfo {
     /// Returns the stack top.
     pub unsafe fn push_at(&self, stack: u64) -> u64 {
         let mut writer = StackWriter { stack };
-        kinfo!("writing the stack! {:x?}; {:x?}", self.args, self.auxv);
         // Push the program name.
         writer.write_str(&self.args[0]);
 

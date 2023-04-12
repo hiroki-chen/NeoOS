@@ -28,7 +28,11 @@ lazy_static! {
     static ref WINSIZE: RwLock<Winsize> = RwLock::new(Winsize::default());
 }
 
+const TCGETS: u32 = 0x5401;
+const TCSETS: u32 = 0x5402;
 const TIOCGWINSZ: u32 = 0x5413;
+const TIOCGPGRP: u32 = 0x540f;
+const TIOCSPGRP: u32 = 0x5410;
 
 // c_lflag flag constants.
 
@@ -184,7 +188,7 @@ pub struct TtyInode {
 impl TtyInode {
     pub fn new() -> Self {
         Self {
-            fg_pid: RwLock::new(usize::MAX),
+            fg_pid: RwLock::new(0),
             buffer: Mutex::new(VecDeque::new()),
             eventbus: Mutex::new(EventBus::default()),
             termios: RwLock::new(Termios::new()),
@@ -244,7 +248,6 @@ impl INode for TtyInode {
                 }
 
                 buf[0] = self.read_byte();
-                print!("{}", buf[0] as char);
                 Ok(1)
             }
             false => Err(FsError::Again),
@@ -257,6 +260,38 @@ impl INode for TtyInode {
                 let ptr = data as *mut Winsize;
                 unsafe {
                     ptr.write(WINSIZE.read().clone());
+                }
+
+                Ok(0)
+            }
+
+            TCGETS => {
+                let ptr = data as *mut Termios;
+                unsafe {
+                    ptr.write(self.termios.read().clone());
+                }
+
+                Ok(0)
+            }
+
+            TCSETS => {
+                let termios = unsafe { (data as *const Termios).read() };
+                *self.termios.write() = termios;
+
+                Ok(0)
+            }
+
+            TIOCSPGRP => {
+                let pid = unsafe { (data as *const i32).read() };
+                *self.fg_pid.write() = pid as _;
+
+                Ok(0)
+            }
+
+            TIOCGPGRP => {
+                let ptr = data as *mut i32;
+                unsafe {
+                    ptr.write(*self.fg_pid.read() as i32);
                 }
 
                 Ok(0)
@@ -332,8 +367,8 @@ pub struct Termios {
     pub c_ospeed: u32,  /* output speed */
 }
 
-#[derive(Clone, Debug)]
-#[repr(C, align(8))]
+#[derive(Clone, Debug, Copy)]
+#[repr(C)]
 struct Winsize {
     pub ws_row: u16,
     pub ws_col: u16,

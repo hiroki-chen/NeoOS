@@ -34,7 +34,7 @@ pub struct ElfFile {
 impl ElfFile {
     /// Loads the elf file from the memory. This only parses the header!
     pub fn load(inode: &Arc<dyn INode>) -> KResult<Self> {
-        kinfo!("loading ELF header");
+        kdebug!("loading ELF header");
 
         let mut buf = [0u8; 0x3c0];
         let size = inode.read_at(0, &mut buf).map_err(fserror_to_kerror)?;
@@ -125,7 +125,7 @@ impl ElfFile {
         vm: &mut MemoryManager<KernelPageTable>,
         name: &str,
     ) -> KResult<u64> {
-        kinfo!("mapping the ELF file into memory.");
+        kdebug!("mapping the ELF file into memory.");
 
         let mut max_mem = 0;
         for ph in self.program_headers.iter() {

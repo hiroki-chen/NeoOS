@@ -248,6 +248,42 @@ pub fn sys_gettid(
     Ok(thread.id as _)
 }
 
+/// getpgid() returns the PGID of the process specified by pid. If pid is zero, the process ID of the calling process is used.
+pub fn sys_getpgid(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let pid = syscall_registers[0];
+    let proc = thread.parent.lock();
+
+    match pid {
+        0 => Ok(proc.process_group_id as _),
+        _ => {
+            drop(proc);
+            let proc = search_by_id(pid)?;
+            let pid = proc.lock().process_group_id as usize;
+            Ok(pid)
+        }
+    }
+}
+
+/// setpgid() sets the PGID of the process specified by pid to pgid.
+pub fn sys_setpgid(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let pid = syscall_registers[0];
+    let pgid = syscall_registers[1];
+
+    let proc = search_by_id(pid)?;
+    let mut proc = proc.lock();
+    proc.process_group_id = pgid as _;
+
+    Ok(0)
+}
+
 /// sched_yield() causes the calling thread to relinquish the CPU. The thread is moved to the end of the queue for its static
 /// priority and a new thread gets to run.
 pub fn sys_sched_yield(
@@ -293,7 +329,6 @@ pub fn sys_execve(
     let envp = Ptr::new(envp as *mut u8)
         .read_c_string()
         .unwrap_or_default();
-    kinfo!("execev: {pathname}, {argv}, {envp}");
 
     // Read the file from the disk.
     let mut proc = thread.parent.lock();

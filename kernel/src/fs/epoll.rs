@@ -30,6 +30,12 @@ pub struct EpollInstance {
     pub(crate) epoll_cloexec: bool,
 }
 
+impl Clone for EpollInstance {
+    fn clone(&self) -> Self {
+        EpollInstance::new(false)
+    }
+}
+
 impl EpollInstance {
     pub fn new(epoll_cloexec: bool) -> Self {
         Self {

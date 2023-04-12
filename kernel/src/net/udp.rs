@@ -1,4 +1,4 @@
-use alloc::{vec, vec::Vec};
+use alloc::{boxed::Box, vec, vec::Vec};
 use smoltcp::socket::udp::{PacketBuffer, PacketMetadata, Socket};
 
 use core::{any::Any, net::SocketAddr, time::Duration};
@@ -110,5 +110,9 @@ impl SocketTrait for UdpStream {
 
     fn set_fd(&mut self, fd: u64) {
         todo!()
+    }
+
+    fn clone_as_box(&self) -> Box<dyn SocketTrait> {
+        Box::new(self.clone())
     }
 }

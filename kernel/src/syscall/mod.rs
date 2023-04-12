@@ -432,6 +432,7 @@ async fn do_handle_syscall(
         SYS_WRITE => sys_write(thread, ctx, syscall_registers),
         SYS_OPEN => sys_open(thread, ctx, syscall_registers),
         SYS_CLOSE => sys_close(thread, ctx, syscall_registers),
+        SYS_POLL => sys_poll(thread, ctx, syscall_registers).await,
         SYS_READV => sys_readv(thread, ctx, syscall_registers).await,
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
         SYS_LSEEK => sys_lseek(thread, ctx, syscall_registers),
@@ -469,6 +470,7 @@ async fn do_handle_syscall(
         SYS_MADVISE => sys_madvice(thread, ctx, syscall_registers),
 
         SYS_KILL => sys_kill(thread, ctx, syscall_registers),
+        SYS_TKILL => sys_tkill(thread, ctx, syscall_registers),
         SYS_RT_SIGPROCMASK => sys_rt_sigprocmask(thread, ctx, syscall_registers),
         SYS_RT_SIGACTION => sys_rt_sigaction(thread, ctx, syscall_registers),
         SYS_RT_SIGRETURN => sys_rt_sigreturn(thread, ctx, syscall_registers),
@@ -479,6 +481,8 @@ async fn do_handle_syscall(
         SYS_GETGID => sys_getgid(thread, ctx, syscall_registers),
 
         SYS_GETPPID => sys_getppid(thread, ctx, syscall_registers),
+        SYS_GETPGID => sys_getpgid(thread, ctx, syscall_registers),
+        SYS_SETPGID => sys_setpgid(thread, ctx, syscall_registers),
         SYS_GETTID => sys_gettid(thread, ctx, syscall_registers),
         SYS_GETPID => sys_getpid(thread, ctx, syscall_registers),
         SYS_EXECVE => sys_execve(thread, ctx, syscall_registers),

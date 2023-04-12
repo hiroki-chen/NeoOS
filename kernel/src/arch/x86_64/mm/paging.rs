@@ -519,10 +519,6 @@ impl PageTableBehaviors for KernelPageTable {
         let new_page_table = self.page_table_frame.start_address().as_u64();
 
         if old_page_table == new_page_table {
-            kwarn!(
-                "validate(): duplicate page table found: {:#x}",
-                new_page_table
-            );
             return;
         }
 

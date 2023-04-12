@@ -400,6 +400,10 @@ impl SocketTrait for TcpStream {
     fn ty(&self) -> SocketType {
         SocketType::Tcp
     }
+
+    fn clone_as_box(&self) -> Box<dyn SocketTrait> {
+        Box::new(self.clone())
+    }
 }
 
 // Of course fd can be sent across threads safely.

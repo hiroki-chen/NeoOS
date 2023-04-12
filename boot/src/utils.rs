@@ -134,7 +134,7 @@ impl<'a> BootLoaderConfig<'a> {
             initramfs,
             initramfs_size,
             first_proc,
-            args
+            args,
         }
     }
 }

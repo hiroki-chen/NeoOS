@@ -362,7 +362,10 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
         .collect::<Vec<_>>();
 
     for (idx, info) in queue.into_iter() {
-        let signal = unsafe { core::mem::transmute::<usize, Signal>(info.signo) };
+        let signal = match Signal::try_from(info.signo) {
+            Ok(signal) => signal,
+            Err(_) => return false,
+        };
         process.sig_queue.remove(idx);
         process.pending_sigset.remove_signal(signal);
 

@@ -217,6 +217,22 @@ pub struct EpollEvent {
 }
 
 bitflags! {
+    // For `sys_poll`. see <https://man7.org/linux/man-pages/man2/poll.2.html>.
+    pub struct PollEvents: u16 {
+        /// There is data to read.
+        const IN = 0x0001;
+        /// Writing is now possible, though a write larger than the available space in a socket or pipe will still block.
+        const OUT = 0x0004;
+        /// Error condition (return only)
+        const ERR = 0x0008;
+        /// Hang up (return only)
+        const HUP = 0x0010;
+        /// Invalid request: fd not open (return only)
+        const INVAL = 0x0020;
+    }
+}
+
+bitflags! {
     /// Also see APFS's manual.
     pub struct DirentType: u8 {
         const DT_UNKNOWN  = 0;
@@ -454,6 +470,17 @@ pub enum FcntlCommand {
     FDupfdCloexec = 1030,
     #[num_enum(default)]
     Unknown,
+}
+
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct Pollfd {
+    /// file descriptor
+    pub fd: i64,
+    /// requested events
+    pub events: u16,
+    /// returned events
+    pub revents: u16,
 }
 
 /// Converts a raw INode metadata to file type | mode for [`Stat`].

@@ -154,8 +154,8 @@ impl Process {
         }
         self.threads.clear();
 
-        kinfo!("process {} exit with {}", self.process_id, self.exit_code);
-        kinfo!("mmap is\n{}", self.vm.lock().get_maps().unwrap());
+        kdebug!("process {} exit with {}", self.process_id, self.exit_code);
+        kdebug!("mmap is\n{}", self.vm.lock().get_maps().unwrap());
     }
 
     /// The process has a base working directory and we can invoke this function to lookup a certain inode at a given

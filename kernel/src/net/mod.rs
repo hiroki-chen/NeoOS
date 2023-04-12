@@ -1,6 +1,7 @@
 //! The network stacks including socket.
 
 use alloc::{
+    boxed::Box,
     collections::{BTreeMap, BTreeSet, VecDeque},
     vec,
     vec::Vec,
@@ -227,6 +228,8 @@ impl Drop for ListenTableEntry {
 
 /// Defines a set of socket-like behaviors for tcp, udp, quic, etc. protocols.
 pub trait Socket: Send + Sync {
+    fn clone_as_box(&self) -> Box<dyn Socket>;
+
     /// Polls this socket.
     fn poll(&self) -> KResult<PollStatus> {
         Err(Errno::EINVAL)
@@ -285,4 +288,10 @@ pub trait Socket: Send + Sync {
 
     /// Gets the type of this socket.
     fn ty(&self) -> SocketType;
+}
+
+impl Clone for Box<dyn Socket> {
+    fn clone(&self) -> Self {
+        self.clone_as_box()
+    }
 }

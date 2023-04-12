@@ -2,7 +2,7 @@
 
 use core::any::Any;
 
-use rcore_fs::vfs::{make_rdev, FsError, INode, Metadata, PollStatus, Result, Timespec, FileType};
+use rcore_fs::vfs::{make_rdev, FileType, FsError, INode, Metadata, PollStatus, Result, Timespec};
 
 use crate::process::search_by_id;
 

@@ -425,6 +425,7 @@ impl File {
 }
 
 /// Anything that looks like a `file`.
+#[derive(Clone)]
 pub enum FileObject {
     /// A regular file object.
     File(File),
@@ -433,6 +434,7 @@ pub enum FileObject {
     /// An epoll instance.
     Epoll(EpollInstance),
 }
+
 
 impl FileObject {
     /// Io control interface. This function dispatches the request to each file.
@@ -447,6 +449,15 @@ impl FileObject {
     pub fn poll(&self) -> KResult<PollStatus> {
         match self {
             FileObject::File(file) => file.poll(),
+            FileObject::Socket(socket) => socket.poll(),
+            // Polling an epoll instance is meaningless.
+            _ => Err(Errno::EINVAL),
+        }
+    }
+
+    pub async fn async_poll(&self) -> KResult<PollStatus> {
+        match self {
+            FileObject::File(file) => file.async_poll().await,
             FileObject::Socket(socket) => socket.poll(),
             // Polling an epoll instance is meaningless.
             _ => Err(Errno::EINVAL),
