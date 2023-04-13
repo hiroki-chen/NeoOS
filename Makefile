@@ -15,7 +15,7 @@
 
 .phony: all clean clean_app test efi debug clippy sample_program
 
-UNAME := $(shell uname)
+UNAME		:= $(shell uname)
 BACKTRACE	?= 5
 OS_LOG_LEVEL	?= info
 TEST_KERNEL	?= ./test_jump.S
@@ -74,7 +74,9 @@ all: kernel
 sample_program:
 	@mkdir -p $(WORK_DIR)/bin
 	@mkdir -p $(WORK_DIR)/lib
+ifeq ($(UNAME), Linux)
 	@cp /usr/lib/x86_64-linux-musl/libc.so $(WORK_DIR)/lib/ld-musl-x86_64.so.1
+endif
 	@$(MAKE) -C sample_programs
 
 # Creates virtual hard disk.
@@ -95,7 +97,7 @@ ifeq ($(UNAME), Darwin)
 	@$(DISKUTIL_GET) | xargs -I {} diskutil mountDisk {}
 
 	@cd /Volumes/untitled && mkdir dev proc
-	@cd $(WORK_DIR) && cp -r bin /Volumes/untitled && cp -r lib /Volumes/untitled && && cp busybox /mnt
+	@cd $(WORK_DIR) && cp -r bin /Volumes/untitled && cp -r lib /Volumes/untitled && cp busybox /Volumes/untitled
 	@$(DISKUTIL_GET) | xargs -I {} hdiutil detach {}
 else
 	@cd $(WORK_DIR) && mkfs.apfs $(DISK)
