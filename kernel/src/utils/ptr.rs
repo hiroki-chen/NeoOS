@@ -156,6 +156,34 @@ impl Ptr<u8> {
             String::from_utf8(s).map_err(|_| Errno::EFAULT)
         }
     }
+
+    /// Reads a C-stryle string array (i.e., const char* arr[]) into the kernel and converts it to a [`Vec<String>`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ptr = 0xdeadbeef as *const u8;
+    /// let s = Ptr::new(ptr as *mut u8).read_c_string_array().expect("failed to read!");
+    /// println!("the array is {:?}", s);
+    /// ```
+    pub fn read_c_string_array(&self) -> KResult<Vec<String>> {
+        if self.is_null() {
+            return Ok(Vec::new());
+        } else {
+            let mut res = Vec::new();
+            let ptr = self.ptr as *const *const u8;
+
+            for i in 0.. {
+                let str_ptr = unsafe { copy_from_user(ptr.add(i)) }?;
+                if str_ptr.is_null() {
+                    break;
+                }
+                res.push(Ptr::new(str_ptr as *mut u8).read_c_string()?);
+            }
+
+            Ok(res)
+        }
+    }
 }
 
 impl ToString for Ptr<u8> {

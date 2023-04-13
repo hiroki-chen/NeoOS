@@ -402,6 +402,14 @@ impl File {
         let cmd = FcntlCommand::try_from(raw_cmd).unwrap();
 
         match cmd {
+            FcntlCommand::FDupfd => {
+                let proc = thread.parent.lock();
+                let new_fd = (arg..)
+                    .find(|fd| !proc.opened_files.contains_key(&fd))
+                    .unwrap();
+                drop(proc);
+                do_dup(thread, fd, new_fd, None)
+            }
             // FcntlCommand::FGetfd => (
             FcntlCommand::FSetfd => {
                 self.fd_cloexec = arg & 0x1 != 0;
@@ -434,7 +442,6 @@ pub enum FileObject {
     /// An epoll instance.
     Epoll(EpollInstance),
 }
-
 
 impl FileObject {
     /// Io control interface. This function dispatches the request to each file.
@@ -483,6 +490,15 @@ impl FileObject {
     pub async fn read(&self, buf: &mut [u8]) -> KResult<usize> {
         match self {
             FileObject::File(file) => file.read_buf(buf).await,
+            FileObject::Socket(socket) => socket.read(buf).map(|(len, _)| len),
+            FileObject::Epoll(_) => Err(Errno::EBADF),
+        }
+    }
+
+    pub async fn read_at(&self, offset: usize, buf: &mut [u8]) -> KResult<usize> {
+        match self {
+            FileObject::File(file) => file.read_at(offset, buf).await,
+            // Ignored.
             FileObject::Socket(socket) => socket.read(buf).map(|(len, _)| len),
             FileObject::Epoll(_) => Err(Errno::EBADF),
         }

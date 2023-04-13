@@ -226,9 +226,10 @@ impl Arena {
         //     kwarn!("arena size is not 4KB aligned.");
         // }
 
-        for page in
-            Page::<Size4KiB>::range_inclusive(page!(self.range.start), page!(self.range.end - 1))
-        {
+        for page in Page::<Size4KiB>::range_inclusive(
+            page!(self.range.start),
+            page!(self.range.end.saturating_sub(1)),
+        ) {
             // Invoke callback and let it do something for us.
             self.callback
                 .map(page_table, page.start_address(), &self.flags);
@@ -248,9 +249,10 @@ impl Arena {
         //     return Err(Errno::EINVAL);
         // }
 
-        for mem in self.range.clone().step_by(PAGE_SIZE) {
-            let page = page!(mem);
-            // Invoke callback and let it do something for us.
+        for page in Page::<Size4KiB>::range_inclusive(
+            page!(self.range.start),
+            page!(self.range.end.saturating_sub(1)),
+        ) {
             self.callback.unmap(page_table, page.start_address());
         }
 
@@ -652,7 +654,7 @@ where
             kdebug!("cloning area {item:#x?}");
 
             let page_start = page!(item.range.start);
-            let page_end = page!(item.range.end - 1);
+            let page_end = page!(item.range.end.saturating_sub(1));
 
             for page in Page::range_inclusive(page_start, page_end) {
                 item.callback.clone_and_map(

@@ -1,6 +1,6 @@
 //! Some utility functions and data structures that the kernel can take use of.
 
-use alloc::sync::Arc;
+use alloc::{string::String, sync::Arc, vec::Vec};
 use rcore_fs::vfs::{INode, Timespec};
 
 use crate::{
@@ -80,5 +80,44 @@ pub fn update_inode_time(inode: &Arc<dyn INode>, ty: InodeOpType) {
                 };
             }
         }
+    }
+}
+
+pub fn realpath(pathname: &str) -> String {
+    // Process '.' and '..' in advance: '.' can be ignored and '..' means to pop up the directory stack.
+    // E.g.: ./proc/foo/bar/../bar/./curdir => proc/foo/bar/curdir
+    let dir_items = pathname.split('/').collect::<Vec<&str>>();
+    let mut sanized_dir_items = Vec::new();
+
+    // We visit the vector reversely and remove '.' and pop up the previous directory if we visit non-leading '..'
+    // What about some patterns like "./.."?
+    let mut idx = 0usize;
+    while idx < dir_items.len() {
+        let dir = dir_items[idx];
+
+        match dir {
+            "." => (),
+            ".." => {
+                if sanized_dir_items.is_empty() {
+                    sanized_dir_items.push(String::from(".."));
+                } else {
+                    if sanized_dir_items.last().unwrap() != ".." {
+                        // Removes the last item.
+                        sanized_dir_items.pop();
+                    } else {
+                        sanized_dir_items.push(String::from(".."));
+                    }
+                }
+            }
+            _ => {
+                sanized_dir_items.push(String::from(dir));
+            }
+        }
+        idx += 1;
+    }
+
+    match sanized_dir_items.is_empty() {
+        true => ".".into(),
+        false => sanized_dir_items.join("/"),
     }
 }

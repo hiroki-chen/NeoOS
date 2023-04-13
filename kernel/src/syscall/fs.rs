@@ -33,7 +33,7 @@ use crate::{
         Dirent, DirentType, EpollEvent, EpollFlags, EpollOp, PollEvents, Pollfd, Stat,
         AT_SYMLINK_NOFOLLOW, SEEK_CUR, SEEK_END, SEEK_SET,
     },
-    utils::{ptr::Ptr, split_path, update_inode_time},
+    utils::{ptr::Ptr, realpath, split_path, update_inode_time},
 };
 
 bitflags! {
@@ -407,6 +407,72 @@ pub fn sys_writev(
     let mut proc = thread.parent.lock();
     let file = proc.get_fd(fd)?;
     let len = file.write(&io_vectors).unwrap();
+
+    Ok(len)
+}
+
+/// Changes the current working directory.
+pub fn sys_chdir(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let pathname = syscall_registers[0];
+    let pathname = Ptr::new(pathname as *mut u8).read_c_string()?;
+    // busybox shell will do this for us, but w.l.o.g. we should do this.
+    let realpath = realpath(&pathname);
+
+    let mut proc = thread.parent.lock();
+
+    let inode = proc.read_inode(&pathname)?;
+    let metadata = inode.metadata().map_err(|_| Errno::EINVAL)?;
+
+    if metadata.type_ != rcore_fs::vfs::FileType::Dir {
+        return Err(Errno::ENOTDIR);
+    }
+
+    proc.cwd = realpath;
+    Ok(0)
+}
+
+/// sendfile() copies data between one file descriptor and another and is more efficient than read and write bcause
+/// the operation occurs in the kernel space.
+pub async fn sys_sendfile(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    // int out_fd, int in_fd, off_t *offset, size_t count
+    let out_fd = syscall_registers[0];
+    let in_fd = syscall_registers[1];
+    let offset = syscall_registers[2];
+    let count = syscall_registers[3];
+
+    let mut proc = thread.parent.lock();
+    // Since MIRI detects multiple mutable borrows from proc's opened files, we need to first copy
+    // the content from the source file using a scope and then copy to the destination using another
+    // scope to avoid race condition.
+    let buf = {
+        let src = proc.get_fd(in_fd)?;
+        // If `offset` is not NULL, then we read from `offset`; otherwise, we read from the offset
+        // stored in the source file object, and if it is non-NULL, we need to update this value.
+        let offset = Ptr::new(offset as *mut u64);
+        // Prepare a buffer.
+        let mut buf = vec![0u8; count as usize];
+
+        let len = if offset.is_null() {
+            src.read(&mut buf).await?
+        } else {
+            // `read_at` will not adjust the file offset.
+            unsafe { src.read_at(offset.read()? as _, &mut buf) }.await?
+        };
+
+        buf[..len].to_vec()
+    };
+
+    // Then copy the buffer to the destination file.
+    let dst = proc.get_fd(out_fd)?;
+    let len = dst.write(buf.as_slice())?;
 
     Ok(len)
 }

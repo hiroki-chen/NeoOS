@@ -107,7 +107,7 @@ pub async fn trap_dispatcher_user(
                 "spawn(): illegal instruction. Dumped context is {:#x?}",
                 ctx.get_user_context()
             );
-            true
+            false
         }
         PAGE_FAULT_INTERRUPT => {
             let cr2 = get_pf_addr();
@@ -233,7 +233,7 @@ fn dump_all(tf: &mut TrapFrame) {
 /// Handles page fault.
 fn page_fault(tf: &mut TrapFrame) {
     let pf_addr = arch::mm::paging::get_pf_addr();
-    kinfo!(
+    kdebug!(
         "page_fault(): detected page fault interrupt @ {:#x}.",
         pf_addr
     );

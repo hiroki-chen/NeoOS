@@ -323,12 +323,9 @@ pub fn sys_execve(
     let pathname = Ptr::new(pathname as *mut u8)
         .read_c_string()
         .unwrap_or_default();
-    let argv = Ptr::new(argv as *mut u8)
-        .read_c_string()
-        .unwrap_or_default();
-    let envp = Ptr::new(envp as *mut u8)
-        .read_c_string()
-        .unwrap_or_default();
+
+    let args = Ptr::new(argv as *mut u8).read_c_string_array()?;
+    let envp = Ptr::new(envp as *mut u8).read_c_string_array()?;
 
     // Read the file from the disk.
     let mut proc = thread.parent.lock();
@@ -337,11 +334,8 @@ pub fn sys_execve(
     // Create a new thread with virtual memory copied.
     let mut vm = thread.vm.lock();
     let name = split_path(&pathname)?.1;
-    let args = argv.split(' ').map(|s| s.into()).collect();
-    let envp = envp.split(' ').map(|s| s.into()).collect();
     let (stack_top, elf_entry) =
         Thread::create_memory(&inode, &pathname, name, args, envp, &mut vm)?;
-
     // Reset signal actions.
     proc.actions.iter_mut().for_each(|sigaction| {
         *sigaction = SigAction::default();

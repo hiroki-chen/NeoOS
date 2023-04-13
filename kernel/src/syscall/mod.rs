@@ -436,6 +436,8 @@ async fn do_handle_syscall(
         SYS_READV => sys_readv(thread, ctx, syscall_registers).await,
         SYS_WRITEV => sys_writev(thread, ctx, syscall_registers),
         SYS_LSEEK => sys_lseek(thread, ctx, syscall_registers),
+        SYS_CHDIR => sys_chdir(thread, ctx, syscall_registers),
+        SYS_SENDFILE => sys_sendfile(thread, ctx, syscall_registers).await,
         SYS_DUP => sys_dup(thread, ctx, syscall_registers),
         SYS_DUP2 => sys_dup2(thread, ctx, syscall_registers),
         SYS_DUP3 => sys_dup3(thread, ctx, syscall_registers),

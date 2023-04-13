@@ -602,8 +602,8 @@ pub fn spawn(thread: Arc<Thread>) -> KResult<()> {
     Ok(())
 }
 
-/// Spawn a debug thread with in-memory instructions.
-pub fn debug_threading(first_proc: &str, args: &str) {
+/// Initializes the busybox shell (ash).
+pub fn init_ash(first_proc: &str, args: &str) {
     kinfo!("this is : {first_proc}");
     let debug_inode = ROOT_INODE.lookup(first_proc).unwrap();
     let mut args = args.split(" ").map(|s| s.into()).collect::<Vec<String>>();
