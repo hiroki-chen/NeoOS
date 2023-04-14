@@ -549,6 +549,31 @@ pub fn sys_newfstatat(
     do_stat(thread, dfd, filename, statbuf as *mut Stat, flag)
 }
 
+pub fn sys_readlink(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let pathname = syscall_registers[0];
+    let buf = syscall_registers[1];
+    let bufsiz = syscall_registers[2];
+
+    do_readlink(thread, AT_FDCWD as _, pathname as _, buf as _, bufsiz)
+}
+
+pub fn sys_readlinkat(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let dirfd = syscall_registers[0];
+    let pathname = syscall_registers[1];
+    let buf = syscall_registers[2];
+    let bufsiz = syscall_registers[3];
+
+    do_readlink(thread, dirfd, pathname as _, buf as _, bufsiz)
+}
+
 pub fn sys_stat(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
@@ -1049,6 +1074,25 @@ fn do_epoll_create(thread: &Arc<Thread>, epoll_cloexec: bool) -> KResult<usize> 
     let mut proc = thread.parent.lock();
     let epoll = EpollInstance::new(epoll_cloexec);
     proc.add_file(FileObject::Epoll(epoll)).map(|fd| fd as _)
+}
+
+fn do_readlink(
+    thread: &Arc<Thread>,
+    dirfd: u64,
+    pathname: *const u8,
+    buf: *mut u8,
+    bufsiz: u64,
+) -> KResult<usize> {
+    let pathname = Ptr::new(pathname as *mut u8).read_c_string()?;
+    let proc = thread.parent.lock();
+    let inode = proc.read_inode_at(dirfd, pathname.as_str(), false)?;
+    if inode.metadata().map_err(|_| Errno::EINVAL)?.type_ == rcore_fs::vfs::FileType::SymLink {
+        let buf = unsafe { core::slice::from_raw_parts_mut(buf, bufsiz as _) };
+        let len = inode.read_at(0, buf).map_err(fserror_to_kerror)?;
+        Ok(len)
+    } else {
+        Err(Errno::EINVAL)
+    }
 }
 
 // Ignored. Permission check will be added in the future.

@@ -12,6 +12,7 @@ use smoltcp::{
     wire::{IpProtocol, IpVersion, Ipv4Address, Ipv4Packet},
 };
 
+use crate::drivers::NETWORK_DRIVERS;
 #[allow(unused_imports)]
 use crate::{
     drivers::intel_e1000::{IP_CIDR_HOST, IP_CIDR_TAP},
@@ -29,11 +30,14 @@ use super::{
 #[derive(Clone)]
 pub struct RawSocket {
     socket: SocketWrapper,
+    /// Raw file descriptor.
     raw_fd: Option<u64>,
     /// The address this socket binds to.
     addr: Option<SocketAddr>,
     /// Socket options.
     socket_options: BTreeMap<SocketOptions, Vec<u8>>,
+    /// protocol type.
+    protocol: IpProtocol,
 }
 
 impl RawSocket {
@@ -51,7 +55,26 @@ impl RawSocket {
             raw_fd: None,
             addr: None,
             socket_options: BTreeMap::new(),
+            protocol: protocol_type,
         }
+    }
+
+    /// Constructs a packet according to `protocol`.
+    fn make_packet(&self, src: Ipv4Address, dst: Ipv4Address, data: &[u8]) -> KResult<Vec<u8>> {
+        let mut buf = vec![0u8; IPV4_HDR_LEN + data.len()];
+        buf[9] = self.protocol.into();
+        let mut packet = Ipv4Packet::new_unchecked(buf);
+
+        // Set up the packet.
+        packet.set_src_addr(src);
+        packet.set_dst_addr(dst);
+        packet.set_version(4);
+        packet.set_header_len(IPV4_HDR_LEN as _);
+        packet.set_total_len((IPV4_HDR_LEN + data.len()) as _);
+        packet.payload_mut().copy_from_slice(data);
+        packet.fill_checksum();
+
+        Ok(packet.into_inner())
     }
 }
 
@@ -60,9 +83,11 @@ impl SocketTrait for RawSocket {
         let mut socket_set = SOCKET_SET.lock();
         let socket = socket_set.get_mut::<Socket>(self.socket.0);
 
-        if socket.can_recv() {
-            let read_len = socket.recv_slice(buf).map_err(|_| Errno::ENOTCONN)?;
+        NETWORK_DRIVERS.read().iter().for_each(|driver| {
+            driver.poll();
+        });
 
+        if let Ok(read_len) = socket.recv_slice(buf) {
             // Construct the remote socket address.
             let packet = Ipv4Packet::new_checked(buf.to_vec()).map_err(|_| Errno::EINVAL)?;
             let ip_addr = packet.src_addr().as_bytes().to_vec();
@@ -71,17 +96,13 @@ impl SocketTrait for RawSocket {
 
             Ok((read_len, Some(addr)))
         } else {
-            Err(Errno::ENOMEDIUM)
+            Ok((0, None))
         }
     }
 
     fn write(&self, buf: &[u8], dst: Option<SocketAddr>) -> KResult<usize> {
         let mut socket_set = SOCKET_SET.lock();
         let socket = socket_set.get_mut::<Socket>(self.socket.0);
-
-        if !socket.can_recv() {
-            return Err(Errno::ENOMEDIUM);
-        }
 
         // By default, there would be no header for the raw socket.
         let has_header = self
@@ -105,28 +126,28 @@ impl SocketTrait for RawSocket {
             // Assemble an IP header and send to the socket.
             match dst {
                 Some(SocketAddr::V4(addr)) => {
-                    if let Some(SocketAddr::V4(src_addr)) = self.addr {
-                        // Determine the destination IP address from the function's parameter.
-                        let ip_address = Ipv4Address::from_bytes(&addr.ip().octets());
-                        let buffer = vec![0u8; IPV4_HDR_LEN + buf.len()];
+                    let src_addr = match self.addr {
+                        Some(SocketAddr::V4(src_addr)) => src_addr.ip().octets(),
+                        Some(_) => return Err(Errno::ESOCKTNOSUPPORT),
+                        None => {
+                            // Get from the network driver.
+                            match NETWORK_DRIVERS.read().first().unwrap().ipv4_addr() {
+                                Some(addr) => addr.0,
+                                None => return Err(Errno::ENOMEDIUM),
+                            }
+                        }
+                    };
 
-                        // Assemble the header.
-                        let mut packet = Ipv4Packet::new_unchecked(buffer);
-                        packet.set_dst_addr(ip_address);
-                        packet.set_src_addr(Ipv4Address::from_bytes(&src_addr.ip().octets()));
-                        packet.set_header_len(20);
-                        packet.set_version(4);
-                        packet.payload_mut().copy_from_slice(&buf);
-                        packet.fill_checksum();
+                    // Determine the destination IP address from the function's parameter.
+                    let dst_addr = Ipv4Address::from_bytes(&addr.ip().octets());
+                    let src_addr = Ipv4Address::from_bytes(&src_addr);
+                    let packet = self.make_packet(src_addr, dst_addr, buf)?;
+                    // Send the packet.
+                    socket
+                        .send_slice(packet.as_slice())
+                        .map_err(|_| Errno::ENOTCONN)?;
 
-                        // Send the packet.
-                        socket
-                            .send_slice(packet.as_ref())
-                            .map_err(|_| Errno::ENOTCONN)
-                            .map(|_| buf.len() + IPV4_HDR_LEN)
-                    } else {
-                        Err(Errno::ENOMEDIUM)
-                    }
+                    Ok(buf.len())
                 }
                 Some(_) | None => Err(Errno::ENOMEDIUM),
             }
@@ -139,8 +160,6 @@ impl SocketTrait for RawSocket {
         }
 
         self.addr.replace(addr);
-        let mut socket_set = SOCKET_SET.lock();
-        let socket = socket_set.get_mut::<Socket>(self.socket.0);
 
         Ok(())
     }

@@ -36,7 +36,7 @@ pub fn sys_rt_sigaction(
     // rsi: const struct sigaction* act
     // rdx: struct sigaction* oldact
     // r10: size_t sigsetsize
-    let signal = Signal::try_from(syscall_registers[0] as usize).map_err(|_| Errno::EINVAL)?;
+    let signal = Signal::from(syscall_registers[0]);
     let action = syscall_registers[1];
     let old_action = syscall_registers[2];
     let size = syscall_registers[3] as usize;
@@ -134,7 +134,7 @@ pub fn sys_kill(
 ) -> KResult<usize> {
     let pid = syscall_registers[0] as i64;
     let sig = syscall_registers[1];
-    let signal = Signal::try_from(sig as usize).map_err(|_| Errno::EINVAL)?;
+    let signal = Signal::from(sig);
 
     // If pid is positive, then signal sig is sent to the process with
     // the ID specified by pid; otherwise, broadcast is needed.

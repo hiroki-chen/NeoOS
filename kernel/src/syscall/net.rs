@@ -74,14 +74,15 @@ pub fn sys_socket(
     let protocol = syscall_registers[2];
 
     // FIXME: We assume they are valid for the time being.
-    let socket_type = unsafe { core::mem::transmute::<u8, SocketType>((ty & 0xff) as u8) };
-    let ipproto_type = unsafe { core::mem::transmute::<u8, IpProto>((protocol & 0xff) as u8) };
+    let socket_type = SocketType::from((ty & 0xff) as u8);
+    let ipproto_type = IpProto::from((protocol & 0xff) as u8);
 
     let socket: Box<dyn Socket> = match domain {
         AF_INET | AF_UNIX => match socket_type {
             SocketType::SockStream => Box::new(TcpStream::new()),
             SocketType::SockDgram => Box::new(UdpStream::new()),
             SocketType::SockRaw => Box::new(RawSocket::new(IpProtocol::from(ipproto_type as u8))),
+            SocketType::Unknown => return Err(Errno::EINVAL),
         },
 
         _ => return Err(Errno::EINVAL), // unsupported.
@@ -236,7 +237,7 @@ pub fn sys_setsockopt(
     let option_value = syscall_registers[3];
     let option_len = syscall_registers[4];
 
-    let option_name = unsafe { core::mem::transmute::<u64, SocketOptions>(option_name) };
+    let option_name = SocketOptions::from(option_name);
     let mut proc = thread.parent.lock();
     let socket = proc.get_fd(sockfd)?;
 
@@ -273,7 +274,7 @@ pub fn sys_getsockopt(
     let socket = proc.get_fd(sockfd)?;
 
     if let FileObject::Socket(socket) = socket {
-        let optname = unsafe { core::mem::transmute::<u64, SocketOptions>(optname) };
+        let optname = SocketOptions::from(optname);
         match socket.getsockopt(optname) {
             Ok(val) => unsafe {
                 opt_ptr.write_slice(&val);
@@ -339,7 +340,8 @@ pub fn sys_sendto(
 
         // TODO: Check pointer.
         let buf = unsafe { core::slice::from_raw_parts(buf as *const u8, len as _) };
-        socket.write(buf, dst_addr)
+        let len = socket.write(buf, dst_addr)?;
+        Ok(len)
     } else {
         Err(Errno::ENOTSOCK)
     }
@@ -417,6 +419,8 @@ pub fn sys_recvfrom(
                 })?;
             }
         }
+
+        // kinfo!("recevied {:02x?}", &buf[..len]);
 
         Ok(len)
     } else {

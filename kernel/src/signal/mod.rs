@@ -11,7 +11,7 @@ use core::{fmt::Debug, mem::MaybeUninit};
 
 use alloc::{sync::Arc, vec::Vec};
 use bitflags::bitflags;
-use num_enum::TryFromPrimitive;
+use num_enum::FromPrimitive;
 
 use crate::{
     arch::{interrupt::Context, signal::SigContext},
@@ -85,8 +85,8 @@ impl SigSet {
 }
 
 /// Signals
-#[derive(Debug, PartialEq, Eq, Clone, Copy, TryFromPrimitive)]
-#[repr(usize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[repr(u64)]
 pub enum Signal {
     SIGHUP = 1,
     SIGINT = 2,
@@ -121,6 +121,9 @@ pub enum Signal {
     SIGSYS = 31,
     SIGRTMIN = 32,
     SIGRTMAX = 63,
+
+    #[num_enum(default)]
+    SIGUNKNOWN,
 }
 
 bitflags! {
@@ -300,7 +303,7 @@ fn get_sigstack_sp(
 ///
 /// Kernels make a distinction between *generating* a signal and *delivering* the signal.
 pub fn send_signal(current_process: Arc<Mutex<Process>>, dest: i64, info: SigInfo) {
-    let signal = unsafe { core::mem::transmute::<usize, Signal>(info.signo) };
+    let signal = Signal::from(info.signo as u64);
 
     let mut process = current_process.lock();
     // If the process already has a pending signal of that type, the new signal is ignored.
@@ -349,7 +352,7 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
         .enumerate()
         .filter_map(|(idx, (info, dest))| {
             if *dest == -1 || *dest as u64 == thread.id {
-                let signal = unsafe { core::mem::transmute::<usize, Signal>(info.signo) };
+                let signal = Signal::from(info.signo as u64);
                 if thread.inner.lock().sigmask.contains(signal) {
                     None
                 } else {
@@ -362,10 +365,7 @@ pub fn handle_signal(thread: &Arc<Thread>, ctx: &mut Context) -> bool {
         .collect::<Vec<_>>();
 
     for (idx, info) in queue.into_iter() {
-        let signal = match Signal::try_from(info.signo) {
-            Ok(signal) => signal,
-            Err(_) => return false,
-        };
+        let signal = Signal::from(info.signo as u64);
         process.sig_queue.remove(idx);
         process.pending_sigset.remove_signal(signal);
 
