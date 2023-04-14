@@ -3,7 +3,10 @@ use smoltcp::socket::udp::{PacketBuffer, PacketMetadata, Socket};
 
 use core::{any::Any, net::SocketAddr, time::Duration};
 
-use crate::{error::KResult, sys::SocketOptions};
+use crate::{
+    error::{Errno, KResult},
+    sys::SocketOptions,
+};
 
 use super::{
     Shutdown, Socket as SocketTrait, SocketType, SocketWrapper, RECVBUF_LEN, SENDBUF_LEN,
@@ -16,6 +19,7 @@ pub const UDP_META_LEN: usize = 1024;
 pub struct UdpStream {
     socket: SocketWrapper,
     addr: Option<SocketAddr>,
+    fd: Option<u64>,
 }
 
 impl UdpStream {
@@ -32,7 +36,11 @@ impl UdpStream {
         );
 
         let socket = SocketWrapper(SOCKET_SET.lock().add(udp_socket_inner));
-        Self { socket, addr: None }
+        Self {
+            socket,
+            addr: None,
+            fd: None,
+        }
     }
 }
 
@@ -49,15 +57,21 @@ impl SocketTrait for UdpStream {
     }
 
     fn bind(&mut self, addr: SocketAddr) -> KResult<()> {
-        todo!()
+        match self.addr {
+            Some(addr) => Err(Errno::EALREADY),
+            None => {
+                self.addr.replace(addr);
+                Ok(())
+            }
+        }
     }
 
     fn listen(&mut self) -> KResult<()> {
-        todo!()
+        Err(Errno::ESOCKTNOSUPPORT)
     }
 
     fn connect(&mut self, addr: SocketAddr) -> KResult<()> {
-        todo!()
+        Err(Errno::ESOCKTNOSUPPORT)
     }
 
     fn setsockopt(&mut self, key: SocketOptions, value: Vec<u8>) -> KResult<()> {
@@ -69,31 +83,29 @@ impl SocketTrait for UdpStream {
     }
 
     fn timeout(&self) -> Option<Duration> {
-        todo!()
+        None
     }
 
     fn peer_addr(&self) -> Option<SocketAddr> {
-        todo!()
+        None
     }
 
     fn addr(&self) -> Option<SocketAddr> {
-        todo!()
+        self.addr
     }
 
-    fn set_timeout(&mut self, timeout: Duration) {
-        todo!()
-    }
+    fn set_timeout(&mut self, timeout: Duration) {}
 
     fn shutdown(&mut self, how: Shutdown) -> KResult<()> {
-        todo!()
+        Err(Errno::ESOCKTNOSUPPORT)
     }
 
     fn as_raw_fd(&self) -> KResult<u64> {
-        todo!()
+        self.fd.ok_or(Errno::ENOMEDIUM)
     }
 
     fn set_nonblocking(&mut self, non_blocking: bool) -> KResult<()> {
-        todo!()
+        Err(Errno::ESOCKTNOSUPPORT)
     }
 
     fn as_any_ref(&self) -> &dyn Any {
@@ -109,7 +121,7 @@ impl SocketTrait for UdpStream {
     }
 
     fn set_fd(&mut self, fd: u64) {
-        todo!()
+        self.fd.replace(fd);
     }
 
     fn clone_as_box(&self) -> Box<dyn SocketTrait> {

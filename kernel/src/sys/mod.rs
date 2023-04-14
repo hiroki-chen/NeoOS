@@ -464,8 +464,12 @@ pub struct Stat {
 pub enum FcntlCommand {
     FDupfd = 0,
     FGetfd = 1,
-    /// Sets the descriptor flags for descriptor.
+    /// set/clear close_on_exec
     FSetfd = 2,
+    /// get file->f_flags
+    FGetfl = 3,
+    /// set file->f_flags
+    FSetfl = 4,
     /// Duplicate
     FDupfdCloexec = 1030,
     #[num_enum(default)]

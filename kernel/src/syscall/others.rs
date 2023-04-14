@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    arch::interrupt::SYSCALL_REGS_NUM,
+    arch::interrupt::{syscall, SYSCALL_REGS_NUM},
     error::{Errno, KResult},
     process::thread::{Thread, ThreadContext},
     sys::{Time, Timespec, Timeval, Timezone, Utsname},
@@ -129,6 +129,23 @@ pub fn sys_time(
     }
 
     Ok(time.as_secs() as _)
+}
+
+/// getgroups() returns the supplementary group IDs of the calling process in list. The argument size should be set to the
+/// maximum number of items that can be stored in the buffer pointed to by list.
+pub fn sys_getgroups(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let size = syscall_registers[0];
+    let list = syscall_registers[1];
+
+    let list = unsafe { core::slice::from_raw_parts_mut(list as *mut u64, size as _) };
+    let gid = thread.parent.lock().process_group_id;
+
+    list[0] = gid;
+    Ok(1)
 }
 
 pub fn sys_clock_gettime(
