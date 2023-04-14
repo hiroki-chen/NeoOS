@@ -1,7 +1,14 @@
 use alloc::{boxed::Box, vec, vec::Vec};
-use smoltcp::socket::udp::{PacketBuffer, PacketMetadata, Socket};
+use smoltcp::{
+    socket::udp::{PacketBuffer, PacketMetadata, RecvError, SendError, Socket},
+    wire::IpEndpoint,
+};
 
-use core::{any::Any, net::SocketAddr, time::Duration};
+use core::{
+    any::Any,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
 use crate::{
     error::{Errno, KResult},
@@ -9,8 +16,8 @@ use crate::{
 };
 
 use super::{
-    Shutdown, Socket as SocketTrait, SocketType, SocketWrapper, RECVBUF_LEN, SENDBUF_LEN,
-    SOCKET_SET,
+    convert_addr, Shutdown, Socket as SocketTrait, SocketType, SocketWrapper, RECVBUF_LEN,
+    SENDBUF_LEN, SOCKET_SET,
 };
 
 pub const UDP_META_LEN: usize = 1024;
@@ -49,11 +56,49 @@ unsafe impl Sync for UdpStream {}
 
 impl SocketTrait for UdpStream {
     fn read(&self, buf: &mut [u8]) -> KResult<(usize, Option<SocketAddr>)> {
-        todo!()
+        let mut socket_set = SOCKET_SET.lock();
+        let socket = socket_set.get_mut::<Socket>(self.socket.0);
+
+        if !socket.is_open() {
+            return Err(Errno::ENOMEDIUM);
+        }
+
+        match socket.recv_slice(buf) {
+            Ok((len, addr)) => {
+                let ip = addr.addr.as_bytes();
+                let port = addr.port;
+                let socket_addr =
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3])), port);
+                Ok((len, Some(socket_addr)))
+            }
+            Err(RecvError::Exhausted) => Ok((0, None)),
+        }
     }
 
     fn write(&self, buf: &[u8], dst: Option<SocketAddr>) -> KResult<usize> {
-        todo!()
+        let mut socket_set = SOCKET_SET.lock();
+        let socket = socket_set.get_mut::<Socket>(self.socket.0);
+
+        if !socket.is_open() {
+            return Err(Errno::ENOMEDIUM);
+        }
+        if let Some(SocketAddr::V4(socket_addr)) = dst {
+            let ip = convert_addr(&socket_addr);
+            let remote_endpoint = IpEndpoint {
+                addr: ip,
+                port: socket_addr.port(),
+            };
+
+            socket
+                .send_slice(buf, remote_endpoint)
+                .map_err(|err| match err {
+                    SendError::Unaddressable => Errno::EADDRNOTAVAIL,
+                    SendError::BufferFull => Errno::ENOMEM,
+                })
+                .map(|_| buf.len())
+        } else {
+            Err(Errno::ESOCKTNOSUPPORT)
+        }
     }
 
     fn bind(&mut self, addr: SocketAddr) -> KResult<()> {

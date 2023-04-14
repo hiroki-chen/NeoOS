@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    arch::interrupt::{syscall, SYSCALL_REGS_NUM},
+    arch::interrupt::SYSCALL_REGS_NUM,
     error::{Errno, KResult},
     process::thread::{Thread, ThreadContext},
     sys::{Time, Timespec, Timeval, Timezone, Utsname},
