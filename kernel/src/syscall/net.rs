@@ -13,10 +13,10 @@ use crate::{
     net::{RawSocket, Shutdown, Socket, TcpStream, UdpStream},
     process::thread::{Thread, ThreadContext},
     sys::{IpProto, MsgHdr, SockAddr, SocketOptions, SocketType, AF_INET, AF_UNIX},
-    utils::ptr::Ptr,
 };
 
 fn get_socket_name<T>(
+    thread: &Arc<Thread>,
     socket: &mut Box<dyn Socket>,
     sockaddr: u64,
     len: usize,
@@ -34,7 +34,7 @@ fn get_socket_name<T>(
         }
     };
 
-    let ptr = Ptr::new(sockaddr as *mut SockAddr);
+    let ptr = thread.vm.lock().get_mut_ptr(sockaddr)?;
     if ptr.is_null() {
         return Err(Errno::EFAULT);
     }
@@ -109,9 +109,7 @@ pub fn sys_connect(
 
     if let FileObject::Socket(socket) = socket {
         // Parse the sockaddr and addrlen.
-        let sockaddr_ptr = Ptr::new(sockaddr as *mut SockAddr);
-        // FIXME: check_read is always wrong.
-        // thread.vm.lock().check_read_array(&sockaddr_ptr, 1).unwrap();
+        let sockaddr_ptr = thread.vm.lock().get_ptr::<SockAddr>(sockaddr)?;
         let addr = unsafe { sockaddr_ptr.read() }?;
 
         let ipv4_addr = match addr.sa_family as u64 {
@@ -139,7 +137,7 @@ pub fn sys_bind(
     let socket = proc.get_fd(sockfd)?;
 
     if let FileObject::Socket(socket) = socket {
-        let sockaddr_ptr = Ptr::new(sockaddr as *mut SockAddr);
+        let sockaddr_ptr = thread.vm.lock().get_ptr::<SockAddr>(sockaddr)?;
         let addr = unsafe { sockaddr_ptr.read() }?;
 
         let ipv4_addr = match addr.sa_family as u64 {
@@ -264,8 +262,9 @@ pub fn sys_getsockopt(
     let optval = syscall_registers[3];
     let optlen = syscall_registers[4];
 
-    let opt_ptr = Ptr::new(optname as *mut u8);
-    let len_ptr = Ptr::new(optlen as *mut u64);
+    let vm = thread.vm.lock();
+    let opt_ptr = vm.get_ptr(optname)?;
+    let len_ptr = vm.get_ptr::<u64>(optlen)?;
     if opt_ptr.is_null() || len_ptr.is_null() {
         return Err(Errno::EFAULT);
     }
@@ -302,7 +301,7 @@ pub fn sys_getpeername(
     let socket = proc.get_fd(sockfd)?;
 
     if let FileObject::Socket(socket) = socket {
-        get_socket_name::<SockAddr>(socket, sockaddr, socklen as _, false)
+        get_socket_name::<SockAddr>(thread, socket, sockaddr, socklen as _, false)
     } else {
         Err(Errno::ENOTSOCK)
     }
@@ -326,10 +325,11 @@ pub fn sys_sendto(
     let addr_len = syscall_registers[5];
 
     let mut proc = thread.parent.lock();
+    let vm = thread.vm.lock();
     let socket = proc.get_fd(sockfd)?;
     if let FileObject::Socket(socket) = socket {
         // Check if there is dst_addr.
-        let dst_addr = Ptr::new(dst_addr as *mut SockAddr);
+        let dst_addr = vm.get_ptr::<SockAddr>(dst_addr)?;
         let dst_addr = match dst_addr.is_null() {
             true => None,
             false => {
@@ -338,8 +338,7 @@ pub fn sys_sendto(
             }
         };
 
-        // TODO: Check pointer.
-        let buf = unsafe { core::slice::from_raw_parts(buf as *const u8, len as _) };
+        let buf = vm.get_slice(buf, len as _)?;
         let len = socket.write(buf, dst_addr)?;
         Ok(len)
     } else {
@@ -360,8 +359,9 @@ pub fn sys_sendmsg(
     let socket = proc.get_fd(sockfd)?;
 
     if let FileObject::Socket(socket) = socket {
-        let msg_ptr = unsafe { Ptr::new_with_const(msghdr as *const MsgHdr) };
-        // FIXME: Check pointer.
+        let vm = thread.vm.lock();
+
+        let msg_ptr = vm.get_ptr::<MsgHdr>(msghdr)?;
         let msg = unsafe { msg_ptr.read() }?;
         // Read messages from iovec.
         let iovec = msg.msg_iov;
@@ -372,7 +372,7 @@ pub fn sys_sendmsg(
             .collect::<Vec<_>>();
 
         // Get destination address.
-        let dst = match unsafe { Ptr::new(msg.msg_name).read() } {
+        let dst = match unsafe { vm.get_ptr::<SockAddr>(msg.msg_name as _)?.read() } {
             Ok(addr) => Some(addr.to_core_sockaddr()),
             Err(_) => None,
         };
@@ -400,10 +400,12 @@ pub fn sys_recvfrom(
     let mut proc = thread.parent.lock();
     let socket = proc.get_fd(sockfd)?;
     if let FileObject::Socket(socket) = socket {
-        let buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len as _) };
+        let vm = thread.vm.lock();
+        let buf = vm.get_mut_slice(buf, len as _)?;
         let (len, addr) = socket.read(buf)?;
 
-        let ptr = Ptr::new(src_addr as *mut SockAddr);
+        kinfo!("trying to get mutable pointer @ {src_addr:#x}");
+        let ptr = vm.get_mut_ptr(src_addr).unwrap_or_default();
         if let (false, Some(SocketAddr::V4(addr))) = (ptr.is_null(), addr) {
             // We need to write to the `src_addr` (e.g., for UDP connections).
             unsafe {
@@ -419,8 +421,6 @@ pub fn sys_recvfrom(
                 })?;
             }
         }
-
-        // kinfo!("recevied {:02x?}", &buf[..len]);
 
         Ok(len)
     } else {
@@ -441,13 +441,15 @@ pub fn sys_recvmsg(
     let socket = proc.get_fd(sockfd)?;
 
     if let FileObject::Socket(socket) = socket {
-        let mgs_ptr = Ptr::new(msghdr as *mut MsgHdr);
+        let vm = thread.vm.lock();
+        let mgs_ptr = vm.get_mut_ptr::<MsgHdr>(msghdr)?;
         let msg = unsafe { mgs_ptr.read() }?;
         let iovec = msg.msg_iov;
         let iovec_len = msg.msg_iovlen;
 
         let mut buf = [0u8; 4096];
         let (len, addr) = socket.read(&mut buf)?;
+        drop(vm);
         let len = IoVec::write_all_iovecs(thread, iovec, iovec_len as _, &buf[..len])?;
 
         Ok(len)
@@ -472,7 +474,7 @@ pub fn sys_getsockname(
     let socket = proc.get_fd(sockfd)?;
 
     if let FileObject::Socket(socket) = socket {
-        get_socket_name::<SockAddr>(socket, sockaddr, socklen as _, true)
+        get_socket_name::<SockAddr>(thread, socket, sockaddr, socklen as _, true)
     } else {
         Err(Errno::ENOTSOCK)
     }
@@ -500,7 +502,7 @@ fn do_accept(
         if let IpAddr::V4(addr) = peer.ip() {
             // Write back to user space.
             let fd = proc.add_file(FileObject::Socket(accepted))?;
-            let ptr = Ptr::new(sockaddr as *mut SockAddr);
+            let ptr = thread.vm.lock().get_mut_ptr(sockaddr)?;
 
             unsafe {
                 ptr.write(SockAddr {

@@ -613,6 +613,8 @@ pub fn init_ash(first_proc: &str, args: &str) {
         "LD_LIBRARY_PATH=/lib:/usr/lib".into(),
     ];
     let thread = Thread::create(&debug_inode, "/", first_proc, args, envp).unwrap();
-
+    {
+        kinfo!("{}", thread.vm.lock().get_maps().unwrap());
+    }
     spawn(thread).unwrap();
 }

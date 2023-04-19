@@ -10,7 +10,6 @@ use crate::{
     },
     signal::{send_signal, SiFields, SigAction, SigFrame, SigInfo, SigSet, Signal},
     sys::{SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK},
-    utils::ptr::Ptr,
 };
 
 use super::SYS_TKILL;
@@ -173,8 +172,9 @@ pub fn sys_rt_sigprocmask(
         return Err(Errno::EINVAL);
     }
 
-    let set = Ptr::new(set as *mut SigSet);
-    let oldset = Ptr::new(oldset as *mut SigSet);
+    let vm = thread.vm.lock();
+    let set = vm.get_ptr(set)?;
+    let oldset = vm.get_mut_ptr(oldset)?;
 
     if !oldset.is_null() {
         unsafe {

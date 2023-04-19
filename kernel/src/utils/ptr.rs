@@ -1,6 +1,6 @@
 //! A wrapper for raw pointer.
 
-use core::ffi::CStr;
+use core::{ffi::CStr, marker::PhantomData};
 
 use alloc::{
     string::{String, ToString},
@@ -26,37 +26,29 @@ use crate::{
 /// // You can play with the pointer.
 /// let res = some_async_function(ptr).await;
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub struct Ptr<T> {
-    ptr: *mut T,
+pub struct Ptr<T>
+where
+    T: Sized,
+{
+    ptr: u64,
+    _marker: PhantomData<T>,
 }
 
 unsafe impl<T> Send for Ptr<T> {}
 unsafe impl<T> Sync for Ptr<T> {}
 
-impl<T> Ptr<T> {
-    /// Constructs a mutable pointer wrapper from a mutable pointer.
-    pub fn new(raw_ptr: *mut T) -> Self {
-        Self { ptr: raw_ptr }
-    }
-
-    /// Constructs a mutable pointer wrapper from a *const* pointer.
-    ///
-    /// # Safety
-    ///
-    /// This function is unsafe because we assume the internal immutability *can* be broken; or the caller knows that
-    /// the reference is mutable, although marked as `const`. Note however, that this function provideds no guarantee
-    /// that the data behind the pointer is valid or can be modified by this wrapper.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let v = vec![1, 2, 3];
-    /// let ptr = unsafe { Ptr::new_with_const(v.as_ptr()) };
-    /// ```
-    pub unsafe fn new_with_const(raw_ptr: *const T) -> Self {
-        Self::new(raw_ptr as *mut _)
+impl<T> Ptr<T>
+where
+    T: Sized,
+{
+    /// Constructs a pointer wrapper from a given address.
+    pub fn new(raw_ptr: u64) -> Self {
+        Self {
+            ptr: raw_ptr,
+            _marker: PhantomData,
+        }
     }
 
     /// Returns `true` if the pointer is null.
@@ -83,23 +75,24 @@ impl<T> Ptr<T> {
     /// assert!(!ptr.is_null());
     /// ```
     pub fn is_null(&self) -> bool {
-        self.ptr.is_null()
+        self.ptr == 0
     }
 
     pub unsafe fn add(&self, count: usize) -> Self {
         Self {
-            ptr: self.ptr.add(count),
+            ptr: self.ptr + (count * core::mem::size_of::<T>()) as u64,
+            _marker: self._marker,
         }
     }
 
     /// Reads from this pointer. If the pointer is invalid, an error will be reported.
     pub unsafe fn read(&self) -> KResult<T> {
-        copy_from_user(self.ptr)
+        copy_from_user(self.ptr as _)
     }
 
     /// Writes to thie pointer.
     pub unsafe fn write(&self, data: T) -> KResult<()> {
-        copy_to_user(&data as *const T, self.ptr)
+        copy_to_user(&data as *const T, self.ptr as _)
     }
 
     pub fn as_ptr(&self) -> *const T {
@@ -107,7 +100,7 @@ impl<T> Ptr<T> {
     }
 
     pub fn as_mut_ptr(&self) -> *mut T {
-        self.ptr
+        self.ptr as _
     }
 
     /// Writes a Rust-style string into the buffer pointed by this pointer. Appends a null byte `\0` to the end
@@ -126,7 +119,7 @@ impl<T> Ptr<T> {
 
     /// Writes a byte array to the area pointed by this pointer.
     pub unsafe fn write_slice(&self, src: &[T]) {
-        core::ptr::copy(src.as_ptr(), self.ptr, src.len());
+        core::ptr::copy(src.as_ptr(), self.ptr as _, src.len());
     }
 }
 
@@ -140,7 +133,7 @@ impl Ptr<u8> {
     /// let s = Ptr::new(ptr as *mut u8).read_c_string().expect("failed to read!");
     /// ```
     pub fn read_c_string(&self) -> KResult<String> {
-        let ptr = self.ptr;
+        let ptr = self.ptr as *const u8;
         if ptr.is_null() {
             Ok("".to_string())
         } else {
@@ -178,10 +171,19 @@ impl Ptr<u8> {
                 if str_ptr.is_null() {
                     break;
                 }
-                res.push(Ptr::new(str_ptr as *mut u8).read_c_string()?);
+                res.push(Ptr::new(str_ptr as _).read_c_string()?);
             }
 
             Ok(res)
+        }
+    }
+}
+
+impl<T> Default for Ptr<T> {
+    fn default() -> Self {
+        Self {
+            ptr: 0,
+            _marker: PhantomData,
         }
     }
 }

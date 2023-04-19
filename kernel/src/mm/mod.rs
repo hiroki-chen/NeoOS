@@ -273,7 +273,7 @@ impl Arena {
     /// not exceed `self.range`.
     ///
     /// - Returns non-zero value to indicate how many bytes can be read.
-    /// - Returns `Errno::ENOMEM` to indicate memory is not sufficient for page-allocation.
+    /// - Returns [`Errno::ENOMEM`] to indicate memory is not sufficient for page-allocation.
     pub fn check_read<T>(&self, ptr: *const T, size: usize) -> KResult<usize>
     where
         T: Sized + 'static,
@@ -283,7 +283,7 @@ impl Arena {
 
         // Get page start and end regions.
         let min = (ptr as u64).max(page!(arena_start).start_address().as_u64());
-        let max = ((ptr as u64) + size as u64).min(
+        let max = ((ptr as u64) + (size * core::mem::size_of::<T>()) as u64).min(
             page!(arena_end + PAGE_SIZE as u64 - 1)
                 .start_address()
                 .as_u64(),
@@ -300,8 +300,8 @@ impl Arena {
     /// not exceed `self.range`.
     ///
     /// Returns non-zero value to indicate how many bytes are written.
-    /// Returns `Errno::EINVAL` to indicate an invalid operation.
-    /// Returns `Errno::EPERM` to indicate a non-writable memory address.
+    /// Returns [`Errno::EINVAL`] to indicate an invalid operation.
+    /// Returns [`Errno::EPERM`] to indicate a non-writable memory address.
     pub fn check_write<T>(&self, ptr: *mut T, size: usize) -> KResult<usize>
     where
         T: Sized + 'static,
@@ -444,8 +444,8 @@ where
     }
 
     /// Removes the memory region from the process manager (used to, e.g., map another address), if the address is valid;
-    /// otherwise, we return [`Errno::EINVAL`]. This function returns the old arena on succcess.
-    pub fn remove_addr(&mut self, addr: u64, len: usize) -> KResult<Arena> {
+    /// otherwise, we return [`Errno::EINVAL`].
+    pub fn remove_addr(&mut self, addr: u64, len: usize) -> KResult<()> {
         let range = addr..addr + len as u64;
 
         let mut i = 0usize;
@@ -555,24 +555,25 @@ where
             i = i.wrapping_add(1);
         }
 
-        todo!()
+        Ok(())
     }
 
     /// Checks whether a read request is valid, i.e., the given address + size should
     /// not exceed `self.range`. If the pointer is valid, we convert it into a slice.
-    pub fn check_read_array<T>(&self, ptr: &Ptr<T>, size: usize) -> KResult<&'static [T]>
+    pub fn get_slice<T>(&self, mut addr: u64, size: usize) -> KResult<&'static [T]>
     where
         T: Sized + 'static,
     {
         let mut valid_size = 0;
-        let ptr = ptr.as_ptr();
 
-        for arena in self.arena.iter() {
-            valid_size += arena.check_read(ptr, size).unwrap_or(0);
+        for item in self.arena.iter() {
+            valid_size += item.check_read(addr as *const T, size).unwrap_or(0);
 
-            if valid_size == core::mem::size_of::<T>() * size {
-                return unsafe { Ok(core::slice::from_raw_parts(ptr, size)) };
+            if valid_size >= core::mem::size_of::<T>() * size {
+                return unsafe { Ok(core::slice::from_raw_parts(addr as _, size)) };
             }
+
+            addr += valid_size as u64;
         }
 
         Err(Errno::EINVAL)
@@ -580,22 +581,39 @@ where
 
     /// Checks whether a read request is valid, i.e., the given address + size should
     /// not exceed `self.range`. If the pointer is valid, we convert it into a slice.
-    pub fn check_write_array<T>(&self, ptr: &Ptr<T>, size: usize) -> KResult<&'static mut [T]>
+    pub fn get_mut_slice<T>(&self, addr: u64, size: usize) -> KResult<&'static mut [T]>
     where
         T: Sized + 'static,
     {
         let mut valid_size = 0;
-        let ptr = ptr.as_mut_ptr();
 
-        for arena in self.arena.iter() {
-            valid_size += arena.check_write(ptr, size).unwrap_or(0);
+        for item in self.arena.iter() {
+            valid_size += item.check_write(addr as *mut T, size).unwrap_or(0);
 
-            if valid_size == core::mem::size_of::<T>() * size {
-                return unsafe { Ok(core::slice::from_raw_parts_mut(ptr, size)) };
+            if valid_size >= core::mem::size_of::<T>() * size {
+                return Ok(unsafe { core::slice::from_raw_parts_mut(addr as _, size) });
             }
         }
 
         Err(Errno::EINVAL)
+    }
+
+    /// Checks whether a read request is valid for a given pointer.
+    pub fn get_ptr<T>(&self, addr: u64) -> KResult<Ptr<T>>
+    where
+        T: Sized + 'static,
+    {
+        self.get_slice::<T>(addr as _, 1)
+            .map(|arr| Ptr::new(arr.as_ptr() as u64))
+    }
+
+    /// Checks whether a write request is valid for a given pointer.
+    pub fn get_mut_ptr<T>(&self, addr: u64) -> KResult<Ptr<T>>
+    where
+        T: Sized + 'static,
+    {
+        self.get_mut_slice::<T>(addr as _, 1)
+            .map(|arr| Ptr::new(arr.as_ptr() as u64))
     }
 
     /// Executes function `f` with `page_table`.

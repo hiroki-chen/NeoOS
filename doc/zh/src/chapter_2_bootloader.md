@@ -308,5 +308,6 @@ for segment in kernel.elf.program_iter() {
 > unsafe {
 >      page_tables.map_to(page, frame, page_table_flags, frame_allocator).unwrap().flush();
 > }
-> 即将`page`映射到`frame`指向的物理栈帧，页的标识符（可写可读等标记位）是`page_table_flags`，使用的物理栈帧分配器是`frame_allocator`。
 > ```
+>
+> 即将`page`映射到`frame`指向的物理栈帧，页的标识符（可写可读等标记位）是`page_table_flags`，使用的物理栈帧分配器是`frame_allocator`。

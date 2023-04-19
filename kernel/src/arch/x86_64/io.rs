@@ -7,7 +7,7 @@ use core::{
 
 use alloc::{string::ToString, sync::Arc, vec::Vec};
 
-use crate::{drivers::SERIAL_DRIVERS, error::KResult, process::thread::Thread, utils::ptr::Ptr};
+use crate::{drivers::SERIAL_DRIVERS, error::KResult, process::thread::Thread};
 
 pub fn writefmt(arg: Arguments) {
     // Default to serial port.
@@ -77,9 +77,7 @@ impl IoVec {
         let mut v = Vec::with_capacity(io_vectors.len());
         for iov in io_vectors.iter() {
             if iov.iov_len != 0 {
-                let ptr = unsafe { Ptr::new_with_const(iov.iov_base as *const u8) };
-
-                vm.check_read_array(&ptr, iov.iov_len)?;
+                vm.get_slice::<u8>(iov.iov_base as _, iov.iov_len)?;
                 unsafe {
                     v.push(
                         core::slice::from_raw_parts(iov.iov_base as *const u8, iov.iov_len)

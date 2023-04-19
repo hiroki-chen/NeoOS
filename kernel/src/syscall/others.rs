@@ -9,7 +9,6 @@ use crate::{
     process::thread::{Thread, ThreadContext},
     sys::{Time, Timespec, Timeval, Timezone, Utsname},
     time::{SystemTime, UNIX_EPOCH},
-    utils::ptr::Ptr,
 };
 
 const ARCH_SET_GS: u64 = 0x1001;
@@ -33,6 +32,7 @@ pub fn sys_arch_prctl(
 
     let code = syscall_registers[0];
     let addr = syscall_registers[1];
+    let vm = thread.vm.lock();
 
     match code {
         ARCH_SET_FS => {
@@ -44,14 +44,14 @@ pub fn sys_arch_prctl(
             Ok(0)
         }
         ARCH_GET_FS => {
-            let ptr = Ptr::new(addr as *mut u64);
+            let ptr = vm.get_mut_ptr(addr)?;
             unsafe {
                 ptr.write(ctx.get_user_context().regs.fs)?;
             }
             Ok(0)
         }
         ARCH_GET_GS => {
-            let ptr = Ptr::new(addr as *mut u64);
+            let ptr = vm.get_mut_ptr(addr)?;
             unsafe {
                 ptr.write(ctx.get_user_context().regs.gs)?;
             }
@@ -70,8 +70,7 @@ pub fn sys_uname(
 ) -> KResult<usize> {
     let buf = syscall_registers[0];
 
-    let buf_ptr = Ptr::new(buf as *mut Utsname);
-    // thread.vm.lock().check_write_array(&buf_ptr, 1)?;
+    let buf_ptr = thread.vm.lock().get_mut_ptr(buf)?;
 
     unsafe {
         buf_ptr.write(Utsname::default_uname())?;
@@ -93,9 +92,10 @@ pub fn sys_gettimeofday(
         .duration_since(UNIX_EPOCH)
         .map_err(|_| Errno::EINVAL)?;
 
-    let p_tv = Ptr::new(tv as *mut Timeval);
+    let vm = thread.vm.lock();
+    let p_tv = vm.get_mut_ptr(tv)?;
     // The use of the timezone structure is obsolete; the tz argument should normally be specified as NULL.
-    let p_tz = Ptr::new(tz as *mut Timezone);
+    let p_tz = vm.get_mut_ptr::<Timezone>(tz)?;
     if !p_tz.is_null() {
         return Err(Errno::EINVAL);
     }
@@ -122,7 +122,7 @@ pub fn sys_time(
         .map_err(|_| Errno::EINVAL)?;
 
     let tloc = syscall_registers[0];
-    let p_tloc = Ptr::new(tloc as *mut Time);
+    let p_tloc = thread.vm.lock().get_mut_ptr(tloc)?;
     unsafe {
         p_tloc.write(Time {
             time: time.as_secs() as _,
@@ -158,7 +158,7 @@ pub fn sys_clock_gettime(
     let _clock_id = syscall_registers[0];
     let tp = syscall_registers[1];
 
-    let p_tp = Ptr::new(tp as *mut Timespec);
+    let p_tp = thread.vm.lock().get_mut_ptr(tp)?;
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| Errno::EINVAL)?;

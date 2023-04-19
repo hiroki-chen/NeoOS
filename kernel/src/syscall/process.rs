@@ -45,7 +45,7 @@ pub async fn sys_wait4(
     let options = syscall_registers[2];
     let rusage = syscall_registers[3];
 
-    let wstatus = Ptr::new(wstatus as *mut i32);
+    let wstatus = Ptr::<i32>::new(wstatus);
 
     let wait_type = match pid {
         -1 => WaitType::AnyChild,
@@ -179,11 +179,8 @@ pub fn sys_exit(
     // futex wake operation are ignored.
     let clear_child_tid = thread.inner.lock().clear_child_tid;
     if clear_child_tid != 0 {
-        let ptr = Ptr::new(clear_child_tid as *mut u32);
-        if let Ok(tid) = thread.vm.lock().check_write_array(&ptr, 1) {
-            unsafe {
-                ptr.write(0)?;
-            }
+        if let Ok(tid) = thread.vm.lock().get_mut_slice(clear_child_tid, 1) {
+            tid[0] = 0;
 
             // Get the fast userspace mutex lock.
             let futex = proc
@@ -320,12 +317,9 @@ pub fn sys_execve(
     let argv = syscall_registers[1];
     let envp = syscall_registers[2];
 
-    let pathname = Ptr::new(pathname as *mut u8)
-        .read_c_string()
-        .unwrap_or_default();
-
-    let args = Ptr::new(argv as *mut u8).read_c_string_array()?;
-    let envp = Ptr::new(envp as *mut u8).read_c_string_array()?;
+    let pathname = Ptr::new(pathname).read_c_string().unwrap_or_default();
+    let args = Ptr::new(argv).read_c_string_array()?;
+    let envp = Ptr::new(envp).read_c_string_array()?;
 
     // Read the file from the disk.
     let mut proc = thread.parent.lock();
