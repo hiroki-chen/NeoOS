@@ -7,7 +7,7 @@ use core::{
 
 use alloc::{string::ToString, sync::Arc, vec::Vec};
 
-use crate::{drivers::SERIAL_DRIVERS, error::KResult, process::thread::Thread, utils::ptr::Ptr};
+use crate::{drivers::SERIAL_DRIVERS, error::KResult, process::thread::Thread};
 
 pub fn writefmt(arg: Arguments) {
     // Default to serial port.
@@ -16,11 +16,39 @@ pub fn writefmt(arg: Arguments) {
     // dropped; otherwise, if we do something in the handler that requries the logger, read/write causes
     // deadlock, and it never ends.
 
-    SERIAL_DRIVERS
-        .write() // remember to make it write.
-        .first()
-        .unwrap()
-        .write(arg.to_string().as_bytes());
+    // Wait for 10000000 at most; if we cannot acquire the lock, then it means a possible deadlock.
+    // We can force unlock the rwlock then (still unsafe).
+    const MAX_ATTEPMT_COUNT: usize = 10000000;
+
+    // Try to acquire the lock; if timeout, force unlock.
+    let mut attepmt = 0usize;
+    loop {
+        match SERIAL_DRIVERS.try_write() {
+            Some(lock) => {
+                lock // remember to make it write.
+                    .first()
+                    .unwrap()
+                    .write(arg.to_string().as_bytes());
+                break;
+            }
+            None => {
+                attepmt += 1;
+                if attepmt == MAX_ATTEPMT_COUNT {
+                    // force unlock.
+                    unsafe {
+                        SERIAL_DRIVERS.force_write_unlock();
+                        SERIAL_DRIVERS
+                            .write()
+                            .first()
+                            .unwrap()
+                            .write(arg.to_string().as_bytes());
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// IoVec (short for "I/O vector") is a data structure used to describe a block of data to be read or written
@@ -49,9 +77,7 @@ impl IoVec {
         let mut v = Vec::with_capacity(io_vectors.len());
         for iov in io_vectors.iter() {
             if iov.iov_len != 0 {
-                let ptr = unsafe { Ptr::new_with_const(iov.iov_base as *const u8) };
-
-                vm.check_read_array(&ptr, iov.iov_len)?;
+                vm.get_slice::<u8>(iov.iov_base as _, iov.iov_len)?;
                 unsafe {
                     v.push(
                         core::slice::from_raw_parts(iov.iov_base as *const u8, iov.iov_len)

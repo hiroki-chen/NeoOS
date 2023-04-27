@@ -207,21 +207,14 @@ pub fn sys_openat(
 ) -> KResult<usize> {
     // Get the syscall arguments.
     let dir_fd = syscall_registers[0];
-    let path = syscall_registers[1] as *const u8;
+    let path = syscall_registers[1];
     let flags = syscall_registers[2];
     let mode = syscall_registers[3];
 
-    kdebug!(
-        "syscall parameters: dir_fd: {}, path: {:x}, flags: {:x}, mode: {:x}",
-        dir_fd,
-        path as u64,
-        flags,
-        mode
-    );
-
     // Open the directory.
     let mut proc = thread.parent.lock();
-    let p_path = Ptr::new(path as *mut u8);
+    let vm = thread.vm.lock();
+    let p_path = vm.get_ptr(path)?;
     let path = p_path.read_c_string()?;
     let oflags = Oflags::from_bits_truncate(flags);
 
@@ -335,11 +328,11 @@ pub fn sys_write(
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
     let file_fd = syscall_registers[0];
-    let buf = Ptr::new(syscall_registers[1] as *mut u8);
+    let buf = syscall_registers[1];
     let len = syscall_registers[2] as usize;
 
     let mut proc = thread.parent.lock();
-    let slice = proc.vm.lock().check_read_array(&buf, len)?;
+    let slice = proc.vm.lock().get_slice::<u8>(buf, len)?;
     let file = proc.get_fd(file_fd)?;
     let len = file.write(slice)?;
 
@@ -417,12 +410,13 @@ pub fn sys_chdir(
     ctx: &mut ThreadContext,
     syscall_registers: [u64; SYSCALL_REGS_NUM],
 ) -> KResult<usize> {
+    let mut proc = thread.parent.lock();
+    let vm = thread.vm.lock();
+
     let pathname = syscall_registers[0];
-    let pathname = Ptr::new(pathname as *mut u8).read_c_string()?;
+    let pathname = vm.get_ptr(pathname)?.read_c_string()?;
     // busybox shell will do this for us, but w.l.o.g. we should do this.
     let realpath = realpath(&pathname);
-
-    let mut proc = thread.parent.lock();
 
     let inode = proc.read_inode(&pathname)?;
     let metadata = inode.metadata().map_err(|_| Errno::EINVAL)?;
@@ -449,6 +443,7 @@ pub async fn sys_sendfile(
     let count = syscall_registers[3];
 
     let mut proc = thread.parent.lock();
+    let vm = thread.vm.lock();
     // Since MIRI detects multiple mutable borrows from proc's opened files, we need to first copy
     // the content from the source file using a scope and then copy to the destination using another
     // scope to avoid race condition.
@@ -456,7 +451,7 @@ pub async fn sys_sendfile(
         let src = proc.get_fd(in_fd)?;
         // If `offset` is not NULL, then we read from `offset`; otherwise, we read from the offset
         // stored in the source file object, and if it is non-NULL, we need to update this value.
-        let offset = Ptr::new(offset as *mut u64);
+        let offset = vm.get_mut_ptr::<u64>(offset)?;
         // Prepare a buffer.
         let mut buf = vec![0u8; count as usize];
 
@@ -499,11 +494,13 @@ pub fn sys_getcwd(
     }
 
     // Check the pointer before use.
-    let buf_ptr = Ptr::new(buf as *mut u8);
-    thread
-        .vm
-        .lock()
-        .check_write_array(&buf_ptr, cwd.len() + 1)?;
+    let buf_ptr = Ptr::<u8>::new(
+        thread
+            .vm
+            .lock()
+            .get_mut_slice::<u8>(buf, cwd.len() + 1)?
+            .as_ptr() as u64,
+    );
 
     unsafe {
         buf_ptr.write_c_string(cwd);
@@ -520,7 +517,7 @@ pub fn sys_lstat(
     let pathname = syscall_registers[0];
     let statbuf = syscall_registers[1];
 
-    let filename = Ptr::new(pathname as *mut u8).read_c_string()?;
+    let filename = thread.vm.lock().get_ptr(pathname)?.read_c_string()?;
 
     do_stat(
         thread,
@@ -543,10 +540,35 @@ pub fn sys_newfstatat(
     let statbuf = syscall_registers[2];
     let flag = syscall_registers[3];
 
-    let filename_ptr = Ptr::new(filename as *mut u8);
+    let filename_ptr = thread.vm.lock().get_ptr(filename)?;
     let filename = filename_ptr.to_string();
 
     do_stat(thread, dfd, filename, statbuf as *mut Stat, flag)
+}
+
+pub fn sys_readlink(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let pathname = syscall_registers[0];
+    let buf = syscall_registers[1];
+    let bufsiz = syscall_registers[2];
+
+    do_readlink(thread, AT_FDCWD as _, pathname as _, buf as _, bufsiz)
+}
+
+pub fn sys_readlinkat(
+    thread: &Arc<Thread>,
+    ctx: &mut ThreadContext,
+    syscall_registers: [u64; SYSCALL_REGS_NUM],
+) -> KResult<usize> {
+    let dirfd = syscall_registers[0];
+    let pathname = syscall_registers[1];
+    let buf = syscall_registers[2];
+    let bufsiz = syscall_registers[3];
+
+    do_readlink(thread, dirfd, pathname as _, buf as _, bufsiz)
 }
 
 pub fn sys_stat(
@@ -557,7 +579,7 @@ pub fn sys_stat(
     let filename = syscall_registers[0];
     let statbuf = syscall_registers[1];
 
-    let filename_ptr = Ptr::new(filename as *mut u8);
+    let filename_ptr = thread.vm.lock().get_ptr(filename)?;
     let filename = filename_ptr.to_string();
 
     do_stat(thread, AT_FDCWD as _, filename, statbuf as *mut Stat, 0)
@@ -579,7 +601,7 @@ pub async fn sys_pread(
     let file = proc.get_fd(fd)?;
 
     if let FileObject::File(file) = file {
-        let p_buf = Ptr::new(buf as *mut u8);
+        let p_buf = thread.vm.lock().get_ptr(buf)?;
         let filesz = file.metadata().unwrap().size;
         let offset = filesz.min(offset as usize);
         let mut buf = vec![0u8; count as usize];
@@ -632,7 +654,7 @@ pub fn sys_fstat(
     let file = proc.get_fd(fd)?;
 
     if let FileObject::File(file) = file {
-        let p_stat = Ptr::new(stat as *mut Stat);
+        let p_stat = thread.vm.lock().get_ptr(stat)?;
         unsafe {
             p_stat.write(Stat::from(file.metadata().unwrap()))?;
         }
@@ -662,7 +684,7 @@ pub fn sys_epoll_ctl(
     let epoll = proc.get_fd(epfd)?;
 
     if let FileObject::Epoll(epoll) = epoll {
-        let event = unsafe { Ptr::new(event as *mut EpollEvent).read() }?;
+        let event = unsafe { thread.vm.lock().get_ptr(event)?.read() }?;
         let op = EpollOp::try_from(op).map_err(|_| Errno::EINVAL)?;
 
         epoll.epoll_ctl(fd, op, event)
@@ -810,7 +832,6 @@ pub fn sys_epoll_pwait(
 
 /// The system call getdents() reads several linux_dirent structures from the directory referred to by the open file
 /// descriptor fd into the buffer pointed to by dirp. The argument count specifies the size of that buffer.
-/// FIXME: Bug.
 pub fn sys_getdents64(
     thread: &Arc<Thread>,
     ctx: &mut ThreadContext,
@@ -979,8 +1000,10 @@ fn do_symlink(
     newdirfd: u64,
     linkpath: *const u8,
 ) -> KResult<usize> {
-    let target = unsafe { Ptr::new_with_const(target as *mut u8).read_c_string() }?;
-    let linkpath = unsafe { Ptr::new_with_const(linkpath as *mut u8).read_c_string() }?;
+    let vm = thread.vm.lock();
+
+    let target = vm.get_ptr(target as _)?.read_c_string()?;
+    let linkpath = vm.get_ptr(linkpath as _)?.read_c_string()?;
 
     let proc = thread.parent.lock();
     let (dirpath, filename) = split_path(&linkpath)?;
@@ -1026,7 +1049,9 @@ fn do_stat(
 }
 
 fn do_mkdir(thread: &Arc<Thread>, dirfd: u64, pathname: *const u8, mode: u64) -> KResult<usize> {
-    let pathname = unsafe { Ptr::new_with_const(pathname as *mut u8).read_c_string() }?;
+    // Already checked.
+    let pathname = Ptr::new(pathname as _).read_c_string()?;
+
     let (dirname, filename) = split_path(&pathname)?;
     let proc = thread.parent.lock();
 
@@ -1049,6 +1074,25 @@ fn do_epoll_create(thread: &Arc<Thread>, epoll_cloexec: bool) -> KResult<usize> 
     let mut proc = thread.parent.lock();
     let epoll = EpollInstance::new(epoll_cloexec);
     proc.add_file(FileObject::Epoll(epoll)).map(|fd| fd as _)
+}
+
+fn do_readlink(
+    thread: &Arc<Thread>,
+    dirfd: u64,
+    pathname: *const u8,
+    buf: *mut u8,
+    bufsiz: u64,
+) -> KResult<usize> {
+    let pathname = Ptr::new(pathname as _).read_c_string()?;
+    let proc = thread.parent.lock();
+    let inode = proc.read_inode_at(dirfd, pathname.as_str(), false)?;
+    if inode.metadata().map_err(|_| Errno::EINVAL)?.type_ == rcore_fs::vfs::FileType::SymLink {
+        let buf = unsafe { core::slice::from_raw_parts_mut(buf, bufsiz as _) };
+        let len = inode.read_at(0, buf).map_err(fserror_to_kerror)?;
+        Ok(len)
+    } else {
+        Err(Errno::EINVAL)
+    }
 }
 
 // Ignored. Permission check will be added in the future.

@@ -110,13 +110,15 @@ pub const SIG_BLOCK: u64 = 0; /* for blocking signals */
 pub const SIG_UNBLOCK: u64 = 1; /* for unblocking signals */
 pub const SIG_SETMASK: u64 = 2; /* for setting the signal mask */
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
 pub enum IpProto {
     IpprotoIp = 0,
     IpprotoIcmp = 1,
     IpprotoTcp = 6,
     IpprotoUdp = 17,
+    #[num_enum(default)]
+    IoprotoUnknown,
 }
 
 #[derive(Clone, Debug)]
@@ -139,7 +141,7 @@ impl SockAddr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
 #[repr(u8)]
 pub enum SocketType {
     SockStream = 1,
@@ -150,6 +152,8 @@ pub enum SocketType {
     // pub const SOCK_SEQPACKET: u64 = 5;
     // pub const SOCK_DCCP: u64 = 6;
     // pub const SOCK_PACKET: u64 = 10;
+    #[num_enum(default)]
+    Unknown,
 }
 
 #[derive(Debug, Clone)]
@@ -354,7 +358,7 @@ pub enum EpollOp {
     EpollCtlMod = 3,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
 #[repr(u64)]
 /// The socket options.
 pub enum SocketOptions {
@@ -401,6 +405,23 @@ pub enum SocketOptions {
     SolMptcp = 284,
     SolMctp = 285,
     SolSmc = 286,
+
+    #[num_enum(default)]
+    SolUnknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, FromPrimitive)]
+#[repr(u64)]
+pub enum Itimer {
+    /// This timer counts down in real (i.e., wall clock) time.
+    ItimerReal = 0,
+    /// This timer counts down against the user-mode CPU time consumed by the process.
+    ItimerVirtual = 1,
+    /// This timer counts down against the total (i.e., both user and system) CPU time consumed by the process.
+    /// (The measurement includes CPU time consumed by all threads in the process.) 
+    ItimerProf = 2,
+    #[num_enum(default)]
+    ItimerUnknown,
 }
 
 /// The `MsgHdr` struct is used to specify the message header in a call to `sendmsg` or `recvmsg` on a socket.
@@ -464,8 +485,12 @@ pub struct Stat {
 pub enum FcntlCommand {
     FDupfd = 0,
     FGetfd = 1,
-    /// Sets the descriptor flags for descriptor.
+    /// set/clear close_on_exec
     FSetfd = 2,
+    /// get file->f_flags
+    FGetfl = 3,
+    /// set file->f_flags
+    FSetfl = 4,
     /// Duplicate
     FDupfdCloexec = 1030,
     #[num_enum(default)]

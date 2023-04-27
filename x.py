@@ -51,7 +51,7 @@ if shutil.which('cargo') is None:
 if shutil.which('rcore-fs-fuse') is None:
     # For creating the SFS image.
     subprocess.run(
-        'cargo install --git https://github.com/rcore-os/rcore-fs.git --rev 7f5eeac --force'.split()
+        'cargo install --git https://github.com/rcore-os/rcore-fs.git --rev 7f5eeac --force rcore-fs-fuse'.split()
     )
 
 # Install musl.

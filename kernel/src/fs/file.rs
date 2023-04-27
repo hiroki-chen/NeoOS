@@ -410,12 +410,17 @@ impl File {
                 drop(proc);
                 do_dup(thread, fd, new_fd, None)
             }
-            // FcntlCommand::FGetfd => (
             FcntlCommand::FSetfd => {
                 self.fd_cloexec = arg & 0x1 != 0;
                 Ok(0)
             }
             FcntlCommand::FGetfd => Ok(self.fd_cloexec as _),
+            FcntlCommand::FGetfl => Ok(self.file_option.read().open_option.bits as _),
+            FcntlCommand::FSetfl => {
+                self.file_option.write().open_option =
+                    FileOpenOption::from_bits_truncate(arg as u8);
+                Ok(0)
+            }
             FcntlCommand::FDupfdCloexec => {
                 let proc = thread.parent.lock();
                 let new_fd = (arg..)

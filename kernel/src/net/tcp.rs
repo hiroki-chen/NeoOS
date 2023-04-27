@@ -257,11 +257,11 @@ impl SocketTrait for TcpStream {
 
         kdebug!("sending {:x?}", buf);
 
-        let res = socket.send_slice(buf);
-        drop(socket);
-        drop(socket_set);
-
-        res.map_err(|_| Errno::ECONNREFUSED)
+        let res = socket.send_slice(buf).map_err(|_| Errno::ECONNREFUSED)?;
+        NETWORK_DRIVERS.read().iter().for_each(|driver| {
+            driver.poll();
+        });
+        Ok(res)
     }
 
     fn set_fd(&mut self, fd: u64) {

@@ -234,25 +234,34 @@ impl IntelEthernetController {
             IntelEthernetDriverWrapper::new(header, size, EthernetAddress::from_bytes(MAC_ADDRESS));
         let mut interface = Interface::new(config, &mut driver);
 
-        // Set the default netowrk gateway.
-        interface.update_ip_addrs(|ip| {
-            let cidr = [IpCidr::new(IP_CIDR_HOST, 24), IpCidr::new(IP_CIDR_TAP, 24)];
-            ip.extend_from_slice(&cidr).unwrap();
-            kinfo!("ip address set for {:?}", cidr);
-        });
-
         // Update the route table.
-        #[cfg(not(feature = "linux_gateway"))]
-        interface
-            .routes_mut()
-            .add_default_ipv4_route(IP_GATEWAY)
-            .unwrap();
-
         #[cfg(feature = "linux_gateway")]
-        interface
-            .routes_mut()
-            .add_default_ipv4_route(IP_GATEWAY_TAP)
-            .unwrap();
+        {
+            interface.update_ip_addrs(|ip| {
+                let cidr = [IpCidr::new(IP_CIDR_TAP, 24)];
+                ip.extend_from_slice(&cidr).unwrap();
+                kinfo!("ip address set for {:?}", cidr);
+            });
+
+            interface
+                .routes_mut()
+                .add_default_ipv4_route(IP_GATEWAY_TAP)
+                .unwrap();
+        }
+
+        #[cfg(not(feature = "linux_gateway"))]
+        {
+            interface.update_ip_addrs(|ip| {
+                let cidr = [IpCidr::new(IP_CIDR_HOST, 24)];
+                ip.extend_from_slice(&cidr).unwrap();
+                kinfo!("ip address set for {:?}", cidr);
+            });
+
+            interface
+                .routes_mut()
+                .add_default_ipv4_route(IP_GATEWAY)
+                .unwrap();
+        }
 
         Self {
             driver: Mutex::new(driver),
