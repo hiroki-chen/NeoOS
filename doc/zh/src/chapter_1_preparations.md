@@ -8,8 +8,104 @@
 
 如果你在使用 Windows 或者 macOS，请使用虚拟机（VMware、VirtualBox）。
 
-> 注意： Windows 用户请避免使用 WSL2。使用 WSL2 需要在 WSL2 内部使用 qemu 模拟一个虚拟机出来，KVM 的虚拟化可能存在一些问题。
+> 注意： Windows 用户请避免使用 WSL2。使用 WSL2 需要在 WSL2 内部使用 qemu 模拟一个虚拟机出来，KVM 的虚拟化可能存在一些问题。**而且，我们需要使用 apfs 驱动，这需要 linux header，但是 wsl2 编译 linux header十分困难，甚至会失败。**
+## apfs
+### APFS
+先安装[APFS](https://github.com/linux-apfs/linux-apfs-rw).
 
+首先需要 clone 仓库
+```shell
+git clone https://github.com/linux-apfs/linux-apfs-rw
+```
+然后依次执行如下命令：
+```shell
+sudo apt-get install linux-headers-$(uname -r)
+make
+modprobe libcrc32c
+sudo insmod apfs.ko
+```
+
+然后，安装这个：[apfsprogs](https://github.com/linux-apfs/apfsprogs)
+
+先
+```
+git clone https://github.com/linux-apfs/apfsprogs
+```
+然后在这个项目之中
+```
+cd mkapfs
+```
+其中，需要把它原来的Makefile替换成如下：
+```
+SRCS = btree.c dir.c mkapfs.c object.c spaceman.c super.c
+OBJS = $(SRCS:.c=.o)
+DEPS = $(SRCS:.c=.d)
+
+LIBDIR = ../lib
+LIBRARY = $(LIBDIR)/libapfs.a
+
+BINDIR = /bin
+MANDIR = /share/man/man8
+
+SPARSE_VERSION := $(shell sparse --version 2>/dev/null)
+
+override CFLAGS += -Wall -Wno-address-of-packed-member -fno-strict-aliasing -I$(CURDIR)/../include
+
+mkapfs: $(OBJS) $(LIBRARY)
+	@echo '  Linking...'
+	@$(CC) $(CFLAGS) $(LDFLAGS) -o mkapfs $(OBJS) $(LIBRARY)
+	@echo '  Build complete'
+
+# Build the common libraries
+$(LIBRARY): FORCE
+	@echo '  Building libraries...'
+	@$(MAKE) -C $(LIBDIR) --silent --no-print-directory
+	@echo '  Library build complete'
+FORCE:
+
+%.o: %.c
+	@echo '  Compiling $<...'
+	@$(CC) $(CFLAGS) -o $@ -MMD -MP -c $<
+ifdef SPARSE_VERSION
+	@sparse $(CFLAGS) $<
+endif
+
+-include $(DEPS)
+
+clean:
+	rm -f $(OBJS) $(DEPS) mkapfs
+install:
+	install -d $(BINDIR)
+	install -t $(BINDIR) mkapfs
+	ln -fs -T mkapfs $(BINDIR)/mkfs.apfs
+	install -d $(MANDIR)
+	install -m 644 -t $(MANDIR) mkapfs.8
+	ln -fs -T mkapfs.8 $(MANDIR)/mkfs.apfs.8
+```
+**注意，由于不同的系统和编辑器的原因，直接复制可能会导致对齐问题，因此在复制后建议手动使用 tab 对齐。**
+
+然后进去执行：
+```
+sudo make
+```
+和
+```
+sudo make install
+```
+至此，驱动就装完了。
+### NOTICE
+注意，如果你采用的是 Vmware 虚拟机，在安装的时候需要进行如下设置：
+
+在 `虚拟机设置`->`处理器`->`虚拟化引擎`之中，勾选`虚拟化 Intel VT-x/EPT 或 AMD-V/RVI`，然后启动虚拟机，**这是必要的工作**。
+
+如果这一步导致了以下问题：
+>此平台不支持虚拟化的 Intel VT-x/EPT。 不使用虚拟化的 Intel VT-x/EPT,是否继续？
+那么，可行的方式有如下几种：
+- 首先需要确认 任务管理器——性能——虚拟化，为已启用。如果没有启用，需要进入BIOS自行启用。
+- win10专业版：控制面板——程序——打开或关闭 Windows 功能，取消勾选 Hyper-V，确定禁用Hyper-V服务。之后重启电脑。
+- 如果没有 Hyper-V，那么最有效的办法是：打开Windows安全中心>设备安全性>内核隔离，确保“DMA”已关闭，然后重启。
+
+**注意！ WINDOWS 用户必须点击 `重启` 而不是 关机再开机 或其他替代方式！**
 ## 安装 Rust 工具链
 
 在你的终端执行如下命令：
@@ -64,3 +160,34 @@ sudo apt install -y qemu-system qemu-kvm build-essential ovmf git libvirt-daemon
 > ```shell
 > python x.py
 > ```
+
+## Build NeoOS
+现阶段的 NeoOS 还存在一些小问题，因此 build 的过程如下：
+
+首先，在项目根目录之下使用
+```shell
+make run
+```
+这时，也许会报错会发现很奇怪的是提示还得执行这个：
+```
+rustup component add rust-src --toolchain nightly-2023-03-22-x86_64-unknown-linux-gnu
+```
+那么就执行它。
+
+然后把 `sample_programs/nginx/nginx.conf` 拷贝到 新出现的 `test/` 里面
+
+同时，因为中途失败之后 `/mnt` 没有被卸载掉，需要执行下面的命令：
+```shell
+sudo umount /mnt
+```
+至此，全部结束。
+
+然后再次启动项目：
+```
+make run
+```
+如果看到出现 logo 了，就进入成功了。
+
+最后退出系统：
+
+和退出qemu一样,先按 ctrl + a，然后输入字母 "x"，就能正常退出了。
