@@ -41,12 +41,13 @@ if shutil.which('cargo') is None:
     subprocess.run(
         'curl --proto \'=http\' --tlsv1.2 -sSf https://sh.rustup.rs | sh'.split())
     subprocess.run('cargo -V'.split())
-    # Add rust-src.
-    f = open('./rust-toolchain')
-    toolchain_version = f.read().strip('\n')
-    subprocess.run(
-        'rustup component add rust-src llvm-tools-preview --toolchain {}-x86_64-unknown-linux-gnu'.format(toolchain_version).split())
-    subprocess.run('cargo install cargo-binutils')
+
+# Add rust-src. This should fix the case if the user has already installed cargo.
+f = open('./rust-toolchain')
+toolchain_version = f.read().strip('\n')
+subprocess.run(
+    'rustup component add rust-src llvm-tools-preview --toolchain {}-x86_64-unknown-linux-gnu'.format(toolchain_version).split())
+subprocess.run('cargo install cargo-binutils')
 
 if shutil.which('rcore-fs-fuse') is None:
     # For creating the SFS image.

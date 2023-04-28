@@ -8,7 +8,7 @@ all:
 	@$(MAKE) -C ./rust
 # Nginx-musl cannot be built on macOS.
 ifeq ($(UNAME), Linux)
-	#@$(MAKE) -C ./nginx
+# @$(MAKE) -C ./nginx
 endif
 	@$(MAKE) -C ./tests
 	@$(MAKE) -C ./busybox-musl
