@@ -47,7 +47,7 @@ f = open('./rust-toolchain')
 toolchain_version = f.read().strip('\n')
 subprocess.run(
     'rustup component add rust-src llvm-tools-preview --toolchain {}-x86_64-unknown-linux-gnu'.format(toolchain_version).split())
-subprocess.run('cargo install cargo-binutils')
+subprocess.run('cargo install cargo-binutils'.split())
 
 if shutil.which('rcore-fs-fuse') is None:
     # For creating the SFS image.
