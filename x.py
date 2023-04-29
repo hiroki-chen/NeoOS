@@ -7,7 +7,7 @@ import sys
 import shutil
 import subprocess
 
-# If this is python2, check if python3 is available and re-execute with that iinterpreter.
+# If this is python2, check if python3 is available and re-execute with that interpreter.
 #
 # This matters if someone's system `python` is python2.
 if sys.version_info.major < 3:
@@ -45,6 +45,7 @@ if shutil.which('cargo') is None:
 # Add rust-src. This should fix the case if the user has already installed cargo.
 f = open('./rust-toolchain')
 toolchain_version = f.read().strip('\n')
+subprocess.run('rustup override set {}-x86_64-unknown-linux-gnu'.format(toolchain_version).split())
 subprocess.run(
     'rustup component add rust-src llvm-tools-preview --toolchain {}-x86_64-unknown-linux-gnu'.format(toolchain_version).split())
 subprocess.run('cargo install cargo-binutils'.split())
