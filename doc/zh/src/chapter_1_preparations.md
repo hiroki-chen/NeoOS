@@ -160,8 +160,10 @@ registry = "git://mirrors.ustc.edu.cn/crates.io-index"
 因为我们需要用到一些不稳定的特性，而我们默认安装的 Rust 工具链是 stable channel 的，所以我们需要安装 nightly 版本。这很简单，在你正确安装了 Rust 之后，执行如下命令。
 
 ```shell
-rustup toolchain install nightly
-rustup component add rust-src --toolchain nightly
+nightly=$(cat ./rust-toolchain)
+rustup component add rust-src llvm-tools-preview --toolchain ${nightly}-x86_64-unknown-linux-gnu
+cargo install --git https://github.com/rcore-os/rcore-fs.git --rev 7f5eeac --force rcore-fs-fuse
+cargo install cargo-binutils
 ```
 
 我们的仓库指定了一个 nightly 的版本，请不要随便修改版本，可能会出现一些奇怪的兼容问题。当然我们会尽可能将版本更新到最新的。
@@ -171,13 +173,14 @@ rustup component add rust-src --toolchain nightly
 我们假设你使用的操作系统是 Ubuntu。执行如下命令。
 
 ```shell
-sudo apt install -y qemu-system qemu-kvm build-essential ovmf git libvirt-daemon-system libvirt-clients bridge-utils
+sudo apt install -y qemu-system qemu-kvm build-essential ovmf git \
+     libvirt-daemon-system libvirt-clients bridge-utils musl-tools nasm
 ```
 
 > 提示：我们的仓库根目录下提供了一个一键安装（Rust 和 软件包）的脚本。用 Python 执行即可。
 >
 > ```shell
-> python x.py
+> python3 x.py
 > ```
 
 ## Build NeoOS
