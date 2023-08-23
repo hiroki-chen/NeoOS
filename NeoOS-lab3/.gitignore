@@ -1,0 +1,17 @@
+/target
+Cargo.lock
+build
+test
+backup
+data
+
+# Hidden folders
+.gdb_history
+.vscode
+
+# Log files
+*.log
+
+# Special files
+meta
+ap_trampoline
